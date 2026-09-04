@@ -1,0 +1,13 @@
+{
+    ".url": {
+        "fnmonitor.Application": {
+            "title": "飞牛监控",
+            "icon": "images/icon-{0}.png",
+            "type": "url",
+            "protocol": "http",
+            "port": "8777",
+            "url": "/",
+            "allUsers": true
+        }
+    }
+}

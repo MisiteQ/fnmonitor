@@ -1,0 +1,31 @@
+[
+  {
+    "stepTitle": "欢迎安装飞牛监控",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "📊 <b>飞牛监控</b> 是一款 fnOS 系统监控面板，帮助您实时掌握 NAS 运行状况。"
+      },
+      {
+        "type": "tips",
+        "helpText": "🔍 <b>系统资源：</b>CPU / 内存 / 磁盘 / 网络 / 温度 / 负载"
+      },
+      {
+        "type": "tips",
+        "helpText": "🐳 <b>Docker 容器：</b>容器列表、运行状态、CPU / 内存占用、端口"
+      },
+      {
+        "type": "tips",
+        "helpText": "📦 <b>功能模块：</b>文件共享、影视、相册、下载、SSH 等模块运行状态"
+      },
+      {
+        "type": "tips",
+        "helpText": "📈 <b>历史趋势：</b>资源使用情况自动记录，可查看 1 小时至 7 天曲线"
+      },
+      {
+        "type": "tips",
+        "helpText": "ℹ️ <b>访问地址：</b>安装完成后，桌面点击「飞牛监控」图标，或浏览器访问 <code>http://NAS_IP:8777</code>"
+      }
+    ]
+  }
+]

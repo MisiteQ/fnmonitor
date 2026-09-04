@@ -1,0 +1,17 @@
+appname=fnmonitor
+version=2.1.1
+display_name=飞牛监控
+desc="""<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度与负载，Docker 容器资源占用，以及系统功能模块运行状态，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker 容器 | 🔌 端口占用 | 📦 功能模块 | ⚙️ 设置"""
+platform=x86
+source=thirdparty
+maintainer=Misite齊
+maintainer_url=Misite齊
+distributor=Misite齊
+os_min_version=0.9.0
+ctl_stop=true
+desktop_uidir=ui
+desktop_applaunchname=fnmonitor.Application
+service_port=8777
+checkport=true
+disable_authorization_path=false
+changelog=v2.1.1<br>首页改版为单页仪表盘：系统资源 / 硬盘 / 资源趋势 / 总览合并为一个总览页（参照 BestNav）；修复本机 IP 溢出与内部模块自适应；精简模块导航

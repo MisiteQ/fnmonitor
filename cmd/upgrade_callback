@@ -1,0 +1,18 @@
+#!/bin/bash
+# ============================================================
+# fnmonitor 升级后处理
+# 重新创建桌面 UI 软链接并修复可执行权限
+# ============================================================
+APP_BASE="/var/apps/${TRIM_APPNAME:-fnmonitor}"
+APP_DEST="${TRIM_APPDEST}"
+if [ -d "${APP_DEST}/ui" ] && [ ! -e "${APP_BASE}/ui" ]; then
+    ln -s "${APP_DEST}/ui" "${APP_BASE}/ui" 2>/dev/null || true
+fi
+chmod +x "${APP_DEST}/server.py" 2>/dev/null || true
+# 保持已有配置
+mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+if [ ! -f "${TRIM_PKGVAR}/config.json" ]; then
+    echo "{\"interval\": 10, \"retention_days\": 7}" > "${TRIM_PKGVAR}/config.json"
+fi
+echo "fnmonitor 升级完成"
+exit 0

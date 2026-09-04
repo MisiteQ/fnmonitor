@@ -1,0 +1,9 @@
+#!/bin/bash
+# fnmonitor 安装前检查
+# 检查系统 python3 是否可用
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "错误：系统中未找到 python3，无法安装飞牛监控。请先安装 Python 运行时。" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+echo "python3 环境检查通过: $(command -v python3)"
+exit 0

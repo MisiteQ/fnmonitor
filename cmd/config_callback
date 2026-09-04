@@ -1,0 +1,11 @@
+#!/bin/bash
+# ============================================================
+# fnmonitor 配置变更后处理
+# 将向导参数写入配置文件（server 会实时读取，无需重启）
+# ============================================================
+mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+INTERVAL="${wizard_interval:-10}"
+RETENTION="${wizard_retention:-7}"
+echo "{\"interval\": ${INTERVAL}, \"retention_days\": ${RETENTION}}" > "${TRIM_PKGVAR}/config.json"
+echo "配置已更新：采集间隔 ${INTERVAL}s，历史保留 ${RETENTION} 天"
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/bash
+# fnmonitor 升级前处理
+# 应用若在运行，系统会先调用 main stop，此处无需额外操作
+exit 0

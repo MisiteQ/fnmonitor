@@ -1,0 +1,40 @@
+[
+  {
+    "stepTitle": "监控参数设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "修改应用配置参数，保存后即时生效，无需重启应用。"
+      },
+      {
+        "type": "select",
+        "field": "wizard_interval",
+        "label": "数据采集间隔",
+        "initValue": "10",
+        "options": [
+          { "label": "5 秒（最精细）", "value": "5" },
+          { "label": "10 秒（推荐）", "value": "10" },
+          { "label": "15 秒", "value": "15" },
+          { "label": "30 秒", "value": "30" },
+          { "label": "60 秒（最省资源）", "value": "60" }
+        ]
+      },
+      {
+        "type": "select",
+        "field": "wizard_retention",
+        "label": "历史数据保留时长",
+        "initValue": "7",
+        "options": [
+          { "label": "1 天", "value": "1" },
+          { "label": "3 天", "value": "3" },
+          { "label": "7 天（推荐）", "value": "7" },
+          { "label": "30 天", "value": "30" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "💾 历史数据保存在应用数据目录（var）中，卸载时可选保留或删除。"
+      }
+    ]
+  }
+]

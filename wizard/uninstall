@@ -1,0 +1,25 @@
+[
+  {
+    "stepTitle": "确认卸载",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "您即将卸载飞牛监控。请选择如何处理监控历史数据："
+      },
+      {
+        "type": "radio",
+        "field": "wizard_delete_data",
+        "label": "数据保留选项",
+        "initValue": "false",
+        "options": [
+          { "label": "保留数据（推荐）- 重新安装后可恢复历史趋势", "value": "false" },
+          { "label": "删除所有数据 - 此操作不可恢复！", "value": "true" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "<strong>警告：</strong> 选择删除数据后，所有监控历史将永久丢失。"
+      }
+    ]
+  }
+]

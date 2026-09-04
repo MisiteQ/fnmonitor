@@ -1,0 +1,97 @@
+#!/bin/bash
+# ============================================================
+# fnmonitor - 飞牛监控 生命周期主脚本
+# 用法: main {start|stop|restart|status|log [N]}
+# 返回码: 0=成功/运行中  3=未运行  1=失败
+# ============================================================
+APP_NAME="${TRIM_APPNAME:-fnmonitor}"
+PID_FILE="${TRIM_PKGVAR}/server.pid"
+LOG_FILE="${TRIM_PKGVAR}/server.log"
+APP_DIR="${TRIM_APPDEST}"
+PORT="${TRIM_SERVICE_PORT:-8777}"
+PYTHON="python3"
+SERVICE_CMD="$PYTHON $APP_DIR/server.py --port $PORT --data-dir $TRIM_PKGVAR"
+
+is_running() {
+    [ -f "$PID_FILE" ] || return 1
+    local pid
+    pid=$(tr -d '[:space:]' < "$PID_FILE")
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start() {
+    if is_running; then
+        echo "$APP_NAME is already running"
+        exit 0
+    fi
+    mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+    if [ ! -f "$APP_DIR/server.py" ]; then
+        echo "错误：未找到 server.py（$APP_DIR/server.py）" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    if ! command -v "$PYTHON" >/dev/null 2>&1; then
+        echo "错误：系统中未找到 python3，无法启动监控服务" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    cd "$APP_DIR" || { echo "错误：无法进入应用目录 $APP_DIR" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+    nohup $SERVICE_CMD >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    sleep 1.5
+    if is_running; then
+        echo "$APP_NAME started (pid $(tr -d '[:space:]' < "$PID_FILE"))"
+        exit 0
+    fi
+    echo "错误：$APP_NAME 启动失败，请查看日志 $LOG_FILE" > "$TRIM_TEMP_LOGFILE"
+    tail -n 20 "$LOG_FILE" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null
+    rm -f "$PID_FILE"
+    exit 1
+}
+
+stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(tr -d '[:space:]' < "$PID_FILE")
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null
+            local i=0
+            while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do
+                sleep 0.5
+                i=$((i + 1))
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -KILL "$pid" 2>/dev/null
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+    echo "$APP_NAME stopped"
+    exit 0
+}
+
+status() {
+    if is_running; then
+        echo "$APP_NAME is running"
+        exit 0
+    fi
+    rm -f "$PID_FILE"
+    echo "$APP_NAME is not running"
+    exit 3
+}
+
+log() {
+    if [ -f "$LOG_FILE" ]; then
+        tail -n "${2:-100}" "$LOG_FILE"
+    else
+        echo "暂无日志"
+    fi
+    exit 0
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 1; start ;;
+    status)  status ;;
+    log)     log "$@" ;;
+    *)       echo "用法: $0 {start|stop|restart|status|log}"; exit 1 ;;
+esac

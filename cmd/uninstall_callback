@@ -1,0 +1,14 @@
+#!/bin/bash
+# ============================================================
+# fnmonitor 卸载后处理
+# 根据用户选择决定是否删除监控历史数据（var 目录由系统保留）
+# ============================================================
+if [ "${wizard_delete_data}" = "true" ]; then
+    if [ -d "${TRIM_PKGVAR}" ]; then
+        find "${TRIM_PKGVAR}" -mindepth 1 -delete 2>/dev/null || true
+    fi
+    echo "已删除监控历史数据"
+else
+    echo "已保留监控历史数据"
+fi
+exit 0
