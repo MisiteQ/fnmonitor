@@ -32,7 +32,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.6.3"
+VERSION = "2.6.4"
 DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": ""}
 
 # ---------------------------------------------------------------------------
@@ -3239,6 +3239,23 @@ def load_config(data_dir):
     return cfg
 
 
+class DualStackHTTPServer(ThreadingHTTPServer):
+    """双栈 HTTP 服务：同时监听 IPv4 与 IPv6（IPV6_V6ONLY=0）。
+
+    默认 ThreadingHTTPServer 监听 0.0.0.0 仅支持 IPv4，导致 IPv6 地址 / IPv6 公网
+    域名 + 端口无法直接访问。本类使用 AF_INET6 + V6ONLY=0，一个 socket 同时服务
+    IPv4 与 IPv6 连接。
+    """
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except Exception:
+            pass
+        super().server_bind()
+
+
 def main():
     ap = argparse.ArgumentParser(description="fnMonitor - fnOS 系统监控后端")
     ap.add_argument("--host", default="0.0.0.0")
@@ -3273,7 +3290,19 @@ def main():
 
     app = MonitorApp(args.data_dir, config, args.host, port, cfg_dir=original_dir)
     handler = app.make_handler()
-    httpd = ThreadingHTTPServer((args.host, port), handler)
+    # 双栈监听：默认 0.0.0.0 时同时监听 IPv4 + IPv6（IPv6 地址 / IPv6 公网域名+端口可直连）
+    bind_host = args.host
+    if bind_host in ("0.0.0.0", "", None):
+        try:
+            httpd = DualStackHTTPServer(("::", port), handler)
+            listen_hint = ":: (IPv4+IPv6)"
+        except Exception:
+            traceback.print_exc()
+            httpd = ThreadingHTTPServer(("0.0.0.0", port), handler)
+            listen_hint = "0.0.0.0 (IPv4)"
+    else:
+        httpd = ThreadingHTTPServer((bind_host, port), handler)
+        listen_hint = bind_host
     app.collector.start()
 
     def shutdown(sig, frame):
@@ -3284,7 +3313,7 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    print("fnMonitor %s listening on http://%s:%d" % (VERSION, args.host, port))
+    print("fnMonitor %s listening on http://[%s]:%d" % (VERSION, listen_hint, port))
     print("data-dir: %s" % args.data_dir)
     try:
         httpd.serve_forever()
