@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>飞牛监控</title>
 <style>
 /* ============================================================
@@ -191,6 +191,7 @@ button{font-family:inherit}
   transition:color .15s,border-color .15s,background-color .15s}
 .icon-btn:hover,.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .icon-btn.spin{animation:rspin .7s linear}
+#fullscreen-btn svg{width:17px;height:17px;flex:none;opacity:.9;display:block}
 @keyframes rspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
 /* 内容区 */
@@ -393,7 +394,7 @@ tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
   border:1px solid transparent;transition:transform .12s,filter .12s;white-space:nowrap}
 .hidden-list .chip:hover{filter:brightness(1.06);transform:translateY(-1px)}
 .hidden-list .none-hint{font-size:12px;color:var(--dim);padding:4px 0}
-.restore-fab{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:90;
+.restore-fab{position:fixed;right:18px;bottom:calc(18px + max(env(safe-area-inset-bottom,0px),var(--extra-inset,0px)));z-index:90;
   display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border:none;border-radius:99px;cursor:pointer;
   background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#0ea5e9));color:#fff;
   font-size:12.5px;font-weight:700;box-shadow:var(--shadow-md);transition:transform .15s,filter .15s}
@@ -532,16 +533,16 @@ table.listen-tbl td:nth-child(2){max-width:230px;overflow-wrap:break-word;white-
   .detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr}
   .range-switch{flex-wrap:wrap}
   .range-switch button{padding:6px 10px}
-  .restore-fab{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  .restore-fab{bottom:calc(64px + max(env(safe-area-inset-bottom,0px),var(--extra-inset,0px)))}
   .mobile-nav{display:flex}
   body{padding-bottom:0}
-  main{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+  main{padding-bottom:calc(84px + max(env(safe-area-inset-bottom,0px),var(--extra-inset,0px)))}
 }
 .mobile-nav{display:none}
 @media (max-width:920px){
   .mobile-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:100;
     background:var(--topbar-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-    border-top:1px solid var(--border);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));
+    border-top:1px solid var(--border);padding:6px 8px calc(6px + max(env(safe-area-inset-bottom,0px),var(--extra-inset,0px)));
     justify-content:space-around}
   .mobile-nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;
     background:transparent;border:none;color:var(--muted);font-size:10px;cursor:pointer;
@@ -601,7 +602,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.8.0</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.8.2</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -613,6 +614,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </div>
   <div class="sysinfo" id="sysinfo"><span>主机: <b>--</b></span><span>系统: <b>--</b></span><span>内核: <b>--</b></span><span>运行: <b>--</b></span><span class="ip-chips" id="sys-ips" title="本机 IP 地址"></span></div>
   <div class="top-actions">
+    <button class="icon-btn" id="fullscreen-btn" title="进入全屏（F11）"></button>
     <button class="icon-btn" id="refresh-btn" title="刷新全部数据" onclick="globalRefresh()">⟳</button>
     <button class="theme-btn" id="theme-btn" title="切换主题（当前浅色清新，点击切换）">🍀</button>
   </div>
@@ -920,7 +922,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.8.1 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.8.2 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -2400,6 +2402,82 @@ if (themeBtn){
   setInterval(pollPorts, 60000);
   setInterval(pollWeather, 600000);
   setInterval(loadHistory, 30000);
+})();
+
+/* ---------- 全屏切换（F11 拦截 + 顶栏按钮） ----------
+   浏览器原生 F11 全屏存在缺陷：鼠标移到屏幕顶部会弹出标题栏 / 菜单栏。
+   这里拦截 F11 改走 Fullscreen API，全屏期间浏览器栏不会浮现；
+   顶栏按钮与手机端同样生效（移动端进入沉浸式全屏）。 */
+(function(){
+  const fsBtn = $("fullscreen-btn");
+  const ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+  const ICON_EXIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>';
+  function fsEl(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function fsToggle(){
+    if (fsEl()){
+      if (document.exitFullscreen) { const p = document.exitFullscreen(); if (p && p.catch) p.catch(()=>{}); }
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } else {
+      const el = document.documentElement;
+      try {
+        const p = el.requestFullscreen ? el.requestFullscreen() : (el.webkitRequestFullscreen ? el.webkitRequestFullscreen() : null);
+        if (p && p.catch) p.catch(()=>{});
+      } catch(e){}
+    }
+  }
+  function fsSync(){
+    const on = !!fsEl();
+    if (fsBtn){ fsBtn.innerHTML = on ? ICON_EXIT : ICON_ENTER; fsBtn.title = on ? "退出全屏（F11 / Esc）" : "进入全屏（F11）"; }
+  }
+  if (fsBtn){
+    fsBtn.addEventListener("click", fsToggle);
+    fsSync();
+  }
+  document.addEventListener("fullscreenchange", fsSync);
+  document.addEventListener("webkitfullscreenchange", fsSync);
+  window.addEventListener("keydown", function(e){
+    if (e.key === "F11" || e.keyCode === 122){
+      e.preventDefault();
+      if (!e.repeat) fsToggle();
+    }
+  }, true);
+})();
+
+/* ---------- 手机底部虚拟按键适配 ----------
+   部分安卓手机（三键导航）在沉浸式 / 全屏渲染时，屏幕底部虚拟按键会盖住
+   底部导航与悬浮按钮。此处检测底部被遮挡高度，写入 --extra-inset 变量，
+   配合 max(env(safe-area-inset-bottom), var(--extra-inset)) 自动抬高适配。 */
+(function(){
+  const root = document.documentElement;
+  // 探针元素：读取系统真实底部安全区（需 viewport-fit=cover 支持）
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:0;bottom:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-bottom:env(safe-area-inset-bottom,0px);";
+  document.body.appendChild(probe);
+  let lastInset = -1;
+  function detectBottomInset(){
+    let inset = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+    if (inset <= 0){
+      // 系统安全区不可用（部分安卓 WebView / 沉浸式渲染）：用屏幕高度差启发式判定
+      const coarse = window.matchMedia && matchMedia("(pointer:coarse)").matches;
+      const mobileUA = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || "");
+      if (coarse || mobileUA){
+        const portrait = window.innerHeight >= window.innerWidth;
+        const scr = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+        const diff = scr - window.innerHeight;
+        // 常规浏览器窗口上方有状态栏+地址栏（差值 >100px），底部不会被遮挡；
+        // 若窗口几乎铺满整屏（差值 <32px），说明内容已贴边渲染，底部存在虚拟按键遮挡
+        if (diff < 32) inset = 48; // 三键导航典型高度
+      }
+    }
+    inset = Math.round(inset);
+    if (inset !== lastInset){
+      lastInset = inset;
+      root.style.setProperty("--extra-inset", inset > 0 ? inset + "px" : "0px");
+    }
+  }
+  window.addEventListener("resize", detectBottomInset);
+  window.addEventListener("orientationchange", detectBottomInset);
+  detectBottomInset();
 })();
 </script>
 </body>
