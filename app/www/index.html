@@ -5,569 +5,506 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>飞牛监控</title>
 <style>
+/* ============================================================
+   fnMonitor v2.8.0 设计系统 —— 现代 NAS 仪表盘风格
+   布局：左侧边栏导航（可收起）+ 顶栏信息 + 卡片内容区
+   令牌：7 套主题只覆盖颜色变量，组件样式统一从令牌派生
+   ============================================================ */
 :root{
-  --bg:#0b1020; --bg2:#101728; --card:#141c31; --card2:#1a2440;
-  --border:#232f4f; --text:#e2e8f0; --muted:#8ba0c4; --dim:#5b6b8f;
+  /* 表面色（暗黑为默认兜底） */
+  --bg:#0b0f1a; --bg2:#111827; --card:#111827; --card2:#18213a;
+  --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
+  /* 语义色（各主题基本一致，暗色提亮） */
   --sky:#38bdf8; --violet:#a78bfa; --emerald:#34d399; --amber:#fbbf24;
   --red:#f87171; --rose:#f472b6;
-  --bar-track:#0d1326; --row-border:#1a2440; --topbar-bg:rgba(11,16,32,.92);
-  --radius:12px;
+  /* 强调色（界面框架用：导航 / 按钮 / 链接） */
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.14);
+  --bar-track:#0d1326; --row-border:#1a2440; --topbar-bg:rgba(13,18,30,.85);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.24),0 4px 16px -8px rgba(0,0,0,.3);
+  --shadow-md:0 4px 12px -4px rgba(0,0,0,.35),0 16px 40px -16px rgba(0,0,0,.45);
+  --side-w:236px; --radius:16px;
+  color-scheme:dark;
 }
-/* ===== 全局滚动条美化（细条 + 圆角 + 半透明，覆盖所有横向/纵向溢出容器） ===== */
-*{scrollbar-width:thin;scrollbar-color:rgba(139,160,196,.45) transparent;}
-*::-webkit-scrollbar{width:6px;height:6px;}
-*::-webkit-scrollbar-track{background:transparent;}
-*::-webkit-scrollbar-thumb{background:rgba(139,160,196,.4);border-radius:8px;}
-*::-webkit-scrollbar-thumb:hover{background:rgba(139,160,196,.65);}
-*::-webkit-scrollbar-corner{background:transparent;}
-:root[data-theme="light"] *::-webkit-scrollbar-thumb{background:rgba(100,116,139,.35);}
-:root[data-theme="light"] *::-webkit-scrollbar-thumb:hover{background:rgba(100,116,139,.55);}
-:root[data-theme="dark"] *::-webkit-scrollbar-thumb{background:rgba(139,160,196,.32);}
-:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover{background:rgba(139,160,196,.55);}
-:root[data-theme="blue"] *::-webkit-scrollbar-thumb{background:rgba(76,106,146,.35);}
-:root[data-theme="fresh"] *::-webkit-scrollbar-thumb{background:rgba(100,160,120,.35);}
-:root[data-theme="green"] *::-webkit-scrollbar-thumb{background:rgba(52,211,153,.35);}
-:root[data-theme="yellow"] *::-webkit-scrollbar-thumb{background:rgba(251,191,36,.35);}
-:root[data-theme="cyan"] *::-webkit-scrollbar-thumb{background:rgba(56,189,248,.35);}
-/* 白日主题 */
+:root[data-theme="dark"]{
+  --bg:#0b0f1a; --bg2:#111827; --card:#111827; --card2:#18213a;
+  --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
+  --sky:#38bdf8; --violet:#a78bfa; --emerald:#34d399; --amber:#fbbf24;
+  --red:#f87171; --rose:#f472b6;
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.16);
+  --bar-track:#0d1326; --row-border:#1a2440; --topbar-bg:rgba(13,18,30,.85);
+  color-scheme:dark;
+}
 :root[data-theme="light"]{
-  --bg:#eef2f7; --bg2:#e3ebf6; --card:#ffffff; --card2:#f2f6fc;
-  --border:#d5dfee; --text:#0f172a; --muted:#5b6b8f; --dim:#8496b8;
+  --bg:#f1f3f6; --bg2:#f8fafc; --card:#ffffff; --card2:#f2f5f9;
+  --border:#e4e8ef; --text:#0f172a; --muted:#64748b; --dim:#98a2b3;
   --sky:#0284c7; --violet:#7c3aed; --emerald:#059669; --amber:#d97706;
   --red:#dc2626; --rose:#db2777;
-  --bar-track:#dbe4f0; --row-border:#dfe8f4; --topbar-bg:rgba(255,255,255,.92);
+  --accent:#475569; --accent-soft:rgba(71,85,105,.1);
+  --bar-track:#e8edf4; --row-border:#eef2f7; --topbar-bg:rgba(255,255,255,.82);
+  --shadow-sm:0 1px 2px rgba(15,23,42,.04),0 4px 14px -8px rgba(15,23,42,.1);
+  --shadow-md:0 4px 10px -4px rgba(15,23,42,.1),0 18px 40px -18px rgba(15,23,42,.18);
+  color-scheme:light;
 }
-/* 飞牛蓝主题（参照飞牛 OS 原生配色：蓝白清爽 + 高对比强调） */
 :root[data-theme="blue"]{
-  --bg:#f4f7fb; --bg2:#e9eef7; --card:#ffffff; --card2:#f0f5ff;
-  --border:#d7e2f2; --text:#12233f; --muted:#4c6a92; --dim:#8aa0c0;
+  --bg:#f4f7fc; --bg2:#f8fafd; --card:#ffffff; --card2:#eff4fb;
+  --border:#dde6f2; --text:#12233f; --muted:#51688c; --dim:#8ea3c2;
   --sky:#0e7fff; --violet:#5b6bf0; --emerald:#0aa06e; --amber:#f59e0b;
   --red:#e5484d; --rose:#e04f8f;
-  --bar-track:#e3ecf7; --row-border:#dfe8f4; --topbar-bg:rgba(255,255,255,.9);
-  --radius:14px;
+  --accent:#2563eb; --accent-soft:rgba(37,99,235,.1);
+  --bar-track:#e3ecf7; --row-border:#e8eef7; --topbar-bg:rgba(255,255,255,.82);
+  --shadow-sm:0 1px 2px rgba(18,35,63,.05),0 4px 14px -8px rgba(18,35,63,.1);
+  --shadow-md:0 4px 10px -4px rgba(18,35,63,.1),0 18px 40px -18px rgba(18,35,63,.2);
+  color-scheme:light;
 }
-:root[data-theme="blue"] .card{background:linear-gradient(180deg,#ffffff,var(--bg2))}
-:root[data-theme="blue"] .theme-btn{color:#0e7fff}
-/* 浅色清新主题（参照网络主流 NAS 监控面板设计：浅灰渐变 + 绿色强调 + 毛玻璃卡片） */
 :root[data-theme="fresh"]{
-  --bg:#f2f4f7; --bg2:#e8edf2; --card:rgba(255,255,255,.88); --card2:#f6f9fb;
-  --border:#e2e9ef; --text:#1a1a1a; --muted:#7a7a7a; --dim:#a3a3a3;
+  --bg:#f5f6f8; --bg2:#f9fafb; --card:#ffffff; --card2:#f3f6f8;
+  --border:#e6e9ef; --text:#101828; --muted:#667085; --dim:#98a2b3;
   --sky:#059669; --violet:#6a8cff; --emerald:#10b981; --amber:#f0a028;
   --red:#ef4444; --rose:#ec5f8a;
-  --bar-track:#e8e8e8; --row-border:#eef2f6; --topbar-bg:rgba(255,255,255,.86);
-  --radius:14px;
+  --accent:#059669; --accent-soft:rgba(5,150,105,.1);
+  --bar-track:#e9edf1; --row-border:#eef1f5; --topbar-bg:rgba(255,255,255,.82);
+  --shadow-sm:0 1px 2px rgba(16,24,40,.04),0 4px 14px -8px rgba(16,24,40,.1);
+  --shadow-md:0 4px 10px -4px rgba(16,24,40,.1),0 18px 40px -18px rgba(16,24,40,.18);
+  color-scheme:light;
 }
-:root[data-theme="fresh"] body{background:linear-gradient(135deg,#ffffff 0%,#f2f4f7 50%,#ffffff 100%)}
-:root[data-theme="fresh"] body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background:radial-gradient(ellipse 100% 60% at 50% -10%,rgba(16,185,129,.10),transparent 60%)}
-:root[data-theme="fresh"] .card{background:var(--card);border:1px solid rgba(0,0,0,.06);border-radius:16px;
-  box-shadow:0 6px 20px rgba(0,0,0,.06);transition:transform .3s cubic-bezier(.4,0,.2,1),box-shadow .3s,border-color .3s}
-:root[data-theme="fresh"] .card:hover{background:rgba(255,255,255,.96);border-color:rgba(16,185,129,.22);
-  box-shadow:0 10px 24px rgba(0,0,0,.09);transform:translateY(-2px)}
-:root[data-theme="fresh"] .theme-btn{color:#10b981;border-radius:12px}
-:root[data-theme="fresh"] .tab.active{color:#059669;background:#fff;border-color:rgba(16,185,129,.25);box-shadow:0 2px 8px rgba(16,185,129,.12)}
-:root[data-theme="fresh"] .tab{color:#7a7a7a}
-:root[data-theme="fresh"] .tag.on{background:rgba(16,185,129,.12);color:#047857;border-color:rgba(16,185,129,.3)}
-:root[data-theme="fresh"] .status .dot{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,.6)}
-:root[data-theme="fresh"] .cpu .value{color:#059669}
-:root[data-theme="fresh"] .cpu .bar i{background:linear-gradient(90deg,#34d399,#059669)}
-:root[data-theme="fresh"] .dstat .ds-num.on{color:#10b981}
-:root[data-theme="fresh"] .op-btn{border-radius:8px;background:#fff}
-:root[data-theme="fresh"] .op-btn:hover{border-color:#059669;color:#059669}
-:root[data-theme="fresh"] .bar{background:#e8e8e8}
-:root[data-theme="fresh"] .bar i{transition:width .6s ease}
-:root[data-theme="fresh"] .brand .logo{filter:drop-shadow(0 2px 8px rgba(16,185,129,.4))}
-:root[data-theme="fresh"] .panel-head{background:transparent}
-:root[data-theme="fresh"] .panel-title{color:#1a1a1a}
-
-/* ===== 现代浅色界面语言（浅色卡片网格 / 毛玻璃 / 绿色强调 / 入场动画） ===== */
-:root[data-theme="fresh"] .topbar{background:var(--topbar-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
-:root[data-theme="fresh"] .brand .logo{width:28px;height:28px;color:#fff;border-radius:8px;padding:5px;
-  background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 2px 10px rgba(16,185,129,.5)}
-:root[data-theme="fresh"] .card{animation:bn-enter .32s cubic-bezier(.25,.46,.45,.94) backwards}
-:root[data-theme="fresh"] .panel{animation:bn-enter .32s cubic-bezier(.25,.46,.45,.94) backwards;
-  transition:transform .3s cubic-bezier(.4,0,.2,1),box-shadow .3s,border-color .3s}
-:root[data-theme="fresh"] .panel:hover{transform:translateY(-2px);border-color:rgba(16,185,129,.22);
-  box-shadow:0 10px 24px rgba(0,0,0,.09)}
-@keyframes bn-enter{0%{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-:root[data-theme="fresh"] tr:hover td{background:rgba(16,185,129,.05)}
-:root[data-theme="fresh"] .state-dot.st-running{box-shadow:0 0 6px rgba(16,185,129,.7)}
-:root[data-theme="fresh"] .chart-box,.detail-box,.hw-box,.sens-card{background:rgba(255,255,255,.62);border-color:rgba(0,0,0,.06)}
-:root[data-theme="fresh"] .set-row,.export-row,.port-sec,.port-sec .ps-head,.dstat,.app-card,.mod{background:rgba(255,255,255,.55);border-color:rgba(0,0,0,.06)}
-:root[data-theme="fresh"] .range-switch{background:#fff;border-color:rgba(0,0,0,.08)}
-:root[data-theme="fresh"] .range-switch button.active{background:rgba(16,185,129,.12);color:#047857}
-:root[data-theme="fresh"] .op-btn{background:#fff}
-:root[data-theme="fresh"] .card .value,.card .sub b{color:#1a1a1a}
-:root[data-theme="fresh"] .theme-btn{background:#fff}
-:root[data-theme="fresh"] .restore-bar{background:linear-gradient(135deg,#10b981,#059669);color:#fff}
-/* ===== 翡翠绿主题（绿色） ===== */
 :root[data-theme="green"]{
-  --bg:#f0f6f1; --bg2:#e3efe7; --card:rgba(255,255,255,.9); --card2:#f1faf4;
-  --border:#d5e8db; --text:#14301f; --muted:#4c7a5e; --dim:#8fb39c;
+  --bg:#f2f8f3; --bg2:#f8fbf8; --card:#ffffff; --card2:#eef7ef;
+  --border:#dbeadf; --text:#14301f; --muted:#4c7a5e; --dim:#8fb39c;
   --sky:#16a34a; --violet:#5b8def; --emerald:#10b981; --amber:#d97706;
   --red:#dc2626; --rose:#db2777;
-  --bar-track:#dcebe1; --row-border:#dcebe1; --topbar-bg:rgba(255,255,255,.92);
+  --accent:#16a34a; --accent-soft:rgba(22,163,74,.12);
+  --bar-track:#dcebe1; --row-border:#e3efe6; --topbar-bg:rgba(255,255,255,.84);
+  --shadow-sm:0 1px 2px rgba(20,48,31,.05),0 4px 14px -8px rgba(20,48,31,.1);
+  --shadow-md:0 4px 10px -4px rgba(20,48,31,.1),0 18px 40px -18px rgba(20,48,31,.18);
+  color-scheme:light;
 }
-:root[data-theme="green"] .theme-btn{color:#16a34a}
-:root[data-theme="green"] .tab.active{color:#15803d;background:#fff;border-color:rgba(22,163,74,.32);box-shadow:0 2px 8px rgba(22,163,74,.14)}
-:root[data-theme="green"] .tag.on{background:rgba(22,163,74,.12);color:#15803d;border-color:rgba(22,163,74,.32)}
-:root[data-theme="green"] .status .dot{background:#16a34a;box-shadow:0 0 6px rgba(22,163,74,.6)}
-:root[data-theme="green"] .cpu .value{color:#15803d}
-:root[data-theme="green"] .cpu .bar i{background:linear-gradient(90deg,#4ade80,#16a34a)}
-:root[data-theme="green"] .card{background:linear-gradient(180deg,#ffffff,var(--bg2))}
-:root[data-theme="green"] .op-btn:hover{border-color:#16a34a;color:#16a34a}
-:root[data-theme="green"] .restore-bar{background:linear-gradient(135deg,#22c55e,#15803d);color:#fff}
-/* ===== 暖黄主题（黄色） ===== */
 :root[data-theme="yellow"]{
-  --bg:#faf7ee; --bg2:#f5eee0; --card:rgba(255,255,255,.93); --card2:#fdf9ef;
-  --border:#efe3c4; --text:#3b2f12; --muted:#8a7440; --dim:#b3a06f;
+  --bg:#faf8f1; --bg2:#fdfbf4; --card:#ffffff; --card2:#faf4e4;
+  --border:#ece1c8; --text:#3b2f12; --muted:#8a7440; --dim:#b3a06f;
   --sky:#ca8a04; --violet:#8a7a3a; --emerald:#a16207; --amber:#f59e0b;
   --red:#dc2626; --rose:#db2777;
-  --bar-track:#f0e7cf; --row-border:#f0e7cf; --topbar-bg:rgba(255,255,255,.92);
+  --accent:#d97706; --accent-soft:rgba(217,119,6,.12);
+  --bar-track:#f0e7cf; --row-border:#f3ecdb; --topbar-bg:rgba(255,255,255,.84);
+  --shadow-sm:0 1px 2px rgba(59,47,18,.05),0 4px 14px -8px rgba(59,47,18,.1);
+  --shadow-md:0 4px 10px -4px rgba(59,47,18,.1),0 18px 40px -18px rgba(59,47,18,.18);
+  color-scheme:light;
 }
-:root[data-theme="yellow"] .theme-btn{color:#ca8a04}
-:root[data-theme="yellow"] .tab.active{color:#92400e;background:#fff;border-color:rgba(202,138,4,.35);box-shadow:0 2px 8px rgba(202,138,4,.15)}
-:root[data-theme="yellow"] .tag.on{background:rgba(245,158,11,.14);color:#92400e;border-color:rgba(245,158,11,.35)}
-:root[data-theme="yellow"] .status .dot{background:#d97706;box-shadow:0 0 6px rgba(217,119,6,.6)}
-:root[data-theme="yellow"] .cpu .value{color:#b45309}
-:root[data-theme="yellow"] .cpu .bar i{background:linear-gradient(90deg,#fbbf24,#d97706)}
-:root[data-theme="yellow"] .card{background:linear-gradient(180deg,#ffffff,var(--bg2))}
-:root[data-theme="yellow"] .op-btn:hover{border-color:#ca8a04;color:#ca8a04}
-:root[data-theme="yellow"] .restore-bar{background:linear-gradient(135deg,#f59e0b,#b45309);color:#fff}
-/* ===== 青色主题（青蓝） ===== */
 :root[data-theme="cyan"]{
-  --bg:#eff9fb; --bg2:#e2f3f7; --card:rgba(255,255,255,.92); --card2:#effbfd;
-  --border:#d0e8ee; --text:#0f3138; --muted:#3f7180; --dim:#8ab2bd;
+  --bg:#f1f9fb; --bg2:#f7fcfd; --card:#ffffff; --card2:#e9f6f9;
+  --border:#d5eaf0; --text:#0f3138; --muted:#3f7180; --dim:#8ab2bd;
   --sky:#0891b2; --violet:#5b8def; --emerald:#0d9488; --amber:#d97706;
   --red:#dc2626; --rose:#db2777;
-  --bar-track:#d7edf2; --row-border:#d7edf2; --topbar-bg:rgba(255,255,255,.92);
+  --accent:#0891b2; --accent-soft:rgba(8,145,178,.11);
+  --bar-track:#d9edf3; --row-border:#e4f2f6; --topbar-bg:rgba(255,255,255,.84);
+  --shadow-sm:0 1px 2px rgba(15,49,56,.05),0 4px 14px -8px rgba(15,49,56,.1);
+  --shadow-md:0 4px 10px -4px rgba(15,49,56,.1),0 18px 40px -18px rgba(15,49,56,.18);
+  color-scheme:light;
 }
-:root[data-theme="cyan"] .theme-btn{color:#0891b2}
-:root[data-theme="cyan"] .tab.active{color:#0e7490;background:#fff;border-color:rgba(8,145,178,.32);box-shadow:0 2px 8px rgba(8,145,178,.14)}
-:root[data-theme="cyan"] .tag.on{background:rgba(8,145,178,.12);color:#0e7490;border-color:rgba(8,145,178,.32)}
-:root[data-theme="cyan"] .status .dot{background:#0891b2;box-shadow:0 0 6px rgba(8,145,178,.6)}
-:root[data-theme="cyan"] .cpu .value{color:#0e7490}
-:root[data-theme="cyan"] .cpu .bar i{background:linear-gradient(90deg,#22d3ee,#0891b2)}
-:root[data-theme="cyan"] .card{background:linear-gradient(180deg,#ffffff,var(--bg2))}
-:root[data-theme="cyan"] .op-btn:hover{border-color:#0891b2;color:#0891b2}
-:root[data-theme="cyan"] .restore-bar{background:linear-gradient(135deg,#06b6d4,#0e7490);color:#fff}
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.5}
-body{padding-bottom:40px}
-a{color:var(--sky);text-decoration:none}
 
-/* 顶部 */
-.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:16px;
-  padding:12px 24px;background:var(--topbar-bg);backdrop-filter:blur(8px);
+/* ===== 基础 ===== */
+*{margin:0;padding:0;box-sizing:border-box}
+html{background:var(--bg)}
+body{color:var(--text);
+  font-family:"Inter","PingFang SC","Microsoft YaHei UI","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+/* 顶部品牌光晕：极淡的强调色径向渐变，让页面背景更有层次（参考现代仪表盘风格） */
+body::before{content:"";position:fixed;top:-340px;left:50%;transform:translateX(-50%);
+  width:1240px;height:640px;border-radius:50%;pointer-events:none;z-index:-1;
+  background:radial-gradient(closest-side,var(--accent-soft),transparent 72%);opacity:.6}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:none}
+::selection{background:var(--accent-soft)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:6px}
+button{font-family:inherit}
+/* 滚动条 */
+*{scrollbar-width:thin;scrollbar-color:var(--dim) transparent}
+*::-webkit-scrollbar{width:6px;height:6px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dim) 55%,transparent);border-radius:8px}
+*::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+*::-webkit-scrollbar-corner{background:transparent}
+
+/* ===== 布局壳：侧边栏 + 内容 ===== */
+.layout{display:flex;min-height:100vh}
+.sidebar{position:fixed;top:0;bottom:0;left:0;width:var(--side-w);z-index:70;
+  display:flex;flex-direction:column;padding:18px 14px 16px;
+  background:var(--card);border-right:1px solid var(--border);
+  transition:width .24s ease,padding .24s ease}
+.brand{display:flex;align-items:center;gap:10px;font-size:16.5px;font-weight:800;letter-spacing:.2px;padding:2px 6px 0;white-space:nowrap}
+.brand .logo{width:30px;height:30px;color:#fff;flex:none;border-radius:9px;padding:6px;
+  background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#0ea5e9));
+  box-shadow:0 4px 12px -2px var(--accent-soft)}
+.brand .b-sub{display:block;font-size:10.5px;font-weight:600;color:var(--dim);letter-spacing:1.5px;margin-top:1px}
+/* 侧边栏收起 / 展开按钮：悬浮在侧边栏右边缘的圆形按钮（桌面端） */
+.side-toggle{position:absolute;top:26px;right:-11px;width:22px;height:22px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+  background:var(--card);border:1px solid var(--border);color:var(--dim);
+  box-shadow:var(--shadow-sm);z-index:75;transition:color .15s,border-color .15s,transform .15s}
+.side-toggle:hover{color:var(--accent);border-color:var(--accent);transform:scale(1.12)}
+.side-toggle svg{width:12px;height:12px;transition:transform .25s ease}
+.side-nav{display:flex;flex-direction:column;gap:3px;margin-top:22px;flex:1}
+.side-nav .nav-sec{font-size:10.5px;font-weight:700;letter-spacing:1.4px;color:var(--dim);
+  text-transform:uppercase;padding:0 12px;margin:10px 0 6px}
+.tab{display:flex;align-items:center;gap:10px;width:100%;text-align:left;position:relative;
+  border:1px solid transparent;background:transparent;color:var(--muted);
+  padding:9.5px 12px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;
+  transition:background-color .15s,color .15s;white-space:nowrap;flex:none}
+.tab svg{width:17px;height:17px;flex:none;opacity:.9}
+.tab:hover{background:var(--bg2);color:var(--text)}
+/* 激活态：左侧强调条 + 向右淡出的强调色渐变 */
+.tab.active{background:linear-gradient(90deg,var(--accent-soft),transparent 90%);color:var(--accent)}
+.tab.active::before{content:"";position:absolute;left:0;top:24%;bottom:24%;width:3px;border-radius:99px;background:var(--accent)}
+.tab.active svg{opacity:1}
+.side-foot{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px}
+.side-foot .status{padding:0 6px}
+.side-ver{font-size:11px;color:var(--dim);padding:0 6px;display:flex;justify-content:space-between;align-items:center}
+.content{flex:1;margin-left:var(--side-w);display:flex;flex-direction:column;min-width:0;min-height:100vh;
+  transition:margin-left .24s ease}
+.m-brand{display:none}
+
+/* ----- 侧边栏收起态（桌面端）：图标模式 ----- */
+:root.side-min{--side-w:68px}
+:root.side-min .sidebar{padding-left:10px;padding-right:10px}
+:root.side-min .brand{justify-content:center;padding:2px 0 0}
+:root.side-min .brand > span{display:none}
+:root.side-min .nav-sec{visibility:hidden}
+:root.side-min .tab{justify-content:center;padding-left:0;padding-right:0;gap:0}
+:root.side-min .t-label{display:none}
+:root.side-min .side-foot .status{justify-content:center;padding:0}
+:root.side-min #status-text{display:none}
+:root.side-min .side-ver{display:none}
+:root.side-min .side-toggle svg{transform:rotate(180deg)}
+
+/* 顶栏 */
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:14px;
+  padding:11px 22px;background:var(--topbar-bg);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-bottom:1px solid var(--border)}
-.brand{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;white-space:nowrap}
-.brand .logo{width:26px;height:26px}
-.sysinfo{flex:1;min-width:0;color:var(--muted);font-size:12px;display:flex;gap:18px;flex-wrap:wrap}
+.sysinfo{flex:1;min-width:0;color:var(--muted);font-size:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .sysinfo b{color:var(--text);font-weight:600}
 .status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
-.status .dot{width:8px;height:8px;border-radius:50%;background:var(--emerald);display:inline-block}
-.status .dot.err{background:var(--red)}
+.status .dot{width:8px;height:8px;border-radius:50%;background:var(--emerald);display:inline-block;box-shadow:0 0 0 3px color-mix(in srgb,var(--emerald) 18%,transparent);animation:dotpulse 2.6s ease-in-out infinite}
+.status .dot.err{background:var(--red);box-shadow:0 0 0 3px rgba(239,68,68,.16);animation:none}
+@keyframes dotpulse{0%,100%{box-shadow:0 0 0 3px color-mix(in srgb,var(--emerald) 18%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--emerald) 7%,transparent)}}
+.top-actions{display:flex;align-items:center;gap:8px;flex:none}
+.icon-btn,.theme-btn{width:36px;height:36px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;
+  font-size:16px;cursor:pointer;flex:none;border:1px solid var(--border);background:var(--card);color:var(--muted);
+  transition:color .15s,border-color .15s,background-color .15s}
+.icon-btn:hover,.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.icon-btn.spin{animation:rspin .7s linear}
+@keyframes rspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
-main{width:100%;padding:16px 20px;box-sizing:border-box}
-
-/* ===== 平铺布局：所有面板整行铺开，内部卡片横向平铺填满整个宽度（不残留空白） ===== */
-main{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
+/* 内容区 */
+main{flex:1;width:100%;padding:20px 22px;display:grid;grid-template-columns:1fr;gap:18px;align-items:start}
 main section[data-panel]{min-width:0;width:100%}
-/* Docker 页内顺序：容器在前、端口在后 */
 main section[data-panel="docker"]{order:0}
 main section[data-panel="ports"]{order:1}
-@media (max-width:768px){
-  main{grid-template-columns:1fr;gap:12px}
-}
+.footer{text-align:center;color:var(--dim);font-size:12px;padding:18px 16px 14px}
 
-/* 概览卡片 */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
-.card{background:linear-gradient(180deg,var(--card),var(--bg2));border:1px solid var(--border);border-radius:var(--radius);padding:16px;min-width:0}
-.card .label{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
-.card .value{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;word-break:break-word;min-width:0}
-.card .value small{font-size:14px;font-weight:500;color:var(--muted);margin-left:2px}
-.card .sub{font-size:12px;color:var(--muted);margin-top:6px;overflow-wrap:anywhere;word-break:break-word}
-.card .sub b{color:var(--text)}
-.card.ip .value{font-size:14px;line-height:1.55;white-space:pre-line;color:var(--sky);font-weight:600}
-.bar{height:6px;border-radius:3px;background:var(--bar-track);margin-top:10px;overflow:hidden}
-.bar i{display:block;height:100%;border-radius:3px;transition:width .6s ease}
+/* ===== 面板 ===== */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow-sm);overflow:hidden;position:relative;
+  animation:bn-enter .34s cubic-bezier(.25,.46,.45,.94) backwards;
+  transition:box-shadow .25s,border-color .25s}
+/* 顶部模块强调线：每个面板按 --p-acc 独立配色（参考现代监控面板的模块色识别） */
+.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;pointer-events:none;
+  background:linear-gradient(90deg,var(--p-acc,var(--accent)),color-mix(in srgb,var(--p-acc,var(--accent)) 30%,transparent) 70%,transparent)}
+.panel:hover{box-shadow:var(--shadow-md);border-color:color-mix(in srgb,var(--accent) 26%,var(--border))}
+@keyframes bn-enter{0%{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.panel-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:13px 18px 12px;border-bottom:1px solid var(--border);margin-bottom:0}
+.panel-title{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px;margin-right:auto;min-width:0}
+main section[data-panel]{--p-acc:var(--accent)}
+.panel-title::before{content:"";width:8px;height:8px;border-radius:3px;background:var(--p-acc,var(--accent));display:inline-block;flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--p-acc,var(--accent)) 16%,transparent)}
+main section[data-panel="clock"]{--p-acc:#f59e0b}
+main section[data-panel="overview"]{--p-acc:#10b981}
+main section[data-panel="detail"]{--p-acc:#0ea5e9}
+main section[data-panel="disks"]{--p-acc:#8b5cf6}
+main section[data-panel="hardware"]{--p-acc:#ec4899}
+main section[data-panel="wall"]{--p-acc:#ef4444}
+main section[data-panel="powergpu"]{--p-acc:#f97316}
+main section[data-panel="trend"]{--p-acc:#10b981}
+main section[data-panel="processes"]{--p-acc:#64748b}
+main section[data-panel="docker"]{--p-acc:#0ea5e9}
+main section[data-panel="ports"]{--p-acc:#6366f1}
+main section[data-panel="apps"]{--p-acc:#22c55e}
+main section[data-panel="export"]{--p-acc:#eab308}
+main section[data-panel="settings"]{--p-acc:#94a3b8}
+.drag-handle{cursor:grab;color:var(--dim);font-size:14px;user-select:none;line-height:1;padding:0 2px}
+.drag-handle:active{cursor:grabbing}
+.panel-hide{border:none;background:transparent;color:var(--dim);cursor:pointer;font-size:13px;padding:2px 5px;line-height:1;border-radius:6px;transition:color .15s,background-color .15s}
+.panel-hide:hover{color:var(--red);background:rgba(239,68,68,.09)}
+.panel.dragging{opacity:.5;outline:1px dashed var(--accent);outline-offset:2px}
+.panel > :not(.panel-head){margin:15px 18px 0}
+.panel > :last-child{margin-bottom:16px}
+
+/* ===== 概览卡片 ===== */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 15px;min-width:0;
+  display:flex;flex-direction:column;min-height:122px;position:relative;
+  transition:transform .2s,box-shadow .2s,border-color .2s}
+.card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:color-mix(in srgb,var(--p-acc,var(--accent)) 32%,var(--border))}
+.card .label{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.card .value{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.3px;overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.card .value small{font-size:13px;font-weight:600;color:var(--muted);margin-left:2px}
+.card .sub{font-size:12px;color:var(--muted);margin-top:auto;padding-top:8px;overflow-wrap:anywhere;word-break:break-word}
+.card .sub b{color:var(--text);font-weight:600}
+.card.ip .value{font-size:13.5px;line-height:1.55;white-space:pre-line;color:var(--accent);font-weight:700}
+.bar{height:6px;border-radius:99px;background:var(--bar-track);margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;transition:width .6s ease}
 .cpu .value{color:var(--sky)} .cpu .bar i{background:linear-gradient(90deg,#0ea5e9,var(--sky))}
 .mem .value{color:var(--violet)} .mem .bar i{background:linear-gradient(90deg,#8b5cf6,var(--violet))}
 .disk .value{color:var(--emerald)} .disk .bar i{background:linear-gradient(90deg,#10b981,var(--emerald))}
 .net .value{color:var(--rose)}
 .temp .value{color:var(--amber)}
 .load .value{color:var(--text)}
-.uptime .value{color:var(--sky);font-size:22px}
+.uptime .value{color:var(--sky);font-size:21px}
+.card.lunar .value{font-size:15px;white-space:normal;line-height:1.25;font-weight:700}
+.card.lunar .sub{font-size:13px;margin-top:auto;padding-top:8px}
+.clock-date{font-size:16px;color:var(--muted);font-weight:600;margin-bottom:5px}
+.clock-date .wday{color:var(--accent)}
+.clock-time{font-size:30px;font-weight:800;letter-spacing:1px;font-variant-numeric:tabular-nums}
+.card.weather{background:linear-gradient(135deg,var(--card),var(--card2))}
+.card.weather .value{font-size:24px}
+.card.weather .sub{font-size:13px}
 
-/* 面板 */
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:18px}
-.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px}
-.panel-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;margin-right:auto}
-.drag-handle{cursor:grab;color:var(--dim);font-size:15px;user-select:none;line-height:1;padding:0 2px}
-.drag-handle:active{cursor:grabbing}
-.panel-hide{border:none;background:transparent;color:var(--dim);cursor:pointer;font-size:14px;padding:0 4px;line-height:1}
-.panel-hide:hover{color:var(--red)}
-.panel.dragging{opacity:.5;outline:1px dashed var(--sky);outline-offset:2px}
-.restore-bar{display:flex;align-items:center;gap:12px;justify-content:center;padding:10px 16px;background:var(--amber);color:#1a1206;border-radius:var(--radius);margin:0 0 18px;font-size:13px;font-weight:600}
-.restore-bar .op-btn{background:#fff;color:#1a1206}
-.panel .cards{margin-bottom:0}
-.range-switch{display:flex;background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.range-switch button{border:none;background:transparent;color:var(--muted);padding:6px 14px;cursor:pointer;font-size:12px}
-.range-switch button.active{background:var(--card2);color:var(--sky);font-weight:600}
-
-.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media (max-width:900px){.chart-grid{grid-template-columns:1fr}}
-.chart-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
-.chart-box .c-title{font-size:13px;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between}
-.chart-box svg{width:100%;height:auto;display:block;min-height:140px}
-.legend{display:flex;gap:14px;font-size:12px;color:var(--muted)}
-.legend span{display:flex;align-items:center;gap:5px}
-.legend i{width:10px;height:3px;border-radius:2px;display:inline-block}
-
-/* 表格 */
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{color:var(--muted);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px}
-td{padding:8px 10px;border-bottom:1px solid var(--row-border);white-space:nowrap;font-variant-numeric:tabular-nums}
-tr:hover td{background:rgba(56,189,248,.04)}
-.mono{font-family:Consolas,Menlo,monospace;font-size:12px;color:var(--muted)}
-.state-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
-.st-running{background:var(--emerald)} .st-restarting{background:var(--amber)}
-.st-exited{background:#64748b} .st-paused{background:var(--amber)} .st-dead{background:var(--red)}
-.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
-.tag.on{color:var(--emerald);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}
-.tag.off{color:var(--dim);border-color:var(--border);background:rgba(100,116,139,.08)}
-
-/* 模块网格 */
-.mods{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
-.mod-cat{grid-column:1/-1;font-size:12px;color:var(--dim);margin-top:6px;letter-spacing:.5px}
-.mod{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px}
-.mod .ico{width:10px;height:10px;border-radius:50%;flex:none}
-.mod .ico.on{background:var(--emerald);box-shadow:0 0 8px rgba(52,211,153,.6)}
-.mod .ico.off{background:var(--dim)}
-.mod .m-name{flex:1;font-size:13px;font-weight:600}
-.mod .m-method{font-size:11px;color:var(--dim)}
-.mod-hide{border:none;background:transparent;color:var(--dim);cursor:pointer;font-size:13px;padding:0 2px;line-height:1;flex:none}
-.mod-hide:hover{color:var(--red)}
-.m-notinst{font-size:11px;color:var(--dim);font-style:italic}
-.mod-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.chk{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
-.chk input{accent-color:var(--sky)}
-.export-box{display:flex;flex-direction:column;gap:12px}
-.export-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px}
-.e-label{flex:1;min-width:220px}
-.e-label b{font-size:13px}
-.e-sub{font-size:11px;color:var(--muted);margin-top:2px}
-.sel{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:13px}
-.mini-bar{display:inline-block;width:64px;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;vertical-align:middle;margin-right:6px}
-.mini-bar i{display:block;height:100%;background:var(--sky);border-radius:3px}
-
-.empty{color:var(--dim);font-size:13px;padding:20px 4px}
-.footer{text-align:center;color:var(--dim);font-size:12px;padding:20px 0}
-
-/* 主题切换按钮 */
-.theme-btn{border:1px solid var(--border);background:var(--card);color:var(--text);
-  width:34px;height:34px;border-radius:9px;cursor:pointer;font-size:15px;
-  display:flex;align-items:center;justify-content:center;flex:none}
-.theme-btn:hover{border-color:var(--sky)}
-/* 顶部图标按钮（现代仪表盘风格） */
-.icon-btn{border:1px solid var(--border);background:var(--card);color:var(--text);
-  width:34px;height:34px;border-radius:12px;cursor:pointer;font-size:16px;
-  display:flex;align-items:center;justify-content:center;flex:none;transition:transform .25s,background-color .2s,color .2s}
-.icon-btn:hover{border-color:var(--sky);color:var(--sky);transform:rotate(180deg)}
-
-/* 内置应用统计卡片 */
-.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
-.app-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
-.app-card .a-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.app-card .a-ico{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--card2);border:1px solid var(--border)}
-.app-card .a-name{font-size:14px;font-weight:700}
-.app-card .a-state{font-size:11px;color:var(--muted);margin-top:1px}
-.app-card .a-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:3px 0;border-top:1px dashed var(--border);margin-top:6px}
-.app-card .a-row:first-of-type{border-top:none;margin-top:0}
-.app-card .a-row b{color:var(--text);font-weight:600}
-
-/* 资源详情 */
-.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-@media (max-width:900px){.detail-grid{grid-template-columns:1fr}}
-.detail-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px}
-.detail-box h4{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600}
+/* ===== 详情 / 子块 ===== */
+.detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+@media (max-width:1100px){.detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr}}
+.detail-box,.hw-box,.chart-box,.sens-card,.app-card,.dstat,.pg-card,.fan-card,.mod-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px}
+.detail-box{padding:14px}
+.detail-box h4{font-size:12.5px;color:var(--muted);margin-bottom:10px;font-weight:700;letter-spacing:.2px}
 .core-row{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px;color:var(--muted)}
 .core-row .c-name{width:56px;flex:none}
-.core-row .c-bar{flex:1;height:5px;border-radius:3px;background:var(--bar-track);overflow:hidden}
-.core-row .c-bar i{display:block;height:100%;background:linear-gradient(90deg,#0ea5e9,var(--sky));border-radius:3px}
-.core-row .c-val{width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+.core-row .c-bar{flex:1;height:5px;border-radius:99px;background:var(--bar-track);overflow:hidden}
+.core-row .c-bar i{display:block;height:100%;background:linear-gradient(90deg,#0ea5e9,var(--sky));border-radius:99px}
+.core-row .c-val{width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text);font-weight:600}
 .mem-line{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:3px 0}
 .mem-line b{color:var(--text);font-weight:600}
-.segbar{display:flex;height:9px;border-radius:5px;overflow:hidden;margin:8px 0;background:var(--bar-track)}
+.segbar{display:flex;height:9px;border-radius:99px;overflow:hidden;margin:8px 0;background:var(--bar-track)}
 .segbar i{display:block;height:100%}
 .legend2{display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap}
 .legend2 span{display:flex;align-items:center;gap:4px}
-.legend2 i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.legend2 i{width:9px;height:9px;border-radius:3px;display:inline-block}
 
-/* Docker 操作按钮 */
-.op-btn{border:1px solid var(--border);background:var(--card2);color:var(--text);
-  border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;margin-right:4px;white-space:nowrap}
-.op-btn:hover{border-color:var(--sky);color:var(--sky)}
-.op-btn.danger:hover{border-color:var(--red);color:var(--red)}
-.op-btn:disabled{opacity:.5;cursor:not-allowed}
-.ip-chips{display:flex;gap:6px;flex-wrap:wrap}
-.ip-chip{font-size:11px;padding:1px 8px;border-radius:9px;border:1px solid var(--border);color:var(--sky);background:var(--card)}
+/* ===== 图表 ===== */
+.chart-grid{gap:13px}
+.chart-box{padding:13px 14px;min-width:0}
+.chart-box .c-title{font-size:12.5px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.chart-box svg{width:100%;height:auto;display:block;min-height:140px}
+.legend{display:flex;gap:12px;font-size:11.5px;color:var(--muted);margin-left:auto}
+.legend span{display:flex;align-items:center;gap:5px}
+.legend i{width:10px;height:3px;border-radius:99px;display:inline-block}
+.c-title>:first-child{margin-right:auto}
 
-/* Docker 概览计数卡（现代仪表盘风格） */
-.docker-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px}
-.dstat{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-align:center}
-.dstat .ds-num{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
-.dstat .ds-num.on{color:var(--emerald)}
-.dstat .ds-num.off{color:var(--amber)}
-.dstat .ds-label{font-size:11px;color:var(--muted);margin-top:2px}
+/* ===== 表格 ===== */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);font-weight:600;text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);
+  white-space:nowrap;font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+td{padding:8px 10px;border-bottom:1px solid var(--row-border);white-space:nowrap;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+.mono{font-family:"Cascadia Code",Consolas,Menlo,monospace;font-size:12px;color:var(--muted)}
+.state-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
+.st-running{background:var(--emerald)} .st-restarting{background:var(--amber)}
+.st-exited{background:#64748b} .st-paused{background:var(--amber)} .st-dead{background:var(--red)}
+.tag{display:inline-flex;align-items:center;padding:1px 9px;border-radius:99px;font-size:11px;font-weight:600;
+  border:1px solid var(--border);color:var(--muted);background:var(--bg2)}
+.tag.on{color:var(--emerald);border-color:color-mix(in srgb,var(--emerald) 35%,transparent);background:color-mix(in srgb,var(--emerald) 9%,transparent)}
+.tag.off{color:var(--dim);border-color:var(--border);background:var(--bg2)}
 
-/* 设置面板 */
-.settings{display:flex;flex-direction:column;gap:14px}
-.set-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px}
-.set-row .s-label{flex:1;min-width:200px}
-.set-row .s-label b{font-size:13px}
-.set-row .s-label .s-sub{font-size:11px;color:var(--muted);margin-top:2px}
-.inp{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font-size:13px;width:140px}
-.inp:focus{outline:none;border-color:var(--sky)}
-.save-msg{font-size:12px;color:var(--emerald)}
-
-/* 硬件信息 */
-.hw-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media (max-width:900px){.hw-grid{grid-template-columns:1fr}}
-.hw-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px}
-.hw-box h4{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600}
-.hw-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
-.hw-line:first-of-type{border-top:none}
-.hw-line b{color:var(--text);font-weight:600;text-align:right;word-break:break-all;white-space:normal}
-
-/* 端口面板 */
-.port-box{display:flex;flex-direction:column;gap:14px}
-.port-sec{border:1px solid var(--border);border-radius:10px;overflow:hidden}
-.port-sec .ps-head{background:var(--bg2);padding:8px 14px;font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:8px}
-.port-sec .ps-head .cnt{margin-left:auto;color:var(--sky)}
-
-/* ============ v2.1 现代化改造（参照网络主流 NAS 监控面板） ============ */
-/* 模块 Tab 导航 */
-.tabs{position:sticky;top:53px;z-index:45;display:flex;gap:4px;padding:8px 24px;background:var(--topbar-bg);
-  backdrop-filter:blur(8px);border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:thin;
-  -webkit-overflow-scrolling:touch}
-.tab{border:1px solid transparent;background:transparent;color:var(--muted);padding:7px 13px;border-radius:9px;
-  cursor:pointer;font-size:13px;white-space:nowrap;display:flex;align-items:center;gap:6px;flex:none}
-.tab:hover{background:var(--card2);color:var(--text)}
-.tab.active{background:var(--card);color:var(--sky);border-color:var(--border);font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.06)}
-
-/* 手机端底部导航（现代风格：毛玻璃底部 Tab 栏） */
-.mobile-nav{display:none}
-@media (max-width:768px){
-  .mobile-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:100;
-    background:var(--topbar-bg);backdrop-filter:blur(20px);
-    border-top:1px solid var(--border);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));
-    justify-content:space-around}
-  .mobile-nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;
-    background:transparent;border:none;color:var(--muted);font-size:10px;cursor:pointer;
-    padding:6px 4px;border-radius:10px;transition:color .2s}
-  .mobile-nav-item span{font-size:10px}
-  .mobile-nav-item.active{color:var(--sky);background:var(--card2)}
-  .mobile-nav-item svg,.mobile-nav-item{min-width:0}
-  main{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
-  .tabs{display:none}
-}
-
-/* 传感器卡片（温度分类 / 电压 / 风扇） */
-.sens-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
-.sens-title{font-size:13px;color:var(--muted);margin:14px 0 0;font-weight:600;display:flex;align-items:center;gap:6px}
-.sens-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
-.sens-card h4{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:6px}
-.sens-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
-.sens-line:first-of-type{border-top:none}
-.sens-line b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
-.sens-line b.hot{color:var(--red)}
-.temp-chip{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid var(--border);color:var(--muted);margin-left:4px}
-
-/* 温度墙（参照网络主流硬件监控面板） */
-.wall-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px}
-.wall-hero-item{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center}
-.wall-hero-item .wh-label{font-size:11px;color:var(--muted);margin-bottom:6px}
-.wall-hero-item .wh-value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
-.wall-hero-item .wh-value small{font-size:11px;font-weight:600;color:var(--muted)}
-.wall-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.wall-chip{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;display:flex;
-  flex-direction:column;gap:2px;position:relative}
-.wall-chip .wc-name{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wall-chip .wc-val{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
-.wall-chip .wc-val small{font-size:10px;color:var(--muted);font-weight:600}
-.wall-chip .wc-badge{position:absolute;top:6px;right:8px;font-size:9px;color:var(--muted)}
-
-/* 实时功耗 / 显卡（参照网络主流硬件监控面板） */
-.pg-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media (max-width:900px){.pg-grid{grid-template-columns:1fr}}
-.pg-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
-.pg-card h4{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600;display:flex;align-items:center;gap:6px}
-.pg-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
-.pg-line:first-of-type{border-top:none}
-.pg-line b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
-.pg-big{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
-.pg-big small{font-size:11px;color:var(--muted);font-weight:600}
-.pg-gpu{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--border)}
-.pg-gpu:last-of-type{border-bottom:none}
-.pg-gpu .g-name{font-size:12px;font-weight:600}
-.pg-gpu .g-bar{flex:1;height:6px;background:var(--bar-track);border-radius:4px;margin:0 10px;overflow:hidden}
-.pg-gpu .g-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--sky),var(--emerald));border-radius:4px}
-.pg-gpu .g-meta{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
-.pg-tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;background:var(--card);border:1px solid var(--border);color:var(--muted);margin-left:4px}
-.pg-pct{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-.pg-pct.warn{color:var(--amber)}.pg-pct.hot{color:var(--red)}
-
-/* 农历时间卡 */
-.card.lunar .value{font-size:15px;white-space:normal;line-height:1.25}
-.card.lunar .sub{font-size:13px;margin-top:6px}
-.clock-date{font-size:16px;color:var(--muted);font-weight:600;margin-bottom:5px}
-.clock-date .wday{color:var(--sky)}
-.clock-time{font-size:32px;font-weight:700;letter-spacing:1.5px;font-variant-numeric:tabular-nums}
-
-/* 内存插槽可视化（参照网络主流硬件监控面板） */
-.dimm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.dimm{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;text-align:center}
-.dimm.fill{border-color:var(--emerald);background:linear-gradient(180deg,var(--card),rgba(16,185,129,.08))}
-.dimm.empty{opacity:.5;border-style:dashed}
-.dimm .d-loc{font-size:11px;color:var(--muted)}
-.dimm .d-size{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
-.dimm .d-mfr{font-size:11px;color:var(--muted)}
-.dimm .d-spec{font-size:10px;color:var(--dim)}
-
-/* 风扇控制 */
-.fan-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
-.fan-card .f-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.fan-card .f-name{font-size:13px;font-weight:600;flex:1}
-.fan-card .f-rpm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.fan-card .f-rpm.zero{color:var(--red)}
-.fan-card input[type=range]{width:100%;accent-color:var(--sky);margin:6px 0}
-.fan-card .f-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.fan-card .f-msg{font-size:11px;color:var(--emerald);margin-top:4px}
-.fan-preset{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.fan-preset button{border:1px solid var(--border);background:var(--card);color:var(--muted);border-radius:7px;
-  padding:3px 9px;font-size:11px;cursor:pointer}
-.fan-preset button:hover{border-color:var(--sky);color:var(--sky)}
-
-/* 功能模块实用化卡片 */
+/* ===== 模块 / 应用 ===== */
+.mods{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.mod-cat{grid-column:1/-1;font-size:11px;color:var(--dim);margin-top:6px;letter-spacing:.8px;font-weight:600}
+.mod{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;display:flex;align-items:center;gap:10px;min-width:0}
+.mod .ico{width:10px;height:10px;border-radius:50%;flex:none}
+.mod .ico.on{background:var(--emerald);box-shadow:0 0 0 3px color-mix(in srgb,var(--emerald) 20%,transparent)}
+.mod .ico.off{background:var(--dim)}
+.mod .m-name{flex:1;font-size:13px;font-weight:600;min-width:0}
+.mod .m-method{font-size:11px;color:var(--dim)}
+.m-notinst{font-size:11px;color:var(--dim);font-style:italic}
+.mod-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.chk{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.chk input{accent-color:var(--accent)}
 .mod-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-.mod-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.mod-card{padding:14px;display:flex;flex-direction:column;gap:8px}
 .mod-card .m-head{display:flex;align-items:center;gap:10px}
-.mod-card .m-ico{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+.mod-card .m-ico{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
   font-size:16px;background:var(--card);border:1px solid var(--border);flex:none}
 .mod-card .m-name{font-size:13px;font-weight:700;flex:1}
 .mod-card .m-state{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
 .mod-card .m-port{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mod-card .m-port .tag{font-variant-numeric:tabular-nums}
 .mod-card .m-foot{display:flex;align-items:center;justify-content:space-between;margin-top:2px}
+.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.app-card{padding:15px}
+.app-card .a-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.app-card .a-ico{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--card);border:1px solid var(--border);flex:none}
+.app-card .a-name{font-size:14px;font-weight:700}
+.app-card .a-state{font-size:11px;color:var(--muted);margin-top:1px}
+.app-card .a-row{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border);margin-top:5px}
+.app-card .a-row:first-of-type{border-top:none;margin-top:0}
+.app-card .a-row b{color:var(--text);font-weight:600}
 
-/* 双列布局面板 */
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media (max-width:900px){.two-col{grid-template-columns:1fr}}
-
-/* 空状态 / 提示 */
-.notice{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--bg2);
-  border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px}
-
-
-/* 响应式：手机适配 */
-@media (max-width:768px){
-  main{padding:12px}
-  .topbar{padding:10px 14px;gap:10px}
-  .brand{font-size:16px}
-  .sysinfo{gap:10px}
-  .panel{padding:14px}
-  .panel-head{gap:8px}
-  .range-switch{flex-wrap:wrap}
-  .range-switch button{padding:6px 10px}
-  .card .value{font-size:24px}
-  .cards{grid-template-columns:1fr 1fr;gap:10px}
+/* ===== 小模块隐藏 ===== */
+.mod-hide{border:none;background:transparent;color:var(--dim);cursor:pointer;font-size:12px;padding:1px 6px;line-height:1.5;flex:none;border-radius:6px;opacity:.55;transition:opacity .15s,color .15s,background-color .15s}
+.mod-hide:hover{color:var(--red);background:rgba(239,68,68,.1);opacity:1}
+@media (hover:hover){
+  .card .mod-hide,.chart-box .mod-hide,.detail-box .mod-hide,.hw-box .mod-hide,.pg-card .mod-hide,
+  .port-sec .mod-hide,.export-row .mod-hide,.set-row .mod-hide,.mod-head .mod-hide,.sens-title .mod-hide{opacity:0}
+  .card:hover .mod-hide,.chart-box:hover .mod-hide,.detail-box:hover .mod-hide,.hw-box:hover .mod-hide,
+  .pg-card:hover .mod-hide,.port-sec:hover .mod-hide,.export-row:hover .mod-hide,.set-row:hover .mod-hide,
+  .mod-block:hover .mod-head .mod-hide,.mod-block:hover .sens-title .mod-hide{opacity:.55}
 }
-@media (max-width:640px){
-  .topbar{flex-wrap:wrap}
-  .cards{grid-template-columns:1fr 1fr}
-  main{padding:10px}
-  .status{order:3;width:100%;justify-content:flex-end}
-  .sysinfo .hide-mobile{display:none}
-  .card{padding:12px}
-  .card .value{font-size:22px}
-  .card .sub{font-size:11px}
-  .mods{grid-template-columns:1fr 1fr}
-  .mod{flex-wrap:wrap}
-  .footer{font-size:11px}
-  .export-row{flex-direction:column;align-items:stretch}
-  .export-row .e-label{min-width:0}
-  .export-row .op-btn{width:100%}
-  /* v2.1 移动端适配 */
-  .tabs{padding:6px 10px;top:50px}
-  .tab{padding:6px 9px;font-size:12px}
-  .mod-grid{grid-template-columns:1fr 1fr}
-  .sens-grid{grid-template-columns:1fr}
-  .chart-box svg{min-height:130px}
-  .card.ip .value{font-size:13px}
-}
-/* ===== v2.5 界面现代化升级（现代 NAS 监控面板风格，覆盖式增强） ===== */
-/* —— 主布局：真正的自适应（面板整行平铺，内部卡片随宽度自动重排填满，不溢出不空白） —— */
-main{grid-template-columns:1fr;gap:16px;max-width:none;width:100%;padding:16px 20px}
-main section[data-panel]{min-width:0;max-width:100%;width:100%}
-@media (max-width:860px){main{gap:12px;padding:10px 8px}}
-/* —— 概览卡片视觉 —— */
-.cards{grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;margin-bottom:0}
-.card{position:relative;overflow:hidden;padding:16px;border-radius:14px;
-  box-shadow:0 2px 10px rgba(15,23,42,.06);transition:transform .25s,box-shadow .25s,border-color .25s}
-.card::after{content:"";position:absolute;right:-34px;top:-34px;width:100px;height:100px;border-radius:50%;
-  background:radial-gradient(circle,var(--card2),transparent 68%);opacity:.3;pointer-events:none}
-.card:hover{transform:translateY(-3px);box-shadow:0 10px 26px rgba(15,23,42,.14)}
-.card .label{font-size:12px;letter-spacing:.2px}
-.card .value{font-size:29px}
-.card .sub{font-size:12px}
-/* —— 面板视觉 —— */
-.panel{border-radius:16px;box-shadow:0 2px 12px rgba(15,23,42,.07);overflow:hidden;margin-bottom:0}
-.panel:hover{box-shadow:0 12px 30px rgba(15,23,42,.13)}
-.panel-head{background:linear-gradient(180deg,var(--card2),transparent);padding:13px 16px;margin-bottom:0;border-bottom:1px solid var(--border)}
-.panel-title{font-size:15px}
-/* —— 顶部与导航 —— */
-.topbar{padding:11px 22px;box-shadow:0 1px 12px rgba(15,23,42,.07)}
-.tabs{top:55px;padding:9px 22px;gap:6px;box-shadow:0 1px 8px rgba(15,23,42,.05)}
-.tab{padding:8px 15px;border-radius:20px;font-size:13px;font-weight:600;transition:all .2s;white-space:nowrap}
-.tab.active{background:var(--sky);color:#fff;box-shadow:0 3px 12px rgba(56,189,248,.3);border-color:transparent}
-.tab:not(.active):hover{color:var(--text);background:var(--card2);border-color:var(--border)}
-/* —— 按钮 —— */
-.icon-btn,.theme-btn{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:16px}
-.op-btn{padding:7px 14px;border-radius:10px;font-size:13px;font-weight:600;transition:all .2s;cursor:pointer}
-.op-btn:hover{border-color:var(--sky);color:var(--sky)}
-/* —— 内部模块自适应（表格/详情/传感器墙等） —— */
-.detail-grid{grid-template-columns:1fr 1fr;gap:13px}
-@media (max-width:1100px){.detail-grid{grid-template-columns:1fr}}
-.chart-grid{gap:13px}
-.chart-box,.detail-box,.hw-box,.sens-card,.app-card,.dstat,.port-sec,.mod{border-radius:12px}
-.mods{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
-.sens-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
-.wall-hero{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
-.wall-hero-item{border-radius:12px}
+.mod-hide:focus-visible{opacity:1;outline:1px solid var(--red)}
+.mod-block{margin:0 0 13px;min-width:0}
+.mod-block:last-child{margin-bottom:0}
+.mod-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;min-width:0}
+.mod-head .mod-hide{margin-left:auto}
+.detail-box h4,.hw-box h4{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.detail-box h4 .mod-hide,.hw-box h4 .mod-hide,.pg-card h4 .mod-hide{margin-left:auto}
+.sens-title .mod-hide{margin-left:auto}
+
+/* ===== 设置 / 导出 ===== */
+.settings{display:flex;flex-direction:column;gap:12px}
+.set-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 15px;background:var(--bg2);
+  border:1px solid var(--border);border-radius:12px;transition:border-color .15s}
+.set-row:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--border))}
+.set-row .s-label{flex:1;min-width:200px}
+.set-row .s-label b{font-size:13px}
+.set-row .s-label .s-sub{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.6}
+.inp{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7.5px 11px;font-size:13px;width:140px;transition:border-color .15s,box-shadow .15s}
+.inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.save-msg{font-size:12px;color:var(--emerald);min-height:16px}
+.export-box{display:flex;flex-direction:column;gap:12px}
+.export-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 15px;background:var(--bg2);border:1px solid var(--border);border-radius:12px}
+.e-label{flex:1;min-width:220px}
+.e-label b{font-size:13px}
+.e-sub{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.6}
+.sel{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7.5px 10px;font-size:13px}
+.sel:focus{outline:none;border-color:var(--accent)}
+.mini-bar{display:inline-block;width:64px;height:6px;background:var(--bar-track);border-radius:99px;overflow:hidden;vertical-align:middle;margin-right:6px}
+.mini-bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+
+/* ===== 隐藏项管理（设置面板内）+ 悬浮入口 ===== */
+.ui-mgmt{align-items:flex-start}
+.hidden-list{display:flex;gap:7px;flex-wrap:wrap;flex:2;min-width:220px}
+.hidden-list .chip{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:99px;
+  background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;
+  border:1px solid transparent;transition:transform .12s,filter .12s;white-space:nowrap}
+.hidden-list .chip:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.hidden-list .none-hint{font-size:12px;color:var(--dim);padding:4px 0}
+.restore-fab{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:90;
+  display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border:none;border-radius:99px;cursor:pointer;
+  background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 60%,#0ea5e9));color:#fff;
+  font-size:12.5px;font-weight:700;box-shadow:var(--shadow-md);transition:transform .15s,filter .15s}
+.restore-fab:hover{transform:translateY(-2px);filter:brightness(1.05)}
+.restore-fab b{font-variant-numeric:tabular-nums}
+
+/* ===== Docker / 端口 ===== */
+.docker-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:0}
+.dstat{padding:14px 16px;text-align:center}
+.dstat .ds-num{font-size:25px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text)}
+.dstat .ds-num.on{color:var(--emerald)}
+.dstat .ds-num.off{color:var(--amber)}
+.dstat .ds-label{font-size:11px;color:var(--muted);margin-top:2px}
+.op-btn{border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:9px;padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;margin-right:4px;white-space:nowrap;
+  transition:border-color .15s,color .15s,background-color .15s}
+.op-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.op-btn.danger:hover{border-color:var(--red);color:var(--red);background:rgba(239,68,68,.08)}
+.op-btn:disabled{opacity:.5;cursor:not-allowed}
+.ip-chips{display:flex;gap:6px;flex-wrap:wrap}
+.ip-chip{font-size:11px;padding:1px 9px;border-radius:99px;border:1px solid var(--border);color:var(--accent);background:var(--card);font-weight:600}
+.port-box{display:flex;flex-direction:column;gap:14px}
+.port-sec{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--bg2)}
+.port-sec .ps-head{background:var(--bg2);padding:9px 14px;font-size:13px;font-weight:700;color:var(--muted);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.port-sec .ps-head .cnt{margin-left:auto;color:var(--accent);font-weight:700}
+.port-sec table{background:var(--card)}
+.port-sec table th{background:var(--card)}
+table.listen-tbl td:nth-child(2){max-width:230px;overflow-wrap:break-word;white-space:normal;word-break:break-all}
+
+/* ===== 传感器 / 温度墙 / 功耗 / 内存插槽 / 风扇 ===== */
+.sens-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:11px}
+.sens-title{font-size:12.5px;color:var(--muted);margin:14px 0 0;font-weight:700;display:flex;align-items:center;gap:6px}
+.sens-card{padding:13px}
+.sens-card h4{font-size:12.5px;color:var(--muted);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:6px}
+.sens-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
+.sens-line:first-of-type{border-top:none}
+.sens-line b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.sens-line b.hot{color:var(--red)}
+.temp-chip{display:inline-block;padding:1px 7px;border-radius:99px;font-size:10px;border:1px solid var(--border);color:var(--muted);margin-left:4px}
+.wall-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(126px,1fr));gap:10px;margin-bottom:13px}
+.wall-hero-item{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center}
+.wall-hero-item .wh-label{font-size:11px;color:var(--muted);margin-bottom:6px}
+.wall-hero-item .wh-value{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums}
+.wall-hero-item .wh-value small{font-size:11px;font-weight:600;color:var(--muted)}
 .wall-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.wall-chip{background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:9px 11px;display:flex;
+  flex-direction:column;gap:2px;position:relative;min-width:0}
+.wall-chip .wc-name{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wall-chip .wc-val{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.wall-chip .wc-val small{font-size:10px;color:var(--muted);font-weight:600}
+.wall-chip .wc-badge{position:absolute;top:6px;right:8px;font-size:9px;color:var(--dim)}
+.pg-grid{gap:13px}
+.pg-card{padding:14px}
+.pg-card h4{font-size:12.5px;color:var(--muted);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:6px}
+.pg-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
+.pg-line:first-of-type{border-top:none}
+.pg-line b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.pg-big{font-size:23px;font-weight:800;font-variant-numeric:tabular-nums}
+.pg-big small{font-size:11px;color:var(--muted);font-weight:600}
+.pg-gpu{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--border)}
+.pg-gpu:last-of-type{border-bottom:none}
+.pg-gpu .g-name{font-size:12px;font-weight:600}
+.pg-gpu .g-bar{flex:1;height:6px;background:var(--bar-track);border-radius:99px;margin:0 10px;overflow:hidden}
+.pg-gpu .g-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--sky),var(--emerald));border-radius:99px}
+.pg-gpu .g-meta{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+.pg-tag{display:inline-block;padding:1px 7px;border-radius:99px;font-size:10px;background:var(--card);border:1px solid var(--border);color:var(--muted);margin-left:4px}
+.pg-pct{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.pg-pct.warn{color:var(--amber)}.pg-pct.hot{color:var(--red)}
+.dimm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.dimm{background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:9px 11px;text-align:center}
+.dimm.fill{border-color:color-mix(in srgb,var(--emerald) 55%,transparent);background:linear-gradient(180deg,var(--card),color-mix(in srgb,var(--emerald) 7%,transparent))}
+.dimm.empty{opacity:.5;border-style:dashed}
+.dimm .d-loc{font-size:11px;color:var(--muted)}
+.dimm .d-size{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.dimm .d-mfr{font-size:11px;color:var(--muted)}
+.dimm .d-spec{font-size:10px;color:var(--dim)}
+.fan-card{padding:14px}
+.fan-card .f-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.fan-card .f-name{font-size:13px;font-weight:700;flex:1}
+.fan-card .f-rpm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.fan-card .f-rpm.zero{color:var(--red)}
+.fan-card input[type=range]{width:100%;accent-color:var(--accent);margin:6px 0}
+.fan-card .f-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fan-card .f-msg{font-size:11px;color:var(--emerald);margin-top:4px}
+.fan-preset{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.fan-preset button{border:1px solid var(--border);background:var(--card);color:var(--muted);border-radius:8px;
+  padding:3px 10px;font-size:11px;cursor:pointer;transition:border-color .15s,color .15s}
+.fan-preset button:hover{border-color:var(--accent);color:var(--accent)}
 .mem-slot-wrap{display:flex;flex-wrap:wrap;gap:10px}
 .fan-row{flex-wrap:wrap}
-/* 天气卡 */
-.card.weather{background:linear-gradient(135deg,var(--card),var(--card2))}
-.card.weather .value{font-size:26px}
-.card.weather .sub{font-size:13px;margin-top:6px}
-/* 手机端微调 */
-@media (max-width:560px){
-  .cards{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
-  .card{padding:13px}
-  .card .value{font-size:24px}
-  .sysinfo{font-size:11px;gap:6px}
-  .sysinfo span{display:none}
-  .sysinfo span:last-child{display:inline}
-}
-/* ===== v2.5.1 总览卡片等高 + 强自适应修复（消除参差 / 溢出） ===== */
-.card{display:flex;flex-direction:column;min-height:128px}
-.card .bar{margin-top:auto}
-.card .sub{margin-top:auto}
-.panel{max-width:100%;min-width:0}
-.panel-head{flex-wrap:wrap;gap:6px}
-main section[data-panel]{overflow:visible}
+
+/* ===== 硬件信息 / 范围切换 / 空状态 ===== */
+.hw-box{padding:14px}
+.hw-box h4{font-size:12.5px;color:var(--muted);margin-bottom:10px;font-weight:700}
+.hw-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);padding:4px 0;border-top:1px dashed var(--border)}
+.hw-line:first-of-type{border-top:none}
+.hw-line b{color:var(--text);font-weight:600;text-align:right;word-break:break-all;white-space:normal}
+/* 分段式范围切换（segmented control：激活项为浮起的白色胶囊） */
+.range-switch{display:flex;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:3px}
+.range-switch button{border:none;background:transparent;color:var(--muted);padding:5px 13px;cursor:pointer;
+  font-size:12px;font-weight:600;border-radius:8px;transition:background-color .15s,color .15s,box-shadow .15s}
+.range-switch button:hover{color:var(--text)}
+.range-switch button.active{background:var(--card);color:var(--accent);box-shadow:0 1px 4px rgba(0,0,0,.14),0 0 0 1px var(--border)}
+.empty{color:var(--dim);font-size:13px;padding:18px 4px}
+.notice{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);background:var(--bg2);
+  border:1px solid var(--border);border-radius:11px;padding:10px 14px;margin-bottom:14px}
+
+/* ===== 自适应 ===== */
+/* 注意：这些 block 级网格不要写 width:100%——面板子元素自带左右 18px margin，
+   width:100% 会与 margin 叠加导致整体溢出 36px，被 .panel 的 overflow:hidden 裁掉右侧 */
+.cards,.mods,.sens-grid,.wall-hero,.wall-grid,.dimm-grid,.mod-grid,.apps,.docker-stats{min-width:0}
 .detail-box,.chart-box,.hw-box,.sens-card,.app-card,.dstat,.port-sec,.mod,.export-row,.set-row{max-width:100%;min-width:0}
 .wall-grid{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
 @media (max-width:900px){
@@ -575,80 +512,111 @@ main section[data-panel]{overflow:visible}
   .sens-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
   .panel-title .tag{display:none}
 }
+@media (max-width:920px){
+  /* 平板竖屏（768/820/834）与手机统一走全宽移动布局：侧边栏收起为底部导航，
+     避免侧边栏 236px 挤占后内容区比手机还窄 */
+  .sidebar{display:none}
+  .m-brand{display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:800;white-space:nowrap;flex:none}
+  .m-brand .logo{width:26px;height:26px;border-radius:8px;padding:5px;color:#fff;
+    background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#0ea5e9))}
+  .content{margin-left:0}
+  main{padding:12px;gap:12px}
+  .topbar{padding:10px 14px;gap:10px}
+  .panel{border-radius:14px}
+  .panel > :not(.panel-head){margin-left:12px;margin-right:12px}
+  .panel-head{padding:12px 12px 10px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .card{padding:12px;min-height:108px}
+  .card .value{font-size:22px}
+  .card .sub{font-size:11px}
+  .detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr}
+  .range-switch{flex-wrap:wrap}
+  .range-switch button{padding:6px 10px}
+  .restore-fab{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  .mobile-nav{display:flex}
+  body{padding-bottom:0}
+  main{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+}
+.mobile-nav{display:none}
+@media (max-width:920px){
+  .mobile-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:100;
+    background:var(--topbar-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border-top:1px solid var(--border);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));
+    justify-content:space-around}
+  .mobile-nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;
+    background:transparent;border:none;color:var(--muted);font-size:10px;cursor:pointer;
+    padding:6px 4px;border-radius:10px;transition:color .2s;min-width:0}
+  .mobile-nav-item span{font-size:10px}
+  .mobile-nav-item.active{color:var(--accent);background:var(--accent-soft)}
+}
+@media (max-width:640px){
+  .topbar{flex-wrap:wrap}
+  .cards{grid-template-columns:1fr 1fr}
+  main{padding:10px}
+  .status{order:3;width:100%;justify-content:flex-end}
+  .sysinfo .hide-mobile{display:none}
+  .mods{grid-template-columns:1fr 1fr}
+  .mod{flex-wrap:wrap}
+  .footer{font-size:11px}
+  .export-row{flex-direction:column;align-items:stretch}
+  .export-row .e-label{min-width:0}
+  .export-row .op-btn{width:100%}
+  .mod-grid{grid-template-columns:1fr 1fr}
+  .sens-grid{grid-template-columns:1fr}
+  .chart-box svg{min-height:130px}
+  .card.ip .value{font-size:12.5px}
+}
+@media (max-width:560px){
+  .cards{grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
+  .sysinfo{font-size:11px;gap:6px}
+  .sysinfo > span{display:none}
+  .sysinfo > span:last-child{display:inline-flex}
+  .panel-title{font-size:13.5px}
+  .hidden-list{min-width:0}
+}
 @media (max-width:400px){
   .cards{grid-template-columns:1fr 1fr}
-  .card .value{font-size:21px}
+  .card .value{font-size:20px}
   .card{padding:11px}
-  .topbar .brand{font-size:15px}
+  .m-brand{font-size:14.5px}
 }
-/* ===== v2.5.2 时间与天气独立面板 / 页脚底部居中 / 模块自适应宽度 ===== */
-/* ===== v2.5.4 各模块框架配色（顶部彩条 + 标题色点，避免整体单调） ===== */
-main section[data-panel]{--p-acc:var(--sky);position:relative}
-main section[data-panel]::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--p-acc),transparent 80%);opacity:.95;z-index:1}
-.panel-title::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--p-acc,var(--sky));display:inline-block;flex:none}
-main section[data-panel="clock"]{--p-acc:#f59e0b}
-main section[data-panel="overview"]{--p-acc:#10b981}
-main section[data-panel="detail"]{--p-acc:#38bdf8}
-main section[data-panel="disks"]{--p-acc:#a78bfa}
-main section[data-panel="hardware"]{--p-acc:#f472b6}
-main section[data-panel="wall"]{--p-acc:#f87171}
-main section[data-panel="powergpu"]{--p-acc:#fb923c}
-main section[data-panel="trend"]{--p-acc:#34d399}
-main section[data-panel="processes"]{--p-acc:#64748b}
-main section[data-panel="docker"]{--p-acc:#0ea5e9}
-main section[data-panel="ports"]{--p-acc:#818cf8}
-main section[data-panel="modules"]{--p-acc:#f472b6}
-main section[data-panel="apps"]{--p-acc:#22c55e}
-main section[data-panel="export"]{--p-acc:#eab308}
-main section[data-panel="settings"]{--p-acc:#94a3b8}
-/* ===== v2.5.7 端口模块暗黑主题优化（表格列宽 + 对比度） ===== */
-.port-sec table th,.port-sec table td{padding:7px 10px}
-.port-sec .ps-head .cnt{color:var(--sky);font-weight:700}
-table.listen-tbl td:nth-child(2){max-width:230px;overflow-wrap:break-word;white-space:normal;word-break:break-all}
-:root[data-theme="dark"] .port-sec{background:linear-gradient(180deg,#141c31,#0f172a);border-color:#232f4f}
-:root[data-theme="dark"] .port-sec .ps-head{background:#1a2440;color:#8ba0c4}
-:root[data-theme="dark"] .port-sec table th{background:#0f172a;border-bottom-color:#232f4f}
-:root[data-theme="dark"] .port-sec tr:hover td{background:rgba(56,189,248,.06)}
-:root[data-theme="dark"] .port-sec table td{border-bottom-color:#1a2440}
-:root[data-theme="dark"] .port-sec table td.mono{color:#a5c2ea}
-.footer{text-align:center;color:var(--dim);font-size:12px;padding:18px 16px 12px;margin:0 auto;max-width:1200px}
 body{display:flex;flex-direction:column;min-height:100vh}
-main{flex:1}
-/* 时间与天气面板：卡片全宽平铺，窄屏自动换行 */
-section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));max-width:none;margin:0}
-/* 刷新按钮旋转反馈 */
-.icon-btn.spin{animation:rspin .7s linear}
-@keyframes rspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-/* 内部模块宽度自适应：所有小卡片网格随面板宽度自动平铺填满 */
-.cards,.mods,.sens-grid,.wall-hero,.wall-grid,.dimm-grid,.mod-grid,.apps,.docker-stats{width:100%;max-width:100%}
-.detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr 1fr}
-@media (max-width:1100px){.detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr}}
+.layout{flex:1}
 </style>
 </head>
 <body>
 
-<header class="topbar">
+<div class="layout">
+<aside class="sidebar">
   <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 13 7 9 11 13 17 7 21 11"/><polyline points="3 19 7 15 11 19 17 13 21 17" opacity=".5"/></svg>
+    <span>飞牛监控<span class="b-sub">FNNAS MONITOR</span></span>
+  </div>
+  <button class="side-toggle" id="side-toggle" title="收起侧边栏" aria-label="收起 / 展开侧边栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+  <nav class="side-nav">
+    <div class="nav-sec">监控</div>
+    <button class="tab active" data-tab="home" title="总览仪表盘"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="t-label">总览仪表盘</span></button>
+    <button class="tab" data-tab="docker" title="Docker · 端口"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg><span class="t-label">Docker · 端口</span></button>
+    <button class="tab" data-tab="settings" title="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg><span class="t-label">设置</span></button>
+  </nav>
+  <div class="side-foot">
+    <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
+    <div class="side-ver"><span>v2.8.0</span><span>纯本地运行</span></div>
+  </div>
+</aside>
+<div class="content">
+
+<header class="topbar">
+  <div class="m-brand">
     <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 13 7 9 11 13 17 7 21 11"/><polyline points="3 19 7 15 11 19 17 13 21 17" opacity=".5"/></svg>
     飞牛监控
   </div>
   <div class="sysinfo" id="sysinfo"><span>主机: <b>--</b></span><span>系统: <b>--</b></span><span>内核: <b>--</b></span><span>运行: <b>--</b></span><span class="ip-chips" id="sys-ips" title="本机 IP 地址"></span></div>
-  <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-  <button class="icon-btn" id="refresh-btn" title="刷新全部数据" onclick="globalRefresh()">⟳</button>
-  <button class="theme-btn" id="theme-btn" title="切换主题（深色 / 白日 / 飞牛蓝 / 浅色）">🌙</button>
+  <div class="top-actions">
+    <button class="icon-btn" id="refresh-btn" title="刷新全部数据" onclick="globalRefresh()">⟳</button>
+    <button class="theme-btn" id="theme-btn" title="切换主题（当前浅色清新，点击切换）">🍀</button>
+  </div>
 </header>
-
-<!-- 模块导航（参照现代导航面板布局） -->
-<nav class="tabs" id="tabs">
-  <button class="tab active" data-tab="home">🏠 总览</button>
-  <button class="tab" data-tab="docker">🐳 Docker · 端口</button>
-  <button class="tab" data-tab="settings">⚙️ 设置</button>
-</nav>
-
-<div id="restore-panels" class="restore-bar" style="display:none">
-  <span>已隐藏 <b class="cnt">0</b> 个面板</span>
-  <button class="op-btn" onclick="restorePanels()">恢复全部</button>
-</div>
 
 <main>
   <!-- 时间与天气（独立面板，默认置顶） -->
@@ -659,8 +627,8 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <button class="panel-hide" data-panel="clock" title="隐藏此面板">✕</button>
     </div>
     <div class="cards">
-    <div class="card lunar"><div class="label">🗓 时间·农历</div><div class="value" id="ov-date">--</div><div class="sub" id="ov-lunar">--</div></div>
-    <div class="card weather" style="display:none"><div class="label">🌦 天气</div><div class="value" id="ov-weather">--</div><div class="sub" id="ov-weather-s">定位中…</div></div>
+    <div class="card lunar" data-mod="m-lunar"><div class="label">🗓 时间·农历<button class="mod-hide" data-mod="m-lunar" title="隐藏此模块">✕</button></div><div class="value" id="ov-date">--</div><div class="sub" id="ov-lunar">--</div></div>
+    <div class="card weather" style="display:none" data-mod="m-weather"><div class="label">🌦 天气<button class="mod-hide" data-mod="m-weather" title="隐藏此模块">✕</button></div><div class="value" id="ov-weather">--</div><div class="sub" id="ov-weather-s">定位中…</div></div>
     </div>
   </section>
 
@@ -672,14 +640,14 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <button class="panel-hide" data-panel="overview" title="隐藏此面板">✕</button>
     </div>
     <div class="cards">
-    <div class="card cpu"><div class="label">🖥 CPU 使用率</div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">负载 <b>--</b> / <b>--</b> 核</div></div>
-    <div class="card mem"><div class="label">🧠 内存</div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
-    <div class="card disk"><div class="label">💾 存储总使用</div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
-    <div class="card net"><div class="label">🌐 网络</div><div class="value">--</div><div class="sub">↓ <b>--</b> &nbsp; ↑ <b>--</b></div></div>
-    <div class="card temp"><div class="label">🌡 温度</div><div class="value">--<small>°C</small></div><div class="sub"><b>--</b></div></div>
-    <div class="card load"><div class="label">⚖ 系统负载</div><div class="value">--</div><div class="sub">1/5/15 分钟</div></div>
-    <div class="card uptime"><div class="label">⏱ 运行时间</div><div class="value">--</div><div class="sub">已开机 <b>--</b></div></div>
-    <div class="card ip"><div class="label">📡 本机 IP</div><div class="value ip-val" id="ov-ip-v">--</div><div class="sub" id="ov-ip-s">所有网卡地址</div></div>
+    <div class="card cpu" data-mod="m-cpu"><div class="label">🖥 CPU 使用率<button class="mod-hide" data-mod="m-cpu" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">负载 <b>--</b> / <b>--</b> 核</div></div>
+    <div class="card mem" data-mod="m-mem"><div class="label">🧠 内存<button class="mod-hide" data-mod="m-mem" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
+    <div class="card disk" data-mod="m-disk"><div class="label">💾 存储总使用<button class="mod-hide" data-mod="m-disk" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
+    <div class="card net" data-mod="m-net"><div class="label">🌐 网络<button class="mod-hide" data-mod="m-net" title="隐藏此模块">✕</button></div><div class="value">--</div><div class="sub">↓ <b>--</b> &nbsp; ↑ <b>--</b></div></div>
+    <div class="card temp" data-mod="m-temp"><div class="label">🌡 温度<button class="mod-hide" data-mod="m-temp" title="隐藏此模块">✕</button></div><div class="value">--<small>°C</small></div><div class="sub"><b>--</b></div></div>
+    <div class="card load" data-mod="m-load"><div class="label">⚖ 系统负载<button class="mod-hide" data-mod="m-load" title="隐藏此模块">✕</button></div><div class="value">--</div><div class="sub">1/5/15 分钟</div></div>
+    <div class="card uptime" data-mod="m-uptime"><div class="label">⏱ 运行时间<button class="mod-hide" data-mod="m-uptime" title="隐藏此模块">✕</button></div><div class="value">--</div><div class="sub">已开机 <b>--</b></div></div>
+    <div class="card ip" data-mod="m-ip"><div class="label">📡 本机 IP<button class="mod-hide" data-mod="m-ip" title="隐藏此模块">✕</button></div><div class="value ip-val" id="ov-ip-v">--</div><div class="sub" id="ov-ip-s">所有网卡地址</div></div>
     </div>
   </section>
 
@@ -691,8 +659,8 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <button class="panel-hide" data-panel="detail" title="隐藏此面板">✕</button>
     </div>
     <div class="detail-grid">
-      <div class="detail-box"><h4>CPU 每核使用率</h4><div id="core-detail"><div class="empty">加载中…</div></div></div>
-      <div class="detail-box"><h4>内存明细</h4><div id="mem-detail"><div class="empty">加载中…</div></div></div>
+      <div class="detail-box" data-mod="m-core"><h4>CPU 每核使用率<button class="mod-hide" data-mod="m-core" title="隐藏此模块">✕</button></h4><div id="core-detail"><div class="empty">加载中…</div></div></div>
+      <div class="detail-box" data-mod="m-memdetail"><h4>内存明细<button class="mod-hide" data-mod="m-memdetail" title="隐藏此模块">✕</button></h4><div id="mem-detail"><div class="empty">加载中…</div></div></div>
     </div>
   </section>
 
@@ -703,8 +671,11 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <div class="panel-title">💽 磁盘信息 <span class="tag" id="disk-count">--</span></div>
       <button class="panel-hide" data-panel="disks" title="隐藏此面板">✕</button>
     </div>
-    <div id="disks-body"><div class="empty">加载中…</div></div>
-    <div class="detail-box" style="margin-top:14px"><h4>📂 磁盘分区与 IO</h4><div id="disk-detail"><div class="empty">加载中…</div></div></div>
+    <div class="mod-block" data-mod="m-phydisks">
+      <div class="mod-head"><span>💽 硬盘信息</span><button class="mod-hide" data-mod="m-phydisks" title="隐藏此模块">✕</button></div>
+      <div id="disks-body"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="detail-box" data-mod="m-partio" style="margin-top:14px"><h4>📂 磁盘分区与 IO<button class="mod-hide" data-mod="m-partio" title="隐藏此模块">✕</button></h4><div id="disk-detail"><div class="empty">加载中…</div></div></div>
   </section>
 
   <!-- 端口占用（与 Docker 同页） -->
@@ -736,13 +707,19 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <div class="panel-title">🌡️ 温度墙 <span class="tag">CPU / 主板 / GPU / 全部测点</span></div>
       <button class="panel-hide" data-panel="wall" title="隐藏此面板">✕</button>
     </div>
-    <div class="wall-hero">
-      <div class="wall-hero-item"><div class="wh-label">CPU 温度</div><div class="wh-value" id="wall-cpu">--<small>°C</small></div></div>
-      <div class="wall-hero-item"><div class="wh-label">主板温度</div><div class="wh-value" id="wall-mb">--<small>°C</small></div></div>
-      <div class="wall-hero-item"><div class="wh-label">GPU 温度</div><div class="wh-value" id="wall-gpu">--<small>°C</small></div></div>
-      <div class="wall-hero-item"><div class="wh-label">全部测点最高</div><div class="wh-value" id="wall-max">--<small>°C</small></div></div>
+    <div class="mod-block" data-mod="m-wall-hero">
+      <div class="mod-head"><span>🌡️ 温度概览</span><button class="mod-hide" data-mod="m-wall-hero" title="隐藏此模块">✕</button></div>
+      <div class="wall-hero">
+        <div class="wall-hero-item"><div class="wh-label">CPU 温度</div><div class="wh-value" id="wall-cpu">--<small>°C</small></div></div>
+        <div class="wall-hero-item"><div class="wh-label">主板温度</div><div class="wh-value" id="wall-mb">--<small>°C</small></div></div>
+        <div class="wall-hero-item"><div class="wh-label">GPU 温度</div><div class="wh-value" id="wall-gpu">--<small>°C</small></div></div>
+        <div class="wall-hero-item"><div class="wh-label">全部测点最高</div><div class="wh-value" id="wall-max">--<small>°C</small></div></div>
+      </div>
     </div>
-    <div id="wall-body"><div class="empty">加载中…</div></div>
+    <div class="mod-block" data-mod="m-wall-body">
+      <div class="mod-head"><span>全部温度测点</span><button class="mod-hide" data-mod="m-wall-body" title="隐藏此模块">✕</button></div>
+      <div id="wall-body"><div class="empty">加载中…</div></div>
+    </div>
   </section>
 
   <!-- 实时功耗 & 显卡（参照网络主流硬件监控面板） -->
@@ -767,36 +744,37 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
         <button data-range="6h">6小时</button>
         <button data-range="24h">24小时</button>
         <button data-range="7d">7天</button>
+        <button data-range="all">全部</button>
       </div>
       <button class="panel-hide" data-panel="trend" title="隐藏此面板">✕</button>
     </div>
     <div class="chart-grid">
-      <div class="chart-box">
-        <div class="c-title"><span>CPU / 内存 使用率 (%)</span><span class="legend"><span><i style="background:#38bdf8"></i>CPU</span><span><i style="background:#a78bfa"></i>内存</span></span></div>
+      <div class="chart-box" data-mod="m-ch-main">
+        <div class="c-title"><span>CPU / 内存 使用率 (%)</span><span class="legend"><span><i style="background:#38bdf8"></i>CPU</span><span><i style="background:#a78bfa"></i>内存</span></span><button class="mod-hide" data-mod="m-ch-main" title="隐藏此模块">✕</button></div>
         <div id="chart-main"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>存储总使用率 (%)</span></div>
+      <div class="chart-box" data-mod="m-ch-disk">
+        <div class="c-title"><span>存储总使用率 (%)</span><button class="mod-hide" data-mod="m-ch-disk" title="隐藏此模块">✕</button></div>
         <div id="chart-disk"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>网络上下行速率</span><span class="legend"><span><i style="background:#fbbf24"></i>下行</span><span><i style="background:#fb7185"></i>上行</span></span></div>
+      <div class="chart-box" data-mod="m-ch-net">
+        <div class="c-title"><span>网络上下行速率</span><span class="legend"><span><i style="background:#fbbf24"></i>下行</span><span><i style="background:#fb7185"></i>上行</span></span><button class="mod-hide" data-mod="m-ch-net" title="隐藏此模块">✕</button></div>
         <div id="chart-net"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>实时功耗 (W)</span><span class="legend"><span><i style="background:#f59e0b"></i>整机功耗</span></span></div>
+      <div class="chart-box" data-mod="m-ch-power">
+        <div class="c-title"><span>实时功耗 (W)</span><span class="legend"><span><i style="background:#f59e0b"></i>整机功耗</span></span><button class="mod-hide" data-mod="m-ch-power" title="隐藏此模块">✕</button></div>
         <div id="chart-power"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>温度 (℃)</span><span class="legend"><span><i style="background:#ef4444"></i>CPU</span><span><i style="background:#f59e0b"></i>主板</span></span></div>
+      <div class="chart-box" data-mod="m-ch-temp">
+        <div class="c-title"><span>温度 (℃)</span><span class="legend"><span><i style="background:#ef4444"></i>CPU</span><span><i style="background:#f59e0b"></i>主板</span></span><button class="mod-hide" data-mod="m-ch-temp" title="隐藏此模块">✕</button></div>
         <div id="chart-temp"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>风扇平均转速 (RPM)</span></div>
+      <div class="chart-box" data-mod="m-ch-fan">
+        <div class="c-title"><span>风扇平均转速 (RPM)</span><button class="mod-hide" data-mod="m-ch-fan" title="隐藏此模块">✕</button></div>
         <div id="chart-fan"></div>
       </div>
-      <div class="chart-box">
-        <div class="c-title"><span>磁盘读写 (MB/s)</span><span class="legend"><span><i style="background:#34d399"></i>读</span><span><i style="background:#a78bfa"></i>写</span></span></div>
+      <div class="chart-box" data-mod="m-ch-diskio">
+        <div class="c-title"><span>磁盘读写 (MB/s)</span><span class="legend"><span><i style="background:#34d399"></i>读</span><span><i style="background:#a78bfa"></i>写</span></span><button class="mod-hide" data-mod="m-ch-diskio" title="隐藏此模块">✕</button></div>
         <div id="chart-diskio"></div>
       </div>
     </div>
@@ -809,12 +787,18 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <div class="panel-title">🐳 Docker 容器 <span class="tag" id="docker-count">--</span></div>
       <button class="panel-hide" data-panel="docker" title="隐藏此面板">✕</button>
     </div>
-    <div class="docker-stats">
-      <div class="dstat"><div class="ds-num on" id="ds-running">--</div><div class="ds-label">运行中</div></div>
-      <div class="dstat"><div class="ds-num" id="ds-stopped">--</div><div class="ds-label">已停止</div></div>
-      <div class="dstat"><div class="ds-num" id="ds-images">--</div><div class="ds-label">镜像数</div></div>
+    <div class="mod-block" data-mod="m-dk-stats">
+      <div class="mod-head"><span>状态计数</span><button class="mod-hide" data-mod="m-dk-stats" title="隐藏此模块">✕</button></div>
+      <div class="docker-stats">
+        <div class="dstat"><div class="ds-num on" id="ds-running">--</div><div class="ds-label">运行中</div></div>
+        <div class="dstat"><div class="ds-num" id="ds-stopped">--</div><div class="ds-label">已停止</div></div>
+        <div class="dstat"><div class="ds-num" id="ds-images">--</div><div class="ds-label">镜像数</div></div>
+      </div>
     </div>
-    <div id="docker-body"><div class="empty">加载中…</div></div>
+    <div class="mod-block" data-mod="m-dk-list">
+      <div class="mod-head"><span>容器列表</span><button class="mod-hide" data-mod="m-dk-list" title="隐藏此模块">✕</button></div>
+      <div id="docker-body"><div class="empty">加载中…</div></div>
+    </div>
   </section>
 
   <!-- 内置应用统计 -->
@@ -846,7 +830,7 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <button class="panel-hide" data-panel="export" title="隐藏此面板">✕</button>
     </div>
     <div class="export-box">
-      <div class="export-row">
+      <div class="export-row" data-mod="m-ex-csv">
         <div class="e-label"><b>历史趋势数据</b><div class="e-sub">CPU / 内存 / 存储 / 网络等所有历史指标，导出为 CSV 表格（可用 Excel / WPS 打开）</div></div>
         <select id="export-range" class="sel">
           <option value="all">全部历史</option>
@@ -856,14 +840,17 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
           <option value="1h">最近 1 小时</option>
         </select>
         <a class="op-btn" id="export-csv" href="#" onclick="return doDownload('/api/export?type=history&range=' + encodeURIComponent(document.getElementById('export-range') ? document.getElementById('export-range').value : '7d'))">⬇ 导出 CSV</a>
+        <button class="mod-hide" data-mod="m-ex-csv" title="隐藏此模块">✕</button>
       </div>
-      <div class="export-row">
+      <div class="export-row" data-mod="m-ex-json">
         <div class="e-label"><b>当前状态快照</b><div class="e-sub">概览 / Docker / 进程 / 内置应用 / 系统信息，导出为 JSON</div></div>
         <a class="op-btn" id="export-status" href="#" onclick="return doDownload('/api/export?type=status')">⬇ 导出 JSON</a>
+        <button class="mod-hide" data-mod="m-ex-json" title="隐藏此模块">✕</button>
       </div>
-      <div class="export-row">
+      <div class="export-row" data-mod="m-ex-report">
         <div class="e-label"><b>一键健康报告（健康诊断）</b><div class="e-sub">最近 7 天各指标 平均 / 最大 / 最近 统计 + 异常告警，导出为 HTML 报告</div></div>
         <a class="op-btn" id="export-report" href="#" onclick="return doDownload('/api/report?format=html')">📄 生成报告</a>
+        <button class="mod-hide" data-mod="m-ex-report" title="隐藏此模块">✕</button>
       </div>
     </div>
   </section>
@@ -876,43 +863,56 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
       <button class="panel-hide" data-panel="settings" title="隐藏此面板">✕</button>
     </div>
     <div class="settings">
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-port">
         <div class="s-label"><b>服务监听端口</b><div class="s-sub">修改后需在 应用中心 → 飞牛监控 中「重启」应用生效；并需在飞牛防火墙放行新端口</div></div>
         <input id="set-port" class="inp" type="number" min="1" max="65535" placeholder="8777">
         <button class="op-btn" onclick="saveConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-port" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-interval">
         <div class="s-label"><b>数据采集间隔</b><div class="s-sub">监控刷新周期（秒，5-3600），值越小越实时但负载略高</div></div>
         <input id="set-interval" class="inp" type="number" min="5" max="3600" placeholder="10">
         <button class="op-btn" onclick="saveConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-interval" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-hist">
         <div class="s-label"><b>历史数据采样间隔</b><div class="s-sub">历史趋势记录周期（秒，60-86400，默认 60）；值越小趋势越密</div></div>
         <input id="set-hist-interval" class="inp" type="number" min="60" max="86400" placeholder="60">
         <button class="op-btn" onclick="saveConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-hist" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-retention">
         <div class="s-label"><b>历史保留天数</b><div class="s-sub">超过保留期的历史数据会自动清理</div></div>
         <input id="set-retention" class="inp" type="number" min="1" max="365" placeholder="7">
         <button class="op-btn" onclick="saveConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-sync">
         <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态会保存到服务器本地文件，换电脑或清浏览器缓存后自动恢复</div></div>
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
+        <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row ui-mgmt" id="ui-mgmt">
+        <div class="s-label"><b>界面管理（显示 / 隐藏恢复）</b><div class="s-sub">被隐藏的面板和小模块都会列在这里，点击名称即可单独恢复显示；也可以点击右侧按钮一次性全部恢复</div></div>
+        <div class="hidden-list" id="ui-hidden-list"><span class="none-hint">加载中…</span></div>
+        <button class="op-btn" onclick="restorePanels()">恢复全部</button>
+      </div>
+      <div class="set-row" data-mod="m-set-weather">
         <div class="s-label"><b>天气位置（自定义）</b><div class="s-sub">填城市名（如 徐州）或 纬度,经度（如 34.26,117.18）；留空=按网络自动定位。需联网</div></div>
         <input id="set-weather-city" class="inp" type="text" placeholder="徐州  或  34.26,117.18" style="max-width:200px">
         <button class="op-btn" onclick="saveWeatherCity()">保存</button>
+        <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-datadir">
         <div class="s-label"><b>数据保存目录（持久化）</b><div class="s-sub">历史数据 / 界面设置的本地保存位置。默认 = 软件安装数据目录下的 <b>localdata</b> 文件夹；可改为飞牛存储空间路径（如 /vol1/监控数据）。留空 = 默认 localdata。保存后需在应用中心重启「飞牛监控」生效</div></div>
         <input id="set-data-dir" class="inp" type="text" placeholder="留空=默认 localdata 目录" style="max-width:240px">
         <button class="op-btn" onclick="saveConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-datadir" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row">
+      <div class="set-row" data-mod="m-set-resetui">
         <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局恢复为默认样式</div></div>
         <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
+        <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
       </div>
       <div id="settings-msg" class="save-msg"></div>
     </div>
@@ -920,7 +920,13 @@ section[data-panel="clock"] .cards{grid-template-columns:repeat(auto-fit,minmax(
 
 </main>
 
-<footer class="footer">飞牛监控 v2.6.4 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，趋势默认显示最近 10 分钟）</footer>
+<footer class="footer">飞牛监控 v2.8.1 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+
+</div><!-- /content -->
+</div><!-- /layout -->
+
+<!-- 悬浮恢复入口：有隐藏项时出现，点击跳到 设置 → 界面管理 -->
+<button id="restore-fab" class="restore-fab" style="display:none" title="打开「设置 → 界面管理」恢复显示">🙈 已隐藏 <b id="fab-count">0</b> 项</button>
 
 <!-- 手机端底部导航（现代风格） -->
 <nav class="mobile-nav" id="mobile-nav">
@@ -971,7 +977,10 @@ function drawChart(el, series, opts){
   const iw = W - padL - padR, ih = H - padT - padB;
   let allTs = [], allVals = [];
   series.forEach(s => (s.points || []).forEach(p => { allTs.push(p[0]); allVals.push(p[1]); }));
-  if (!allTs.length){ el.innerHTML = '<div class="empty" style="text-align:center;padding:60px 0">暂无数据 · 等待后台采集</div>'; return; }
+  if (!allTs.length){
+    el.innerHTML = '<div class="empty" style="text-align:center;padding:56px 0">暂无数据 · 后台每 60 秒自动记录一条历史，稍后自动出现<br><span style="font-size:11px">若长时间为空，请检查「设置 → 数据保存目录」是否可写</span></div>';
+    return;
+  }
   const now = Date.now() / 1000;
   let t0 = Math.min.apply(null, allTs);
   let t1 = Math.max.apply(null, allTs);
@@ -996,7 +1005,9 @@ function drawChart(el, series, opts){
   const Y = (v) => padT + (1 - (v - vMin) / (vMax - vMin)) * ih;
   const fmtV = opts.valueFmt || ((v) => Number(v).toFixed(2));
 
+  // 渐变面积填充（每系列一个垂直渐变，替代纯色低透明填充，观感更现代）
   let svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '" preserveAspectRatio="none">';
+  let defs = "", agi = 0;
   // 网格 + Y 轴
   const steps = 5;
   for (let i = 0; i <= steps; i++){
@@ -1026,13 +1037,18 @@ function drawChart(el, series, opts){
     let d = "";
     pts.forEach((p, i) => { d += (i ? " L" : "M") + X(p[0]).toFixed(2) + " " + Y(p[1]).toFixed(2); });
     if (opts.area && s.color){
+      const gid = "ag" + (agi++);
+      defs += '<linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + s.color + '" stop-opacity=".30"/>' +
+        '<stop offset="1" stop-color="' + s.color + '" stop-opacity=".02"/></linearGradient>';
       let area = d + " L" + X(pts[pts.length-1][0]).toFixed(2) + " " + (padT + ih) + " L" + X(pts[0][0]).toFixed(2) + " " + (padT + ih) + " Z";
-      svg += '<path d="' + area + '" fill="' + s.color + '" opacity="0.12"/>';
+      svg += '<path d="' + area + '" fill="url(#' + gid + ')"/>';
     }
     svg += '<path d="' + d + '" fill="none" stroke="' + (s.color || "#38bdf8") + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
     // hover 提示
     pts.forEach(p => { svg += '<circle cx="' + X(p[0]).toFixed(2) + '" cy="' + Y(p[1]).toFixed(2) + '" r="2.5" fill="' + (s.color||"#38bdf8") + '"><title>' + fmtTime(p[0]) + "  " + (s.name||"") + ": " + fmtV(p[1]) + (opts.unit || "") + '</title></circle>'; });
   });
+  if (defs) svg += '<defs>' + defs + '</defs>';
   svg += '</svg>';
   el.innerHTML = svg;
 }
@@ -1053,13 +1069,22 @@ function renderOverview(o){
   cardMem.querySelector(".bar i").style.width = (mem.percent || 0) + "%";
   cardMem.querySelector(".sub").innerHTML = fmtBytes(mem.used) + " / " + fmtBytes(mem.total) + (mem.swap_total ? " · SWAP " + (mem.swap_percent||0).toFixed(2) + "%" : "");
   // 磁盘
+  // 磁盘：百分比与已用/总量均使用后端按同一口径（fnOS 存储池 /vol*）下发的字段，
+  // 不再前端自行累加分区，避免两处数字对不上；旧后端无该字段时回退本地累加
   let diskPct = o.disk_total != null ? o.disk_total : 0;
   const cardDisk = document.querySelector(".card.disk");
   cardDisk.querySelector(".value").innerHTML = diskPct.toFixed(2) + "<small>%</small>";
   cardDisk.querySelector(".bar i").style.width = diskPct + "%";
-  let du = 0, dt = 0;
-  disks.forEach(d => { du += d.used; dt += d.total; });
-  cardDisk.querySelector(".sub").innerHTML = fmtBytes(du) + " / " + fmtBytes(dt) + " · " + disks.length + " 个分区";
+  let diskSub;
+  if (o.disk_used != null && o.disk_size != null && o.disk_size){
+    diskSub = fmtBytes(o.disk_used) + " / " + fmtBytes(o.disk_size) +
+      (o.disk_pools ? " · " + o.disk_pools + " 个存储池" : "");
+  } else {
+    let du = 0, dt = 0;
+    disks.forEach(d => { du += d.used; dt += d.total; });
+    diskSub = fmtBytes(du) + " / " + fmtBytes(dt) + " · " + disks.length + " 个分区";
+  }
+  cardDisk.querySelector(".sub").innerHTML = diskSub;
   // 网络
   let rx = 0, tx = 0;
   net.forEach(n => { rx += n.rx_rate; tx += n.tx_rate; });
@@ -1240,7 +1265,7 @@ function renderPorts(p){
   if (!body) return;
   const apps = p.apps || [], dockers = p.docker || [], listeners = p.listeners || [];
   let h = '<div class="port-box">';
-  h += '<div class="port-sec"><div class="ps-head">📦 已安装应用端口 <span class="cnt">' + apps.length + " 个</span></div>";
+  h += '<div class="port-sec" data-mod="m-ports-apps"><div class="ps-head">📦 已安装应用端口 <span class="cnt">' + apps.length + " 个</span><button class='mod-hide' data-mod='m-ports-apps' title='隐藏此模块'>✕</button></div>";
   if (apps.length){
     h += '<div style="overflow-x:auto"><table><tr><th>应用</th><th>应用 ID</th><th>端口</th></tr>';
     apps.forEach(a => {
@@ -1249,7 +1274,7 @@ function renderPorts(p){
     h += "</table></div>";
   } else h += '<div class="empty">未扫描到应用中心端口</div>';
   h += "</div>";
-  h += '<div class="port-sec"><div class="ps-head">🐳 Docker 容器端口映射 <span class="cnt">' + dockers.length + " 个</span></div>";
+  h += '<div class="port-sec" data-mod="m-ports-dk"><div class="ps-head">🐳 Docker 容器端口映射 <span class="cnt">' + dockers.length + " 个</span><button class='mod-hide' data-mod='m-ports-dk' title='隐藏此模块'>✕</button></div>";
   if (dockers.length){
     h += '<div style="overflow-x:auto"><table><tr><th>容器</th><th>状态</th><th>端口映射</th></tr>';
     dockers.forEach(d => {
@@ -1259,7 +1284,7 @@ function renderPorts(p){
     h += "</table></div>";
   } else h += '<div class="empty">暂无带端口映射的容器</div>';
   h += "</div>";
-  h += '<div class="port-sec"><div class="ps-head">🔊 系统监听端口 <span class="cnt">' + listeners.length + " 个</span></div>";
+  h += '<div class="port-sec" data-mod="m-ports-listen"><div class="ps-head">🔊 系统监听端口 <span class="cnt">' + listeners.length + " 个</span><button class='mod-hide' data-mod='m-ports-listen' title='隐藏此模块'>✕</button></div>";
   if (listeners.length){
     h += '<div style="overflow-x:auto"><table class="listen-tbl"><tr><th>端口</th><th>地址</th><th>协议</th><th>进程</th><th>PID</th></tr>';
     listeners.forEach(l => {
@@ -1280,22 +1305,22 @@ function renderHardware(o){
   const raid = (o && o.raid) || [];
   const cpu = hw.cpu || {}, board = hw.board || {};
   let h = '<div class="hw-grid">';
-  h += '<div class="hw-box"><h4>处理器</h4>' +
+  h += '<div class="hw-box" data-mod="m-hw-cpu"><h4>处理器<button class="mod-hide" data-mod="m-hw-cpu" title="隐藏此模块">✕</button></h4>' +
     '<div class="hw-line"><span>型号</span><b>' + esc(cpu.model || "--") + "</b></div>" +
     '<div class="hw-line"><span>核心 / 线程</span><b>' + (cpu.cores || "--") + " 核 / " + (cpu.threads || "--") + " 线程</b></div>" +
     '<div class="hw-line"><span>架构</span><b>' + esc(cpu.arch || "--") + "</b></div></div>";
-  h += '<div class="hw-box"><h4>主板 / BIOS</h4>' +
+  h += '<div class="hw-box" data-mod="m-hw-board"><h4>主板 / BIOS<button class="mod-hide" data-mod="m-hw-board" title="隐藏此模块">✕</button></h4>' +
     '<div class="hw-line"><span>厂商</span><b>' + esc(board.sys_vendor || board.board_vendor || "--") + "</b></div>" +
     '<div class="hw-line"><span>型号</span><b>' + esc(board.board_name || board.product_name || "--") + "</b></div>" +
     '<div class="hw-line"><span>版本</span><b>' + esc(board.board_version || "--") + "</b></div>" +
     '<div class="hw-line"><span>BIOS</span><b>' + esc((board.bios_vendor || "") + " " + (board.bios_version || "")).trim() + "</b></div>" +
     '<div class="hw-line"><span>BIOS 日期</span><b>' + esc(board.bios_date || "--") + "</b></div></div>";
-  h += '<div class="hw-box"><h4>显卡</h4>';
+  h += '<div class="hw-box" data-mod="m-hw-gpu"><h4>显卡<button class="mod-hide" data-mod="m-hw-gpu" title="隐藏此模块">✕</button></h4>';
   const gpus = hw.gpu || [];
   if (gpus.length) gpus.forEach(g => { h += '<div class="hw-line"><span>GPU</span><b>' + esc(g) + "</b></div>"; });
   else h += '<div class="hw-line"><span>GPU</span><b>未检测到</b></div>';
   h += "</div>";
-  h += '<div class="hw-box"><h4>网卡</h4>';
+  h += '<div class="hw-box" data-mod="m-hw-net"><h4>网卡<button class="mod-hide" data-mod="m-hw-net" title="隐藏此模块">✕</button></h4>';
   const nets = hw.net || [];
   if (nets.length) nets.forEach(n => {
     const v4 = (n.ipv4 && n.ipv4.length) ? n.ipv4.join(", ") : (n.ip || "--");
@@ -1321,7 +1346,7 @@ function renderSysExtra(o){
   let h = "";
   // 阵列设定（RAID 阵列 + 阵列卡合并）
   if (raid.length || (rc.type && rc.type !== "none")){
-    h += '<div class="hw-box" style="margin-top:14px"><h4>🎴 阵列设定</h4>';
+    h += '<div class="hw-box" data-mod="m-hw-raid" style="margin-top:14px"><h4>🎴 阵列设定<button class="mod-hide" data-mod="m-hw-raid" title="隐藏此模块">✕</button></h4>';
     if (raid.length){
       raid.forEach(r => {
         h += '<div class="hw-line"><span>' + esc(r.device) + ' <span class="tag on">' + esc(r.status) + '</span></span><b>' + esc((r.members || []).join(", ")) + "</b></div>";
@@ -1339,18 +1364,18 @@ function renderSysExtra(o){
   if (temps.length || sensors.available){
     const typeName = {cpu: "CPU", pch: "芯片组", board: "主板", acpi: "ACPI", disk: "硬盘", gpu: "GPU"};
     if (temps.length){
-      h += '<div class="sens-title">🌡️ 温度传感器</div><div class="wall-grid" style="margin-top:6px">';
+      h += '<div data-mod="m-sens-temp"><div class="sens-title">🌡️ 温度传感器<button class="mod-hide" data-mod="m-sens-temp" title="隐藏此模块">✕</button></div><div class="wall-grid" style="margin-top:6px">';
       temps.forEach(t => {
         const hot = t.value != null && (t.value >= 80);
         h += '<div class="wall-hero-item"><div class="wh-label">' + esc(t.name) + ' <span class="temp-chip">' + (typeName[t.type] || t.type) + "</span></div>" +
              '<div class="wh-value" style="' + (hot ? "color:var(--red)" : "") + '">' + (t.value != null ? t.value.toFixed(2) : "--") + "<small>°C</small></div>" +
              (t.max ? '<div class="wh-label">上限 ' + t.max.toFixed(2) + "°C</div>" : "") + "</div>";
       });
-      h += "</div>";
+      h += "</div></div>";
     } else h += '<div class="hw-line" style="margin-top:14px"><span>传感器</span><b>未读取到温度数据</b></div>';
     const volts = sensors.volts || [];
     if (volts.length){
-      h += '<div class="sens-grid" style="margin-top:14px"><div class="sens-card"><h4>⚡ 电压</h4>';
+      h += '<div class="sens-grid" data-mod="m-sens-volt" style="margin-top:14px"><div class="sens-card"><h4>⚡ 电压<button class="mod-hide" data-mod="m-sens-volt" title="隐藏此模块">✕</button></h4>';
       volts.forEach(v => {
         h += '<div class="sens-line"><span>' + esc(v.name) + "</span><b>" + v.value.toFixed(2) + " V</b></div>";
       });
@@ -1359,7 +1384,7 @@ function renderSysExtra(o){
   }
   // 风扇控制
   if (fans.length){
-    h += '<div class="hw-box" style="margin-top:14px"><h4>🌀 风扇控制 <span class="tag">拖动滑块调速 · 可恢复自动温控</span></h4><div class="sens-grid" style="margin-top:6px">';
+    h += '<div class="hw-box" data-mod="m-fans" style="margin-top:14px"><h4>🌀 风扇控制 <span class="tag">拖动滑块调速 · 可恢复自动温控</span><button class="mod-hide" data-mod="m-fans" title="隐藏此模块">✕</button></h4><div class="sens-grid" style="margin-top:6px">';
     fans.forEach(f => {
       const zero = f.rpm === 0;
       h += '<div class="fan-card" id="fan-' + f.idx + '">' +
@@ -1435,7 +1460,7 @@ function renderPowerGpu(power, gpuData){
   const gpus = (gpuData && gpuData.gpu) || [];
   let h = '<div class="pg-grid">';
   // 功耗卡
-  h += '<div class="pg-card"><h4>⚡ CPU 实时功耗 (RAPL)</h4>';
+  h += '<div class="pg-card" data-mod="m-power"><h4>⚡ CPU 实时功耗 (RAPL)<button class="mod-hide" data-mod="m-power" title="隐藏此模块">✕</button></h4>';
   if (ok){
     const total = power.total || 0;
     const pc = total > 40 ? "hot" : (total > 20 ? "warn" : "");
@@ -1449,7 +1474,7 @@ function renderPowerGpu(power, gpuData){
   }
   h += "</div>";
   // 显卡卡
-  h += '<div class="pg-card"><h4>🎮 显卡实时状态</h4>';
+  h += '<div class="pg-card" data-mod="m-gpu"><h4>🎮 显卡实时状态<button class="mod-hide" data-mod="m-gpu" title="隐藏此模块">✕</button></h4>';
   if (gpus.length){
     gpus.forEach(g => {
       const util = g.util != null ? g.util : 0;
@@ -1476,8 +1501,8 @@ function renderMemory(memData){
   if (!el) return;
   const items = (memData && memData.items) || [];
   if (!items.length){ el.innerHTML = ""; return; }
-  let h = '<div class="hw-box" style="margin-top:14px"><h4>🧮 内存插槽 <span class="tag">' +
-    (memData.dual ? "双通道" : items.length ? "单通道 / 未知" : "空") + "</span></h4><div class='dimm-grid'>";
+  let h = '<div class="hw-box" data-mod="m-memslots" style="margin-top:14px"><h4>🧮 内存插槽 <span class="tag">' +
+    (memData.dual ? "双通道" : items.length ? "单通道 / 未知" : "空") + '</span><button class="mod-hide" data-mod="m-memslots" title="隐藏此模块">✕</button></h4><div class=\'dimm-grid\'>';
   items.forEach(it => {
     const fill = it.present;
     h += '<div class="dimm ' + (fill ? "fill" : "empty") + '">' +
@@ -1670,12 +1695,12 @@ async function saveWeatherCity(){
 async function resetUI(){
   if (!confirm("确定恢复默认界面？面板顺序 / 隐藏状态 / 主题 / 布局将重置为初始状态。")) return;
   try {
-    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-tab"].forEach(k => localStorage.removeItem(k));
+    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-hide-mods","fnmonitor-tab"].forEach(k => localStorage.removeItem(k));
   } catch(e){}
   try {
     await fetch("/api/ui", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], range: "10m", tab: "home" })
+      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], hiddenMods: [], range: "10m", tab: "home" })
     });
   } catch(e){}
   location.reload();
@@ -1734,7 +1759,8 @@ function renderProcesses(p){
 }
 
 /* ---------- 历史趋势（后端历史 + 前端实时累积合并，保证始终实时显示） ---------- */
-const SPAN_MAP = { "10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800 };
+/* all=0 表示加载保留期内全部历史（后台每 60 秒一条，默认保留 7 天） */
+const SPAN_MAP = { "10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0 };
 let cachedHistory = null;
 state.liveTrend = { cpu: [], mem: [], disk: [], rx: [], tx: [], power: [], temp: [], tempMb: [], fan: [], diskioR: [], diskioW: [] };
 function pushLiveTrend(o){
@@ -1809,7 +1835,7 @@ function renderTrends(range, spanSec){
 async function loadHistory(){
   const range = state.range;
   const statusEl = $("trend-status");
-  const spanSec = SPAN_MAP[range] || 3600;
+  const spanSec = (range in SPAN_MAP) ? SPAN_MAP[range] : 3600;
   // 逐图独立请求：任一接口失败不影响其他图表渲染
   const cpu = await getJSON("/api/history?metric=cpu&range=" + range).catch(() => null);
   const mem = await getJSON("/api/history?metric=mem&range=" + range).catch(() => null);
@@ -1833,11 +1859,29 @@ async function loadHistory(){
   };
   renderTrends(range, spanSec);
   if (statusEl){
-    const n = (x) => (x && x.points) ? x.points.length : 0;
-    const nn = (x) => (x && (x.rx || x.tx)) ? Math.max(x.rx.length, x.tx.length) : 0;
-    const nd = (x) => (x && (x.r || x.w)) ? Math.max(x.r.length, x.w.length) : 0;
-    statusEl.textContent = "CPU " + n(cpu) + " / 内存 " + n(mem) + " / 存储 " + n(disk) + " / 网络 " + nn(net) +
-      " / 功耗 " + n(power) + " / 温度 " + n(temp) + " / 风扇 " + n(fan) + " / 磁盘IO " + nd(diskio) + " 点";
+    // 状态标签：显示历史点数与最近写入时间；全部为 0 时自动诊断历史库并给出原因
+    const lens = [cpu, mem, disk, power, temp, tempMb, fan].map(x => (x && x.points) ? x.points.length : 0);
+    lens.push(net ? Math.max((net.rx || []).length, (net.tx || []).length) : 0);
+    lens.push(diskio ? Math.max((diskio.r || []).length, (diskio.w || []).length) : 0);
+    const total = lens.reduce((a, b) => a + b, 0);
+    const lastTs = [cpu, mem, disk, power, temp, tempMb, fan].reduce((m, x) => {
+      const p = (x && x.points) || []; return p.length ? Math.max(m, p[p.length - 1][0]) : m;
+    }, 0);
+    if (total > 0){
+      statusEl.textContent = "历史 " + total + " 点" + (lastTs ? " · 最近写入 " + fmtTime(lastTs).split(" ")[1] : "");
+      statusEl.title = "历史数据来自本机 SQLite 库（每 60 秒一条），打开页面即自动加载，无需从头积累";
+    } else {
+      statusEl.textContent = "历史库为空 · 采集中…";
+      statusEl.title = "未查到任何历史记录。请检查「设置 → 数据保存目录」是否可写；或访问 /api/history/diag 查看历史库状态";
+      getJSON("/api/history/diag").then(d => {
+        if (!d) return;
+        if (d.db_error) statusEl.textContent = "历史库异常：" + d.db_error;
+        else if (!d.db_exists) statusEl.textContent = "历史库未创建 · 数据目录不可写？";
+        else if (!d.rows) statusEl.textContent = "历史库为空 · 每 60 秒记录一条，稍后自动出现";
+        else if (d.last_ts) statusEl.textContent = "历史库 " + d.rows + " 行 · 最近写入 " + fmtTime(d.last_ts);
+        statusEl.title = "数据目录: " + (d.data_dir || "--") + " · 库文件: " + (d.db_file || "--");
+      }).catch(() => {});
+    }
   }
 }
 
@@ -1851,7 +1895,7 @@ async function pollOverview(){
     renderDisksDetail(o);
     renderHardware(o);
     pushLiveTrend(o);
-    if (cachedHistory) renderTrends(state.range, SPAN_MAP[state.range] || 3600);
+    if (cachedHistory) renderTrends(state.range, (state.range in SPAN_MAP) ? SPAN_MAP[state.range] : 3600);
     $("status-dot").className = "dot";
     $("status-text").textContent = "正常 · 更新于 " + fmtTime(Date.now()/1000);
     lastOk = Date.now();
@@ -1948,6 +1992,31 @@ document.querySelectorAll("#range-switch button").forEach(btn => {
 });
 document.querySelector("#range-switch button[data-range='10m']").classList.add("active");
 
+/* ---------- 侧边栏收起 / 展开（桌面端；≤920px 移动布局自动隐藏侧边栏） ---------- */
+function applySideCollapsed(c){
+  document.documentElement.classList.toggle("side-min", !!c);
+  const btn = $("side-toggle");
+  if (btn){
+    btn.title = c ? "展开侧边栏" : "收起侧边栏";
+  }
+}
+/* 首帧先按本地缓存应用，避免刷新时闪烁；loadUI 完成后再以服务器配置为准 */
+(function(){
+  let c = false;
+  try { c = localStorage.getItem("fnmonitor-side-collapsed") === "1"; } catch(e){}
+  applySideCollapsed(c);
+})();
+(function(){
+  const btn = $("side-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const c = !document.documentElement.classList.contains("side-min");
+    applySideCollapsed(c);
+    try { localStorage.setItem("fnmonitor-side-collapsed", c ? "1" : "0"); } catch(e){}
+    saveUI();
+  });
+})();
+
 /* ---------- 数据导出（兼容应用中心 iframe 内下载） ---------- */
 function doDownload(url){
   // fnOS 应用在 iframe 中打开，<a download> 会被沙箱拦截，改用新窗口 / 顶层导航触发下载
@@ -1969,6 +2038,79 @@ function doDownload(url){
 /* ---------- 面板拖拽排序 + 隐藏/恢复 ---------- */
 state.hiddenPanels = new Set();
 try { JSON.parse(localStorage.getItem("fnmonitor-hide-panels") || "[]").forEach(id => state.hiddenPanels.add(id)); } catch(e){}
+/* ---------- 小模块（卡片 / 图表 / 子块）级隐藏 ---------- */
+state.hiddenMods = new Set();
+try { JSON.parse(localStorage.getItem("fnmonitor-hide-mods") || "[]").forEach(id => state.hiddenMods.add(id)); } catch(e){}
+function persistMods(){
+  try { localStorage.setItem("fnmonitor-hide-mods", JSON.stringify(Array.from(state.hiddenMods))); } catch(e){}
+}
+function persistHiddenPanels(){
+  try { localStorage.setItem("fnmonitor-hide-panels", JSON.stringify(Array.from(state.hiddenPanels))); } catch(e){}
+}
+/* 隐藏项名称（用于恢复条标签显示） */
+const PANEL_LABELS = {
+  clock: "时间与天气", overview: "服务器状态", detail: "资源详情", disks: "磁盘信息",
+  ports: "端口占用", hardware: "硬件与传感器", wall: "温度墙", powergpu: "功耗与显卡",
+  trend: "资源趋势", docker: "Docker 容器", apps: "内置应用统计", processes: "进程 TOP",
+  export: "数据导出", settings: "设置",
+};
+const MOD_LABELS = {
+  "m-lunar": "时间·农历", "m-weather": "天气",
+  "m-cpu": "CPU 卡", "m-mem": "内存卡", "m-disk": "存储卡", "m-net": "网络卡",
+  "m-temp": "温度卡", "m-load": "负载卡", "m-uptime": "运行时间卡", "m-ip": "本机 IP 卡",
+  "m-core": "CPU 每核", "m-memdetail": "内存明细",
+  "m-phydisks": "硬盘信息", "m-partio": "磁盘分区与 IO",
+  "m-ports-apps": "已安装应用端口", "m-ports-dk": "Docker 端口映射", "m-ports-listen": "系统监听端口",
+  "m-hw-cpu": "处理器", "m-hw-board": "主板/BIOS", "m-hw-gpu": "显卡信息", "m-hw-net": "网卡",
+  "m-memslots": "内存插槽", "m-hw-raid": "阵列设定", "m-sens-temp": "温度传感器", "m-sens-volt": "电压", "m-fans": "风扇控制",
+  "m-wall-hero": "温度概览", "m-wall-body": "温度测点墙",
+  "m-power": "CPU 实时功耗", "m-gpu": "显卡实时状态",
+  "m-ch-main": "CPU/内存趋势", "m-ch-disk": "存储趋势", "m-ch-net": "网络趋势",
+  "m-ch-power": "功耗趋势", "m-ch-temp": "温度趋势", "m-ch-fan": "风扇趋势", "m-ch-diskio": "磁盘 IO 趋势",
+  "m-dk-stats": "容器状态计数", "m-dk-list": "容器列表",
+  "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
+  "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
+  "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
+  "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
+};
+function modLabel(id){ return MOD_LABELS[id] || id; }
+/* 应用模块隐藏状态：只接管曾被本功能隐藏过的元素，避免与天气卡等数据驱动的 display 冲突 */
+function applyMods(){
+  document.querySelectorAll("[data-mod]").forEach(el => {
+    const id = el.dataset.mod;
+    if (!id) return;
+    if (state.hiddenMods.has(id)){
+      if (el.dataset.modHidden !== "1"){ el.dataset.modHidden = "1"; el.style.display = "none"; }
+    } else if (el.dataset.modHidden === "1"){
+      delete el.dataset.modHidden;
+      el.style.display = "";
+    }
+  });
+}
+/* 隐藏项管理：列表渲染在 设置 → 界面管理，另有右下角悬浮入口兜底 */
+function updateRestoreBar(){
+  const np = state.hiddenPanels.size, nm = state.hiddenMods.size, total = np + nm;
+  const listEl = $("ui-hidden-list");
+  if (listEl){
+    if (!total){
+      listEl.innerHTML = '<span class="none-hint">当前没有已隐藏的面板或模块，点各模块标题栏的 ✕ 可隐藏</span>';
+    } else {
+      const chips = [];
+      state.hiddenPanels.forEach(id => chips.push({ id: id, panel: true }));
+      state.hiddenMods.forEach(id => chips.push({ id: id, panel: false }));
+      listEl.innerHTML = chips.map(c =>
+        '<span class="chip" data-restore="' + esc(c.id) + '" data-rpanel="' + (c.panel ? "1" : "") + '" title="点击恢复「' + esc(c.panel ? (PANEL_LABELS[c.id] || c.id) : modLabel(c.id)) + '」">' +
+        esc(c.panel ? (PANEL_LABELS[c.id] || c.id) : modLabel(c.id)) + " ↩</span>"
+      ).join("");
+    }
+  }
+  const fab = $("restore-fab");
+  if (fab){
+    fab.style.display = total ? "" : "none";
+    const cnt = $("fab-count");
+    if (cnt) cnt.textContent = total;
+  }
+}
 function savePanelOrder(){
   const ids = [];
   document.querySelectorAll("main section[data-panel]").forEach(p => ids.push(p.dataset.panel));
@@ -1989,6 +2131,8 @@ function applyPanelOrder(){
 }
 function applyPanels(){
   applyTabPanels();
+  applyMods();
+  updateRestoreBar();
 }
 /* ---------- 模块 Tab 切换（现代导航面板） ---------- */
 function switchTab(tab){
@@ -2009,11 +2153,7 @@ function applyTabPanels(){
     const hidden = state.hiddenPanels.has(p.dataset.panel);
     p.style.display = (inTab && !hidden) ? "" : "none";
   });
-  const bar = $("restore-panels");
-  if (bar){
-    bar.style.display = state.hiddenPanels.size ? "" : "none";
-    bar.querySelector(".cnt").textContent = state.hiddenPanels.size;
-  }
+  updateRestoreBar();
 }
 document.querySelectorAll(".tab").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
@@ -2023,7 +2163,9 @@ document.querySelectorAll(".mobile-nav-item").forEach(b => {
 });
 function restorePanels(){
   state.hiddenPanels.clear();
+  state.hiddenMods.clear();
   try { localStorage.removeItem("fnmonitor-hide-panels"); } catch(e){}
+  try { localStorage.removeItem("fnmonitor-hide-mods"); } catch(e){}
   applyPanels();
   saveUI();
 }
@@ -2040,14 +2182,17 @@ function saveUI(){
     layoutVersion: LAYOUT_VERSION,
     panelOrder: ids,
     hiddenPanels: Array.from(state.hiddenPanels || []),
+    hiddenMods: Array.from(state.hiddenMods || []),
     range: state.range || "10m",
     tab: state.tab || "home",
+    sideCollapsed: document.documentElement.classList.contains("side-min"),
   };
   try {
     localStorage.setItem("fnmonitor-theme", ui.theme);
     localStorage.setItem("fnmonitor-layout-version", String(LAYOUT_VERSION));
     localStorage.setItem("fnmonitor-panel-order", JSON.stringify(ui.panelOrder));
     localStorage.setItem("fnmonitor-hide-panels", JSON.stringify(ui.hiddenPanels));
+    localStorage.setItem("fnmonitor-hide-mods", JSON.stringify(ui.hiddenMods));
   } catch(e){}
   clearTimeout(uiSyncTimer);
   uiSyncTimer = setTimeout(() => {
@@ -2088,11 +2233,23 @@ async function loadUI(){
     }
     if (Array.isArray(ui.hiddenPanels)){
       state.hiddenPanels = new Set(ui.hiddenPanels);
+      persistHiddenPanels();
+    }
+    if (Array.isArray(ui.hiddenMods)){
+      state.hiddenMods = new Set(ui.hiddenMods);
+      persistMods();
+    }
+    if (Array.isArray(ui.hiddenPanels) || Array.isArray(ui.hiddenMods)){
       applyPanels();
     }
-    if (ui.range && ["10m","1h","6h","24h","7d"].indexOf(ui.range) >= 0){
+    if (ui.range && ["10m","1h","6h","24h","7d","all"].indexOf(ui.range) >= 0){
       state.range = ui.range;
       document.querySelectorAll("#range-switch button").forEach(b => b.classList.toggle("active", b.dataset.range === ui.range));
+    }
+    // 侧边栏收起状态以服务器配置为准（跨设备一致）
+    if (typeof ui.sideCollapsed === "boolean"){
+      applySideCollapsed(ui.sideCollapsed);
+      try { localStorage.setItem("fnmonitor-side-collapsed", ui.sideCollapsed ? "1" : "0"); } catch(e){}
     }
     if (ui.tab && document.querySelector('.tab[data-tab="' + ui.tab + '"]')){
       switchTab(ui.tab);
@@ -2100,15 +2257,61 @@ async function loadUI(){
   } catch(e){}
 }
 (function(){
-  // 隐藏按钮
+  // 隐藏按钮（面板级）
   document.querySelectorAll(".panel-hide").forEach(btn => {
     btn.addEventListener("click", () => {
       state.hiddenPanels.add(btn.dataset.panel);
-      try { localStorage.setItem("fnmonitor-hide-panels", JSON.stringify(Array.from(state.hiddenPanels))); } catch(e){}
+      persistHiddenPanels();
       applyPanels();
       saveUI();
     });
   });
+  // 隐藏按钮（小模块级，含 JS 动态渲染的内容 → 用事件委托）
+  document.addEventListener("click", e => {
+    const btn = e.target.closest(".mod-hide");
+    if (!btn || !btn.dataset.mod) return;
+    state.hiddenMods.add(btn.dataset.mod);
+    persistMods();
+    applyMods();
+    updateRestoreBar();
+    saveUI();
+  });
+  // 界面管理：点击标签单独恢复对应面板 / 模块（列表位于 设置 面板内）
+  const rbar = $("ui-hidden-list");
+  if (rbar) rbar.addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    const id = chip.dataset.restore;
+    if (!id) return;
+    if (chip.dataset.rpanel === "1"){ state.hiddenPanels.delete(id); persistHiddenPanels(); }
+    else { state.hiddenMods.delete(id); persistMods(); }
+    applyPanels();
+    saveUI();
+  });
+  // 悬浮入口：跳到 设置 → 界面管理（若设置面板被隐藏则先自动恢复）
+  const fab = $("restore-fab");
+  if (fab) fab.addEventListener("click", () => {
+    if (state.hiddenPanels.has("settings")){
+      state.hiddenPanels.delete("settings");
+      persistHiddenPanels();
+      applyPanels();
+      saveUI();
+    }
+    switchTab("settings");
+    setTimeout(() => {
+      const el = $("ui-mgmt");
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+  });
+  // JS 渲染函数会整体重写卡片内部 HTML，用 MutationObserver 在重渲染后重新应用隐藏状态
+  const mainEl = document.querySelector("main");
+  if (mainEl && "MutationObserver" in window){
+    let moTimer = null;
+    new MutationObserver(() => {
+      if (moTimer) return;
+      moTimer = setTimeout(() => { moTimer = null; if (state.hiddenMods.size) applyMods(); }, 0);
+    }).observe(mainEl, { childList: true, subtree: true });
+  }
   // 拖拽排序
   let dragPanel = null;
   document.querySelectorAll("main section[data-panel]").forEach(p => {

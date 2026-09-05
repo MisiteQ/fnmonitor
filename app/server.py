@@ -32,7 +32,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.6.4"
+VERSION = "2.8.1"
 DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": ""}
 
 # ---------------------------------------------------------------------------
@@ -178,25 +178,25 @@ def read_cpu_model():
     return ""
 
 
+def _unescape_mount_path(s):
+    """还原 /proc/mounts 挂载点里的八进制转义（如 \\040 -> 空格），中文等多字节字符不受影响。"""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), s)
+
+
 def read_mounts():
-    """解析 /proc/mounts，返回真实磁盘挂载点列表。"""
+    """解析 /proc/mounts，返回挂载点原始列表（含文件系统类型与挂载选项）。"""
     mounts = []
-    skip_fs = {
-        "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2",
-        "mqueue", "pstore", "securityfs", "debugfs", "tracefs", "fusectl",
-        "configfs", "bpf", "squashfs", "ramfs", "autofs", "binfmt_misc",
-        "hugetlbfs", "rpc_pipefs", "nsfs", "overlay",
-    }
     for line in read_text("/proc/mounts").splitlines():
         parts = line.split()
-        if len(parts) < 3:
+        if len(parts) < 4:
             continue
-        device, mountpoint, fstype = parts[0], parts[1], parts[2]
-        if fstype in skip_fs:
-            continue
-        if mountpoint.startswith("/var/lib/docker") or mountpoint.startswith("/var/lib/containerd"):
-            continue
-        mounts.append({"device": device, "mount": mountpoint, "fs": fstype})
+        device, mountpoint, fstype, opts = parts[0], parts[1], parts[2], parts[3]
+        mounts.append({
+            "device": device,
+            "mount": _unescape_mount_path(mountpoint),
+            "fs": fstype,
+            "opts": opts.split(","),
+        })
     return mounts
 
 
@@ -207,36 +207,79 @@ def disk_usage(mountpoint):
         free = st.f_bavail * st.f_frsize
         used = (st.f_blocks - st.f_bfree) * st.f_frsize
         percent = round(used / total * 100, 1) if total else 0.0
-        return {"total": total, "used": used, "free": free, "percent": percent}
+        return {
+            "total": total, "used": used, "free": free, "percent": percent,
+            # 文件系统 ID：同一文件系统的所有挂载点（子卷/绑定/设备别名）fsid 相同，用于精确去重
+            "fsid": getattr(st, "f_fsid", 0) or 0,
+        }
     except Exception:
-        return {"total": 0, "used": 0, "free": 0, "percent": 0.0}
+        return {"total": 0, "used": 0, "free": 0, "percent": 0.0, "fsid": 0}
+
+
+# 伪文件系统（proc/sys/tmpfs/overlay 等，不是磁盘空间）
+_PSEUDO_FS = {
+    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2",
+    "mqueue", "pstore", "securityfs", "debugfs", "tracefs", "fusectl",
+    "configfs", "bpf", "squashfs", "ramfs", "autofs", "binfmt_misc",
+    "hugetlbfs", "rpc_pipefs", "nsfs", "overlay", "efivarfs",
+    "fuse.gvfsd-fuse", "fuse.portal", "fuse.snapfuse",
+    # 网络文件系统：占用的是远端空间，不能计入本机存储
+    "nfs", "nfs4", "cifs", "smbfs", "smb3", "9p", "ceph", "glusterfs",
+    "fuse.sshfs", "fuse.rclone", "fuse.curlftpfs",
+}
+# 路径级排除：引导 / 恢复分区、Docker / 容器运行时目录
+_SKIP_PATH_EXACT = {"/boot", "/efi", "/boot/efi", "/rescue", "/recovery"}
+_SKIP_PATH_PREFIX = ("/boot/", "/efi/", "/sys/", "/proc/", "/dev/", "/run/",
+                     "/var/lib/docker", "/var/lib/containerd", "/snap/")
+# 小于该容量的文件系统视为引导/恢复小分区，不计入存储统计（256 MB）
+_MIN_FS_BYTES = 256 * 1024 * 1024
 
 
 def collect_disks():
-    """统计磁盘空间。过滤应用子卷并按物理设备去重，避免同一存储池被重复统计。"""
+    """返回本机真实磁盘文件系统列表（去重、过滤后）。
+
+    口径说明：
+    - 仅统计本地可写块设备文件系统（btrfs / ext4 / xfs / zfs / fuseblk 等）；
+      伪文件系统、网络挂载(nfs/cifs/…)、只读介质、引导/恢复分区、<256MB 小分区排除；
+    - fnOS 的应用/系统子卷（挂载路径含 /@，如 /vol1/@appdata）与存储池是同一个
+      btrfs 文件系统；按 statvfs 的文件系统 ID(fsid) 去重——同一文件系统无论被
+      挂载多少次、设备名写法如何（/dev/mapper/xxx 与 /dev/dm-x、UUID 别名、绑定
+      挂载），只保留路径最浅的一个挂载点，彻底避免同一存储池被重复统计；
+    - used 口径与系统 df 一致（含预留块），返回值单位为字节。
+    """
     disks = []
-    seen_dev = {}
+    seen = {}   # key -> 条目
+    order = []  # 保持首次出现顺序
     for m in read_mounts():
-        mp = m["mount"]
-        # 过滤应用数据/元数据/配置子卷：它们是存储池的子集，会造成空间重复统计
-        if ("/@appdata" in mp or "/@appmeta" in mp or "/@appconf" in mp
-                or "/@appcenter" in mp or mp == "/boot"):
+        mp, dev, fs = m["mount"], m["device"], m["fs"]
+        if fs in _PSEUDO_FS:
             continue
-        dev = m["device"]
-        if dev in seen_dev:
-            # 同一设备多挂载点：保留路径最浅（顶层）的一个
-            cur = seen_dev[dev]
-            if mp.count("/") < cur["mount"].count("/"):
-                seen_dev[dev] = m
+        if mp in _SKIP_PATH_EXACT or mp.startswith(_SKIP_PATH_PREFIX):
             continue
-        seen_dev[dev] = m
-    for m in seen_dev.values():
-        u = disk_usage(m["mount"])
-        disks.append({
-            "device": m["device"], "mount": m["mount"], "fs": m["fs"],
+        # fnOS btrfs 子卷（/vol1/@appdata、/vol1/@appcenter、/@docker…）与存储池同文件系统
+        if "/@" in mp:
+            continue
+        if "ro" in (m.get("opts") or []):
+            continue
+        u = disk_usage(mp)
+        if not u["total"] or u["total"] < _MIN_FS_BYTES:
+            continue
+        # fsid 为 0（个别文件系统不提供）时回退为设备真实路径，兼容 /dev/mapper 别名
+        key = ("fsid", u["fsid"]) if u["fsid"] else ("dev", os.path.realpath(dev) or dev)
+        entry = {
+            "device": dev, "mount": mp, "fs": fs,
             "total": u["total"], "used": u["used"], "free": u["free"],
             "percent": u["percent"],
-        })
+        }
+        if key in seen:
+            # 同一文件系统多挂载点：保留路径最浅（顶层）的一个
+            cur = seen[key]
+            if mp.count("/") < cur["mount"].count("/"):
+                seen[key] = entry
+            continue
+        seen[key] = entry
+        order.append(key)
+    disks = [seen[k] for k in order]
     disks.sort(key=lambda d: -d["total"])
     return disks
 
@@ -2090,6 +2133,9 @@ class History:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("CREATE TABLE IF NOT EXISTS metrics (ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_metric_ts ON metrics(metric, ts)")
+                # 自愈：v2.8.0 前的历史写入曾把 (指标名, 时间戳) 两列互换（ts 列存了文本），
+                # 这些脏行永远查不出来还会拖慢查询，启动时一次性清除
+                conn.execute("DELETE FROM metrics WHERE typeof(ts) != 'real'")
                 conn.commit()
             finally:
                 conn.close()
@@ -2110,7 +2156,10 @@ class History:
             traceback.print_exc()
 
     def query(self, metric, seconds, limit=7200):
-        cutoff = time.time() - seconds
+        # seconds=0 表示查询全部保留期内的历史（「全部」范围），上限放大到 43200 行（30 天 × 每分钟 1 条）
+        if not seconds:
+            limit = 43200
+        cutoff = (time.time() - seconds) if seconds else 0
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
@@ -2301,10 +2350,19 @@ class Collector(threading.Thread):
         # ---- 磁盘 ----
         disks = collect_disks()
         snapshot["disks"] = disks
-        total_all = sum(d["total"] for d in disks)
-        used_all = sum(d["used"] for d in disks)
+        # 「存储总使用」口径：fnOS 存储池挂载在 /vol1、/vol2…，与系统盘是不同文件系统；
+        # 存在存储池时只统计存储池（与 fnOS 存储页一致，避免系统小分区混入），
+        # 没有存储池（开发机/普通 Linux）时回退为全部本地磁盘。
+        pools = [d for d in disks if re.match(r"^/vol\d+($|/)", d["mount"])]
+        scope = pools if pools else disks
+        used_all = sum(d["used"] for d in scope)
+        total_all = sum(d["total"] for d in scope)
         disk_total_percent = round(used_all / total_all * 100, 1) if total_all else 0.0
         snapshot["disk_total"] = disk_total_percent
+        # 字节口径与百分比同源下发，前端不再自行累加，保证两处显示永远一致
+        snapshot["disk_used"] = used_all
+        snapshot["disk_size"] = total_all
+        snapshot["disk_pools"] = len(pools)
         # ---- 磁盘详情（物理硬盘，每 60 秒） ----
         if now - self._last_disks_detail_ts >= 60:
             self._last_disks_detail = collect_disks_detail()
@@ -2361,36 +2419,39 @@ class Collector(threading.Thread):
                     return round(float(v), 2)
                 except Exception:
                     return 0.0
-            rows = [("cpu", now, _r2(cpu_percent))]
+            # 行格式必须与 write() 的 INSERT INTO metrics(ts, metric, value) 一致，即 (时间戳, 指标名, 数值)。
+            # 此前误写成 (指标名, 时间戳, 数值) 导致两列互换，历史查询 WHERE metric=? AND ts>=? 永远查不到，
+            # 趋势图每次打开都只能从零开始累积（历史数据全部无法显示）。
+            rows = [(now, "cpu", _r2(cpu_percent))]
             mem_percent = snapshot["mem"]["percent"]
-            rows.append(("mem", now, _r2(mem_percent)))
+            rows.append((now, "mem", _r2(mem_percent)))
             load1 = load[0] if load else 0.0
-            rows.append(("load1", now, _r2(load1)))
+            rows.append((now, "load1", _r2(load1)))
             for d in disks:
                 if d["total"] > 0:
-                    rows.append(("disk:" + d["mount"], now, _r2(d["percent"])))
-            rows.append(("disk_total", now, _r2(disk_total_percent)))
+                    rows.append((now, "disk:" + d["mount"], _r2(d["percent"])))
+            rows.append((now, "disk_total", _r2(disk_total_percent)))
             for it in ifaces:
-                rows.append(("net_rx:" + it["iface"], now, _r2(it["rx_rate"])))
-                rows.append(("net_tx:" + it["iface"], now, _r2(it["tx_rate"])))
+                rows.append((now, "net_rx:" + it["iface"], _r2(it["rx_rate"])))
+                rows.append((now, "net_tx:" + it["iface"], _r2(it["tx_rate"])))
             if temps.get("cpu"):
-                rows.append(("temp", now, _r2(temps["cpu"])))
+                rows.append((now, "temp", _r2(temps["cpu"])))
             if temps.get("system"):
-                rows.append(("temp_mb", now, _r2(temps["system"])))
+                rows.append((now, "temp_mb", _r2(temps["system"])))
             # ---- RAPL 功耗（历史维度） ----
             if self._last_power.get("ok"):
-                rows.append(("power", now, _r2(self._last_power.get("total", 0))))
+                rows.append((now, "power", _r2(self._last_power.get("total", 0))))
             # ---- 风扇平均 RPM（历史维度） ----
             fans = self._last_sensors.get("fans", [])
             valid_rpm = [f["rpm"] for f in fans if f.get("rpm")]
             if valid_rpm:
-                rows.append(("fan_avg", now, _r2(sum(valid_rpm) / len(valid_rpm))))
+                rows.append((now, "fan_avg", _r2(sum(valid_rpm) / len(valid_rpm))))
             # ---- 磁盘 IO（历史维度：读/写 MB/s） ----
             for it in diskio:
-                rows.append(("diskio_r:" + str(it.get("name", "?")),
-                             now, _r2(float(it.get("read_rate", 0) or 0) / 1048576.0)))
-                rows.append(("diskio_w:" + str(it.get("name", "?")),
-                             now, _r2(float(it.get("write_rate", 0) or 0) / 1048576.0)))
+                rows.append((now, "diskio_r:" + str(it.get("name", "?")),
+                             _r2(float(it.get("read_rate", 0) or 0) / 1048576.0)))
+                rows.append((now, "diskio_w:" + str(it.get("name", "?")),
+                             _r2(float(it.get("write_rate", 0) or 0) / 1048576.0)))
             self.db.write(rows)
         # ---- 清理过期历史 ----
         try:
@@ -2697,7 +2758,7 @@ class MonitorApp:
         return {"processes": top_processes()}
 
     def api_history(self, metric, range_):
-        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}.get(range_, 3600)
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
         if metric == "net":
             return self.api_net_history(range_)
         if metric == "diskio":
@@ -2743,8 +2804,8 @@ class MonitorApp:
 
     def api_diskio_history(self, range_):
         """磁盘 IO 历史：聚合全部磁盘读/写速率（MB/s），返回 {r:[], w:[]}。"""
-        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}.get(range_, 3600)
-        cutoff = time.time() - seconds
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
+        cutoff = (time.time() - seconds) if seconds else 0
         r_map, w_map = {}, {}
         try:
             conn = sqlite3.connect(self.collector.db.db_path, timeout=15)
@@ -2878,7 +2939,9 @@ class MonitorApp:
     def api_ui_set(self, data):
         """保存前端 UI 配置（主题/面板顺序/隐藏/模块隐藏）到本地文件，跨设备不重置。"""
         clean = {}
-        for k in ("theme", "panelOrder", "hiddenPanels", "hiddenMods", "range"):
+        # 注意：layoutVersion / tab 必须一并持久化，否则前端 loadUI 会因
+        # 服务器端 layoutVersion 恒为 0 < 本地版本而每次刷新重置布局
+        for k in ("theme", "layoutVersion", "panelOrder", "hiddenPanels", "hiddenMods", "range", "tab", "sideCollapsed"):
             if k in data:
                 clean[k] = data[k]
         try:
@@ -3284,7 +3347,11 @@ def main():
         args.data_dir = custom_dir
         # 注意：config 仍从默认配置目录（original_dir）读取，切目录不重载
     except Exception:
-        pass
+        # 目录创建/迁移失败绝不能静默继续：否则 monitor.db 会因目录不存在
+        # 而 "unable to open database file"，历史趋势将永远为空。回退到默认数据目录。
+        traceback.print_exc()
+        print("[fnmonitor] 自定义数据目录不可用，回退到 %s" % original_dir)
+        args.data_dir = original_dir
     # 配置文件里指定了端口则优先（网页设置修改端口后重启生效）
     port = int(config.get("port") or 0) or args.port
 
