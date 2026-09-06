@@ -32,7 +32,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.8.4"
+VERSION = "2.8.5"
 DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": ""}
 
 # ---------------------------------------------------------------------------
@@ -2959,6 +2959,7 @@ class MonitorApp:
     def api_config(self):
         c = dict(self.config)
         c["data_dir_actual"] = self.data_dir
+        c["ui_file"] = os.path.join(self.data_dir, "ui.json")  # 界面同步设置文件实际位置
         return {"config": c}
 
     def api_apps(self, refresh=False):

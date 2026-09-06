@@ -602,7 +602,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.8.4</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.8.5</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -890,8 +890,9 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-sync">
-        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态会保存到服务器本地文件，换电脑或清浏览器缓存后自动恢复</div></div>
+        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">该文件跟随下方「数据保存目录」存放。修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
+        <button class="op-btn" onclick="gotoDataDir()" title="滚动到下方「数据保存目录」进行修改">修改保存目录</button>
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row ui-mgmt" id="ui-mgmt">
@@ -922,7 +923,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.8.4 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.8.5 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1658,6 +1659,13 @@ async function saveConfig(){
     if (msg) msg.textContent = "请求失败: " + e.message;
   }
 }
+/* 「界面设置同步 → 修改保存目录」：滚动到数据目录设置行并聚焦输入框 */
+function gotoDataDir(){
+  const row = document.querySelector('[data-mod="m-set-datadir"]');
+  if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+  const inp = $("set-data-dir");
+  if (inp) setTimeout(() => inp.focus(), 350);
+}
 async function loadConfigForm(){
   try {
     const j = await getJSON("/api/config");
@@ -1669,6 +1677,9 @@ async function loadConfigForm(){
     if (c.weather_city != null) $("set-weather-city").value = c.weather_city;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
     else if (c.data_dir_actual) $("set-data-dir").placeholder = "当前默认：" + c.data_dir_actual;
+    // 界面同步设置：显示 ui.json 实际保存位置
+    const uiPath = $("ui-sync-path");
+    if (uiPath) uiPath.textContent = c.ui_file || ((c.data_dir_actual || "数据目录") + "/ui.json");
   } catch(e){}
   // 天气位置本地兜底：后端未返回 / 为空时用本机保存值恢复
   try {
