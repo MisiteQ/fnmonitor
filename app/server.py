@@ -15,6 +15,7 @@ fnMonitor - 飞牛 fnOS 系统监控后端
 """
 import argparse
 import csv
+import hashlib
 import io
 import json
 import math
@@ -31,9 +32,14 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+import urllib.request
 
-VERSION = "2.8.5"
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": ""}
+VERSION = "2.9.0"
+UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
+UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动检查更新周期（6 小时）
+# 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
+GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghproxy.net/"]
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -2241,11 +2247,12 @@ class History:
 # 采集线程
 # ---------------------------------------------------------------------------
 class Collector(threading.Thread):
-    def __init__(self, data_dir, config, cfg_dir=None):
+    def __init__(self, data_dir, config, cfg_dir=None, updater=None):
         super().__init__(daemon=True)
         self.data_dir = data_dir
         self._cfg_dir = cfg_dir or data_dir  # config.json 固定读默认配置目录
         self.config = config
+        self.updater = updater  # UpdateManager：自动检查更新（可为 None）
         self.db = History(os.path.join(data_dir, "monitor.db"))
         self.latest = {}
         self._lock = threading.Lock()
@@ -2522,12 +2529,181 @@ class Collector(threading.Thread):
             self._last_apps_ts = now
         snapshot["apps"] = self._last_apps
 
+        # ---- 在线更新自动检查（每 6 小时；开启自动下载时把新版本安装包下载到 NAS 数据目录） ----
+        if self.updater and self.config.get("update_autocheck"):
+            if now - self.updater._last_check >= UPDATE_CHECK_INTERVAL:
+                try:
+                    uinfo = self.updater.check(force=True)
+                    if (uinfo.get("has_update") and uinfo.get("asset")
+                            and self.config.get("update_autodownload")
+                            and not self.updater.downloaded_path()):
+                        self.updater.download_to_nas(uinfo["asset"])
+                except Exception:
+                    pass
+
         with self._lock:
             self.latest = snapshot
 
     def get_snapshot(self):
         with self._lock:
             return dict(self.latest or {})
+
+
+# ---------------------------------------------------------------------------
+# 在线更新（GitHub Release）
+# ---------------------------------------------------------------------------
+def _ver_tuple(v):
+    """'v2.9.0' / '2.9.0' -> (2, 9, 0)，用于版本比较。"""
+    try:
+        return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+    except Exception:
+        return (0, 0, 0)
+
+
+def _gh_open(url, timeout=30):
+    """打开 GitHub 下载地址：直连失败后自动尝试加速镜像（返回 response，全失败抛最后异常）。"""
+    last = None
+    for m in GH_MIRRORS:
+        u = (m + url) if m else url
+        try:
+            return urllib.request.urlopen(
+                urllib.request.Request(u, headers={"User-Agent": "fnmonitor"}), timeout=timeout)
+        except Exception as e:
+            last = e
+    raise last
+
+
+class UpdateManager:
+    """基于 GitHub Releases 的在线更新：检查新版本、把安装包下载到 NAS（代理下载，
+    解决浏览器直连 GitHub 慢的问题）。自动检查由采集线程按周期调用。"""
+
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+        self._lock = threading.Lock()
+        self._last_check = 0.0
+        self._cache = None            # 最近一次 check() 完整结果（30 分钟缓存）
+        self._status = {"last_check": "", "latest": "", "has_update": False,
+                        "downloading": False, "downloaded_file": "", "download_dir": "",
+                        "error": ""}
+
+    # ---- 工具 ----
+    def detect_arch(self):
+        """本机架构 -> 安装包平台名（x86 / arm）。"""
+        try:
+            m = os.uname().machine.lower()
+        except Exception:
+            m = ""
+        return "arm" if ("aarch64" in m or m.startswith("arm")) else "x86"
+
+    def update_dir(self):
+        return os.path.join(self.data_dir, "update")
+
+    def status(self):
+        with self._lock:
+            return dict(self._status)
+
+    # ---- 检查 ----
+    def check(self, force=False):
+        """查询 GitHub 最新 Release。结果缓存 30 分钟；force=True 跳过缓存。"""
+        with self._lock:
+            if not force and self._cache and time.time() - self._last_check < 1800:
+                return dict(self._cache)
+        arch = self.detect_arch()
+        info = {"ok": False, "current": VERSION, "arch": arch, "latest": "",
+                "has_update": False, "notes": "", "published_at": "", "html_url":
+                "https://github.com/%s/releases/latest" % UPDATE_REPO,
+                "asset": None, "error": ""}
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO,
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "fnmonitor"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                rel = json.loads(r.read().decode("utf-8", "ignore"))
+            latest = str(rel.get("tag_name") or "").lstrip("vV")
+            info["ok"] = True
+            info["latest"] = latest
+            info["has_update"] = _ver_tuple(latest) > _ver_tuple(VERSION)
+            info["notes"] = str(rel.get("body") or "")[:3000]
+            info["published_at"] = str(rel.get("published_at") or "")
+            if rel.get("html_url"):
+                info["html_url"] = rel["html_url"]
+            # 选当前架构的 fpk 资产（x86 优先精确匹配，arm 同理）；记录官方 digest 供下载后校验
+            def _mk_asset(a):
+                return {"name": a.get("name"), "size": int(a.get("size") or 0),
+                        "download_url": a.get("browser_download_url"),
+                        "digest": str(a.get("digest") or "").replace("sha256:", "")}
+            want = "fnmonitor-%s-%s.fpk" % (latest, arch)
+            for a in rel.get("assets") or []:
+                if str(a.get("name")) == want:
+                    info["asset"] = _mk_asset(a)
+                    break
+            if info["asset"] is None:  # 兜底：任一同名平台包
+                for a in rel.get("assets") or []:
+                    if str(a.get("name", "")).endswith("-%s.fpk" % arch):
+                        info["asset"] = _mk_asset(a)
+                        break
+        except Exception as e:
+            info["error"] = str(e)
+        with self._lock:
+            self._cache = dict(info)
+            self._last_check = time.time()
+            st = self._status
+            st["error"] = info["error"]
+            if info["ok"]:
+                st["latest"] = info["latest"]
+                st["has_update"] = info["has_update"]
+                st["last_check"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        return info
+
+    # ---- 下载到 NAS ----
+    def download_to_nas(self, asset):
+        """把安装包下载到 数据目录/update/（自动尝试镜像加速，下载后按官方 SHA256 校验）。
+        返回 (成功?, 文件路径/错误)。"""
+        name = asset.get("name") or "fnmonitor.fpk"
+        url = asset.get("download_url")
+        if not url:
+            return False, "资产缺少下载地址"
+        ddir = self.update_dir()
+        final = os.path.join(ddir, name)
+        tmp = final + ".tmp"
+        try:
+            os.makedirs(ddir, exist_ok=True)
+            with self._lock:
+                self._status["downloading"] = True
+            with _gh_open(url, timeout=60) as r, open(tmp, "wb") as f:
+                while True:
+                    chunk = r.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            # 完整性校验：GitHub API 提供的官方 sha256（镜像下载也不怕被篡改）
+            expect = str(asset.get("digest") or "").lower()
+            if expect:
+                h = hashlib.sha256()
+                with open(tmp, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
+                if h.hexdigest() != expect:
+                    os.remove(tmp)
+                    return False, "安装包 SHA256 校验失败（下载不完整或被篡改），请重试"
+            os.replace(tmp, final)
+            with self._lock:
+                self._status["downloaded_file"] = final
+                self._status["download_dir"] = ddir
+            return True, final
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            return False, str(e)
+        finally:
+            with self._lock:
+                self._status["downloading"] = False
+
+    def downloaded_path(self):
+        with self._lock:
+            return self._status.get("downloaded_file") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -2540,7 +2716,8 @@ class MonitorApp:
         self.config = config
         self.host = host
         self.port = port
-        self.collector = Collector(data_dir, config, cfg_dir=self._cfg_dir)
+        self.updater = UpdateManager(data_dir)  # 在线更新（须先于 Collector 创建）
+        self.collector = Collector(data_dir, config, cfg_dir=self._cfg_dir, updater=self.updater)
         self.www_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
         self.db_path = os.path.join(data_dir, "monitor.db")
         self._weather_cache = None
@@ -2647,6 +2824,42 @@ class MonitorApp:
                     return
                 if path == "/api/weather":
                     self._json(app.api_weather())
+                    return
+                if path == "/api/update/check":
+                    force = (qs.get("force") or ["0"])[0] in ("1", "true", "yes")
+                    self._json(app.api_update_check(force=force))
+                    return
+                if path == "/api/update/download":
+                    to = (qs.get("to") or ["nas"])[0]
+                    if to == "browser":
+                        # NAS 端代理下载到浏览器：用户电脑无需直连 GitHub（自动尝试加速镜像）
+                        asset, err = app.api_update_asset()
+                        if err:
+                            self._json({"ok": False, "error": err})
+                            return
+                        try:
+                            with _gh_open(asset["download_url"], timeout=60) as r:
+                                self.send_response(200)
+                                self.send_header("Content-Type", "application/octet-stream")
+                                self.send_header("Content-Length", str(asset.get("size") or r.headers.get("Content-Length") or 0))
+                                self.send_header("Content-Disposition",
+                                                 'attachment; filename="%s"' % asset["name"].replace('"', ""))
+                                self.end_headers()
+                                while True:
+                                    chunk = r.read(65536)
+                                    if not chunk:
+                                        break
+                                    self.wfile.write(chunk)
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        except Exception as e:
+                            traceback.print_exc()
+                            try:
+                                self._json({"ok": False, "error": str(e)})
+                            except Exception:
+                                pass
+                        return
+                    self._json(app.api_update_download_nas())
                     return
                 if path == "/api/report":
                     fmt = (qs.get("format") or ["json"])[0]
@@ -2960,7 +3173,39 @@ class MonitorApp:
         c = dict(self.config)
         c["data_dir_actual"] = self.data_dir
         c["ui_file"] = os.path.join(self.data_dir, "ui.json")  # 界面同步设置文件实际位置
+        c["version"] = VERSION
+        c["arch"] = self.updater.detect_arch()
+        c["update_status"] = self.updater.status()
         return {"config": c}
+
+    def api_update_check(self, force=False):
+        return self.updater.check(force=force)
+
+    def api_update_download_nas(self):
+        """检查并下载当前架构安装包到 NAS 数据目录 update/ 文件夹。"""
+        info = self.updater.check()  # 走缓存，已有结果不重复请求
+        if not info.get("ok"):
+            return {"ok": False, "error": info.get("error") or "检查更新失败"}
+        if not info.get("has_update") and not self.updater.downloaded_path():
+            return {"ok": False, "error": "当前已是最新版本 v%s" % VERSION}
+        asset = info.get("asset")
+        if not asset:
+            return {"ok": False, "error": "Release 中未找到 %s 平台安装包" % info.get("arch")}
+        ok, path = self.updater.download_to_nas(asset)
+        if ok:
+            return {"ok": True, "file": os.path.basename(path), "path": path,
+                    "note": "已保存到 NAS，请在飞牛应用中心「手动安装」中选择该文件完成升级"}
+        return {"ok": False, "error": path}
+
+    def api_update_asset(self):
+        """返回当前架构最新安装包资产信息（供浏览器代理下载）。"""
+        info = self.updater.check()
+        if not info.get("ok"):
+            return None, info.get("error") or "检查更新失败"
+        asset = info.get("asset")
+        if not asset or not asset.get("download_url"):
+            return None, "Release 中未找到 %s 平台安装包" % info.get("arch")
+        return asset, None
 
     def api_apps(self, refresh=False):
         if refresh:
@@ -3038,6 +3283,9 @@ class MonitorApp:
         if "weather_city" in data:
             cur["weather_city"] = str(data["weather_city"])[:200]
             self._weather_cache = None  # 位置变化后清缓存
+        for k in ("update_autocheck", "update_autodownload"):
+            if k in data:
+                cur[k] = 1 if str(data[k]) in ("1", "true", "on") else 0
         if "data_dir" in data:
             nd = str(data["data_dir"]).strip()
             if nd and os.path.isabs(nd):
@@ -3055,6 +3303,9 @@ class MonitorApp:
                 self.config["history_interval"] = max(60, int(cur["history_interval"]))
             if "weather_city" in cur:
                 self.config["weather_city"] = str(cur["weather_city"])
+            for k in ("update_autocheck", "update_autodownload"):
+                if k in cur:
+                    self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
             if "data_dir" in cur:
                 self.config["data_dir"] = str(cur["data_dir"]).strip()
             self.collector._cfg_mtime = 0.0  # 强制采集线程下次重载

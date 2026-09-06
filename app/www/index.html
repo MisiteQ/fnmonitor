@@ -153,6 +153,8 @@ button{font-family:inherit}
 .tab:hover{background:var(--bg2);color:var(--text)}
 /* 激活态：左侧强调条 + 向右淡出的强调色渐变 */
 .tab.active{background:linear-gradient(90deg,var(--accent-soft),transparent 90%);color:var(--accent)}
+.tab.has-update::after{content:"";position:absolute;right:14px;top:50%;width:8px;height:8px;margin-top:-4px;border-radius:50%;background:var(--red);animation:redpulse 2s ease-in-out infinite}
+@keyframes redpulse{0%,100%{box-shadow:0 0 0 3px color-mix(in srgb,var(--red) 20%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--red) 8%,transparent)}}
 .tab.active::before{content:"";position:absolute;left:0;top:24%;bottom:24%;width:3px;border-radius:99px;background:var(--accent)}
 .tab.active svg{opacity:1}
 .side-foot{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px}
@@ -602,7 +604,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.8.5</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -890,7 +892,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-sync">
-        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">该文件跟随下方「数据保存目录」存放。修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
+        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。该文件跟随下方「数据保存目录」存放。修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
         <button class="op-btn" onclick="gotoDataDir()" title="滚动到下方「数据保存目录」进行修改">修改保存目录</button>
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
@@ -917,13 +919,49 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
         <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-set-update">
+        <div class="s-label"><b>软件更新（GitHub 在线升级）</b><div class="s-sub">
+          当前版本 <b id="upd-cur">--</b> · NAS 架构 <b id="upd-arch">--</b> · <span id="upd-status">尚未检查，点击「检查更新」</span><br>
+          <span id="upd-result" style="color:var(--accent)"></span>
+          <span id="upd-notes" style="opacity:.72;white-space:pre-wrap"></span>
+          <span id="upd-nas-file" style="opacity:.72"></span>
+        </div></div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch">
+          <button class="op-btn" id="btn-upd-check" onclick="checkUpdate()">检查更新</button>
+          <button class="op-btn" id="btn-dl-nas" onclick="updateDownload('nas')" style="display:none" title="保存到 NAS 数据目录 update 文件夹，再到应用中心手动安装">下载到 NAS</button>
+          <button class="op-btn" id="btn-dl-browser" onclick="updateDownload('browser')" style="display:none" title="经 NAS 代理下载安装包到本电脑（无需直连 GitHub）">下载到本电脑</button>
+        </div>
+        <button class="mod-hide" data-mod="m-set-update" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-autoupd">
+        <div class="s-label"><b>自动检查更新</b><div class="s-sub">后台每 6 小时自动从 GitHub 检查新版本，发现新版后在设置导航与「关于」处亮红点提示</div></div>
+        <select id="set-upd-autocheck" class="inp" style="max-width:110px"><option value="1">开启</option><option value="0">关闭</option></select>
+        <button class="op-btn" onclick="saveUpdateCfg()">保存</button>
+        <button class="mod-hide" data-mod="m-set-autoupd" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-autodl">
+        <div class="s-label"><b>自动下载新版本</b><div class="s-sub">自动检查发现新版本后，自动把安装包下载到 NAS 数据目录 update 文件夹。受飞牛应用中心安装机制限制，最后一步需在应用中心「手动安装」选择该文件完成升级</div></div>
+        <select id="set-upd-autodl" class="inp" style="max-width:110px"><option value="1">开启</option><option value="0">关闭</option></select>
+        <button class="op-btn" onclick="saveUpdateCfg()">保存</button>
+        <button class="mod-hide" data-mod="m-set-autodl" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-about">
+        <div class="s-label"><b>关于 飞牛监控（fnMonitor）</b><div class="s-sub">
+          <b>v<span id="about-ver">--</span></b> · 为飞牛 fnOS 打造的系统监控面板 · 纯本地运行 · 开源免费<br>
+          实时监控 CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU，Docker 容器与端口占用，内置应用统计与历史趋势；所有数据（历史记录 / 界面设置 / 配置）均保存在 <b>NAS 服务器端</b>的程序数据目录中，与访问所用的电脑无关。<br>
+          作者：<a href="https://github.com/MisiteQ" target="_blank" rel="noopener">Misite齊（@MisiteQ）</a> · 项目：<a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener">github.com/MisiteQ/fnmonitor</a> · 问题反馈：<a href="https://github.com/MisiteQ/fnmonitor/issues" target="_blank" rel="noopener">Issues</a><br>
+          <span id="about-update" style="color:var(--red)"></span>
+        </div></div>
+        <button class="op-btn" onclick="window.open('https://github.com/MisiteQ/fnmonitor/releases/latest','_blank')" title="打开 GitHub Releases 页面">前往 Releases</button>
+        <button class="mod-hide" data-mod="m-set-about" title="隐藏此模块">✕</button>
+      </div>
       <div id="settings-msg" class="save-msg"></div>
     </div>
   </section>
 
 </main>
 
-<footer class="footer">飞牛监控 v2.8.5 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1666,6 +1704,81 @@ function gotoDataDir(){
   const inp = $("set-data-dir");
   if (inp) setTimeout(() => inp.focus(), 350);
 }
+/* ---------- 软件更新（GitHub 在线升级） ---------- */
+let UPD_HAS_NEW = false;
+function setText(id, txt){ const el = $(id); if (el) el.textContent = txt; }
+function renderUpdateStatus(cfg){
+  // 从 /api/config 的内建信息渲染：当前版本 / 架构 / 自动检查状态 / 上次自动检查结果
+  const st = cfg.update_status || {};
+  if (cfg.version) { setText("upd-cur", "v" + cfg.version); setText("about-ver", cfg.version); }
+  if (cfg.arch) setText("upd-arch", cfg.arch);
+  const sel1 = $("set-upd-autocheck"), sel2 = $("set-upd-autodl");
+  if (sel1) sel1.value = cfg.update_autocheck ? "1" : "0";
+  if (sel2) sel2.value = cfg.update_autodownload ? "1" : "0";
+  if (st.last_check) setText("upd-status",
+    "上次检查：" + st.last_check + (st.latest ? " · 线上最新 v" + st.latest : "") + (st.error ? " · " + st.error : ""));
+  if (st.downloaded_file) setText("upd-nas-file", "已下载到 NAS：" + st.downloaded_file);
+  // 已有自动检查结果且发现新版：直接呈现
+  if (st.has_update && st.latest) renderUpdateResult({ has_update: true, latest: st.latest });
+}
+function renderUpdateResult(u){
+  const res = $("upd-result"), notes = $("upd-notes"), about = $("about-update");
+  if (!res) return;
+  if (u.error){ setText("upd-status", "检查失败：" + u.error); return; }
+  if (u.has_update){
+    res.textContent = "发现新版本 v" + u.latest + "（当前 v" + (u.current || "") + "）";
+    if (notes) notes.textContent = (u.notes || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").slice(0, 500);
+    UPD_HAS_NEW = true;
+    ["btn-dl-nas", "btn-dl-browser"].forEach(id => { const b = $(id); if (b) b.style.display = ""; });
+    if (about) about.textContent = "发现新版本 v" + u.latest + "，可在上方「软件更新」处下载升级";
+    const tab = document.querySelector('.tab[data-tab="settings"]');
+    if (tab) tab.classList.add("has-update");
+  } else {
+    res.textContent = "已是最新版本";
+    notes.textContent = "";
+    ["btn-dl-nas", "btn-dl-browser"].forEach(id => { const b = $(id); if (b) b.style.display = "none"; });
+    if (about) about.textContent = "";
+    const tab = document.querySelector('.tab[data-tab="settings"]');
+    if (tab) tab.classList.remove("has-update");
+  }
+}
+async function checkUpdate(){
+  const btn = $("btn-upd-check");
+  if (btn){ btn.disabled = true; btn.textContent = "检查中…"; }
+  setText("upd-status", "正在连接 GitHub …");
+  try {
+    const u = await getJSON("/api/update/check?force=1");
+    renderUpdateResult(u);
+    if (u.ok && !u.has_update) setText("upd-status", "上次检查：刚刚");
+  } catch(e){ setText("upd-status", "检查失败：" + e.message); }
+  if (btn){ btn.disabled = false; btn.textContent = "检查更新"; }
+}
+async function updateDownload(mode){
+  if (mode === "browser"){ window.open("/api/update/download?to=browser", "_blank"); return; }
+  const btn = $("btn-dl-nas");
+  if (btn){ btn.disabled = true; btn.textContent = "下载中…"; }
+  try {
+    const j = await getJSON("/api/update/download?to=nas");
+    if (j.ok) setText("upd-nas-file", "已下载到 NAS：" + j.path + " —— " + (j.note || ""));
+    else setText("upd-nas-file", "下载失败：" + (j.error || "未知错误"));
+  } catch(e){ setText("upd-nas-file", "下载失败：" + e.message); }
+  if (btn){ btn.disabled = false; btn.textContent = "下载到 NAS"; }
+}
+async function saveUpdateCfg(){
+  const msg = $("settings-msg");
+  try {
+    const r = await fetch("/api/config/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        update_autocheck: $("set-upd-autocheck") ? $("set-upd-autocheck").value : "1",
+        update_autodownload: $("set-upd-autodl") ? $("set-upd-autodl").value : "0"
+      })
+    });
+    const j = await r.json();
+    if (msg && j.ok){ msg.textContent = "更新设置已保存"; setTimeout(() => { msg.textContent = ""; }, 4000); }
+    else if (msg) msg.textContent = "保存失败: " + (j.error || "未知错误");
+  } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
+}
 async function loadConfigForm(){
   try {
     const j = await getJSON("/api/config");
@@ -1680,17 +1793,12 @@ async function loadConfigForm(){
     // 界面同步设置：显示 ui.json 实际保存位置
     const uiPath = $("ui-sync-path");
     if (uiPath) uiPath.textContent = c.ui_file || ((c.data_dir_actual || "数据目录") + "/ui.json");
-  } catch(e){}
-  // 天气位置本地兜底：后端未返回 / 为空时用本机保存值恢复
-  try {
-    const cur = $("set-weather-city").value || "";
-    const local = localStorage.getItem("fnmonitor-weather-city") || "";
-    if (!cur && local) $("set-weather-city").value = local;
+    // 软件更新：当前版本 / 架构 / 自动检查状态
+    renderUpdateStatus(c);
   } catch(e){}
 }
 async function saveWeatherCity(){
   const v = $("set-weather-city") ? $("set-weather-city").value.trim() : "";
-  try { localStorage.setItem("fnmonitor-weather-city", v); } catch(e){}
   const msg = $("settings-msg");
   try {
     const r = await fetch("/api/config/save", {
@@ -2087,6 +2195,7 @@ const MOD_LABELS = {
   "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
+  "m-set-update": "设置·软件更新", "m-set-autoupd": "设置·自动检查更新", "m-set-autodl": "设置·自动下载新版本", "m-set-about": "设置·关于",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
