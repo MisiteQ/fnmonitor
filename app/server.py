@@ -34,12 +34,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.2"
+VERSION = "2.9.3"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
-UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动检查更新周期（6 小时）
+UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
-GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghproxy.net/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0}
+GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -2529,15 +2529,20 @@ class Collector(threading.Thread):
             self._last_apps_ts = now
         snapshot["apps"] = self._last_apps
 
-        # ---- 在线更新自动检查（每 6 小时；开启自动下载时把新版本安装包下载到 NAS 数据目录） ----
-        if self.updater and self.config.get("update_autocheck"):
+        # ---- 在线更新自动检查（每 6 小时）----
+        # update_autoupdate（自动更新）：检查到新版本后自动下载并安装（解包覆盖 + 重启服务）
+        # update_autocheck/update_autodownload（旧版兼容）：仅检查 / 仅下载到数据目录
+        if self.updater and (self.config.get("update_autoupdate") or self.config.get("update_autocheck")):
             if now - self.updater._last_check >= UPDATE_CHECK_INTERVAL:
                 try:
                     uinfo = self.updater.check(force=True)
-                    if (uinfo.get("has_update") and uinfo.get("asset")
-                            and self.config.get("update_autodownload")
-                            and not self.updater.downloaded_path()):
-                        self.updater.download_to_nas(uinfo["asset"])
+                    if uinfo.get("has_update") and uinfo.get("asset"):
+                        if self.config.get("update_autoupdate"):
+                            ok, fpk = self.updater.download_to_nas(uinfo["asset"])
+                            if ok:
+                                self.updater.install_fpk(fpk)  # 安装并自动重启
+                        elif self.config.get("update_autodownload") and not self.updater.downloaded_path():
+                            self.updater.download_to_nas(uinfo["asset"])
                 except Exception:
                     pass
 
@@ -2656,14 +2661,16 @@ class UpdateManager:
         return info
 
     # ---- 下载到 NAS ----
-    def download_to_nas(self, asset):
-        """把安装包下载到 数据目录/update/（自动尝试镜像加速，下载后按官方 SHA256 校验）。
-        返回 (成功?, 文件路径/错误)。"""
+    def download_to_nas(self, asset, dest_dir=None):
+        """把安装包下载到指定目录（默认 数据目录/update/），自动尝试镜像加速，
+        下载后按官方 SHA256 校验。返回 (成功?, 文件路径/错误)。"""
         name = asset.get("name") or "fnmonitor.fpk"
         url = asset.get("download_url")
         if not url:
             return False, "资产缺少下载地址"
-        ddir = self.update_dir()
+        ddir = dest_dir or self.update_dir()
+        if not os.path.isabs(ddir):
+            return False, "请填写以 / 开头的绝对路径（如 /vol1/更新包）"
         final = os.path.join(ddir, name)
         tmp = final + ".tmp"
         try:
@@ -2687,9 +2694,10 @@ class UpdateManager:
                     os.remove(tmp)
                     return False, "安装包 SHA256 校验失败（下载不完整或被篡改），请重试"
             os.replace(tmp, final)
-            with self._lock:
-                self._status["downloaded_file"] = final
-                self._status["download_dir"] = ddir
+            if dest_dir is None:  # 仅记录默认目录的下载状态
+                with self._lock:
+                    self._status["downloaded_file"] = final
+                    self._status["download_dir"] = ddir
             return True, final
         except Exception as e:
             try:
@@ -2700,6 +2708,81 @@ class UpdateManager:
         finally:
             with self._lock:
                 self._status["downloading"] = False
+
+    # ---- 自动安装（解包 fpk 覆盖应用目录后自我重启） ----
+    def install_fpk(self, fpk_path):
+        """解包 fpk（app.tgz + cmd + manifest）并覆盖应用目录（先备份，校验失败自动回滚），
+        成功后延迟 1.5 秒替换当前进程重启服务。返回 (成功?, 消息)。"""
+        import shutil
+        import sys
+        import tarfile
+        app_dir = os.path.dirname(os.path.abspath(__file__))       # <应用根>/app
+        root = os.path.dirname(app_dir)                            # 应用根目录
+        tmp = os.path.join(self.data_dir, "update", "_extract")
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp, exist_ok=True)
+        try:
+            # fpk 结构：app.tgz（app 内容压缩包）+ cmd/ + manifest，均为平铺
+            with tarfile.open(fpk_path, "r:*") as t:
+                t.extractall(tmp)
+            inner = os.path.join(tmp, "app.tgz")
+            if os.path.exists(inner):
+                app_src = os.path.join(tmp, "app")
+                os.makedirs(app_src, exist_ok=True)
+                with tarfile.open(inner, "r:*") as t2:
+                    t2.extractall(app_src)                         # server.py、ui/ 等平铺在内
+            else:
+                app_src = tmp if os.path.exists(os.path.join(tmp, "server.py")) else None
+            if not app_src or not os.path.exists(os.path.join(app_src, "server.py")):
+                shutil.rmtree(tmp, ignore_errors=True)
+                return False, "fpk 包内未找到 app 内容（app.tgz）"
+            if not os.path.exists(os.path.join(tmp, "manifest")):
+                shutil.rmtree(tmp, ignore_errors=True)
+                return False, "fpk 包内缺少 manifest"
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False, "安装包解压失败: %s" % e
+        # 备份当前 app/，失败可回滚
+        bak = app_dir + ".bak"
+        shutil.rmtree(bak, ignore_errors=True)
+        try:
+            shutil.copytree(app_dir, bak)
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False, "备份当前程序失败: %s" % e
+        try:
+            # 覆盖 app 目录内容（保留旧 __pycache__ 无碍，编译校验以新源码为准）
+            shutil.copytree(app_src, app_dir, dirs_exist_ok=True)
+            for item in ("manifest", "cmd", "ICON.PNG"):
+                s = os.path.join(tmp, item)
+                if not os.path.exists(s):
+                    continue
+                d = os.path.join(root, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
+            # 清掉旧字节码避免 Python 误用缓存，再对新代码做语法自检，失败自动回滚
+            pycache = os.path.join(app_dir, "__pycache__")
+            shutil.rmtree(pycache, ignore_errors=True)
+            import py_compile
+            py_compile.compile(os.path.join(app_dir, "server.py"), doraise=True)
+        except Exception as e:
+            shutil.rmtree(app_dir, ignore_errors=True)
+            shutil.copytree(bak, app_dir)
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False, "安装失败已回滚: %s" % e
+        shutil.rmtree(tmp, ignore_errors=True)
+        # 延迟替换进程重启（先让 HTTP 响应送达前端）
+        def _restart():
+            try:
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            except Exception:
+                os._exit(3)  # 兜底：退出交由系统服务拉起
+        timer = threading.Timer(1.5, _restart)
+        timer.daemon = False
+        timer.start()
+        return True, "新版本已安装，服务正在重启…"
 
     def downloaded_path(self):
         with self._lock:
@@ -2829,6 +2912,9 @@ class MonitorApp:
                     force = (qs.get("force") or ["0"])[0] in ("1", "true", "yes")
                     self._json(app.api_update_check(force=force))
                     return
+                if path == "/api/update/install":
+                    self._json(app.api_update_install())
+                    return
                 if path == "/api/update/download":
                     to = (qs.get("to") or ["nas"])[0]
                     if to == "browser":
@@ -2859,7 +2945,8 @@ class MonitorApp:
                             except Exception:
                                 pass
                         return
-                    self._json(app.api_update_download_nas())
+                    dest = (qs.get("path") or [""])[0].strip()
+                    self._json(app.api_update_download_nas(dest_dir=dest or None))
                     return
                 if path == "/api/report":
                     fmt = (qs.get("format") or ["json"])[0]
@@ -3181,21 +3268,36 @@ class MonitorApp:
     def api_update_check(self, force=False):
         return self.updater.check(force=force)
 
-    def api_update_download_nas(self):
-        """检查并下载当前架构安装包到 NAS 数据目录 update/ 文件夹。"""
+    def api_update_download_nas(self, dest_dir=None):
+        """下载当前线上最新版安装包到 NAS 指定目录（不比较版本，始终可下载）。"""
         info = self.updater.check()  # 走缓存，已有结果不重复请求
         if not info.get("ok"):
             return {"ok": False, "error": info.get("error") or "检查更新失败"}
-        if not info.get("has_update") and not self.updater.downloaded_path():
-            return {"ok": False, "error": "当前已是最新版本 v%s" % VERSION}
         asset = info.get("asset")
         if not asset:
             return {"ok": False, "error": "Release 中未找到 %s 平台安装包" % info.get("arch")}
-        ok, path = self.updater.download_to_nas(asset)
+        ok, path = self.updater.download_to_nas(asset, dest_dir=dest_dir)
         if ok:
+            note = "已保存到 NAS，可在飞牛文件管理中查看；也可在应用中心「手动安装」选择该文件完成升级"
             return {"ok": True, "file": os.path.basename(path), "path": path,
-                    "note": "已保存到 NAS，请在飞牛应用中心「手动安装」中选择该文件完成升级"}
+                    "latest": info.get("latest"), "note": note}
         return {"ok": False, "error": path}
+
+    def api_update_install(self):
+        """在线更新：下载最新版安装包（缓存复用）→ 校验 → 覆盖安装 → 自动重启服务。"""
+        info = self.updater.check()
+        if not info.get("ok"):
+            return {"ok": False, "error": info.get("error") or "检查更新失败"}
+        asset = info.get("asset")
+        if not asset:
+            return {"ok": False, "error": "Release 中未找到 %s 平台安装包" % info.get("arch")}
+        ok, fpk = self.updater.download_to_nas(asset)
+        if not ok:
+            return {"ok": False, "error": "下载失败: %s" % fpk}
+        ok, msg = self.updater.install_fpk(fpk)
+        if ok:
+            return {"ok": True, "note": msg, "version": info.get("latest")}
+        return {"ok": False, "error": msg}
 
     def api_update_asset(self):
         """返回当前架构最新安装包资产信息（供浏览器代理下载）。"""
@@ -3283,7 +3385,7 @@ class MonitorApp:
         if "weather_city" in data:
             cur["weather_city"] = str(data["weather_city"])[:200]
             self._weather_cache = None  # 位置变化后清缓存
-        for k in ("update_autocheck", "update_autodownload"):
+        for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
             if k in data:
                 cur[k] = 1 if str(data[k]) in ("1", "true", "on") else 0
         if "data_dir" in data:
@@ -3303,7 +3405,7 @@ class MonitorApp:
                 self.config["history_interval"] = max(60, int(cur["history_interval"]))
             if "weather_city" in cur:
                 self.config["weather_city"] = str(cur["weather_city"])
-            for k in ("update_autocheck", "update_autodownload"):
+            for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
                 if k in cur:
                     self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
             if "data_dir" in cur:

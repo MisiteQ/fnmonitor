@@ -604,7 +604,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.2</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.3</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -897,7 +897,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-font">
-        <div class="s-label"><b>字体大小</b><div class="s-sub">整体缩放页面文字与界面元素，立即生效；选择后自动保存到 NAS 服务器端的界面配置（ui.json），换设备 / 清浏览器缓存后仍生效</div></div>
+        <div class="s-label"><b>字体大小</b><div class="s-sub">整体缩放页面文字与界面元素，立即生效；选择后自动保存到 NAS 服务器端的界面配置（ui.json），换设备 / 清浏览器缓存后仍生效。<b>默认「标准（100%）」即 v2.8.4 及之前版本的原始字体大小</b>，如界面显示偏大偏小可随时在此调回</div></div>
         <select id="set-font-scale" class="inp" style="max-width:130px" onchange="onFontScaleChange()">
           <option value="0.9">较小（90%）</option>
           <option value="1" selected>标准（100%）</option>
@@ -934,26 +934,20 @@ body{display:flex;flex-direction:column;min-height:100vh}
           当前版本 <b id="upd-cur">--</b> · NAS 架构 <b id="upd-arch">--</b> · <span id="upd-status">尚未检查，点击「检查更新」</span><br>
           <span id="upd-result" style="color:var(--accent)"></span>
           <span id="upd-notes" style="opacity:.72;white-space:pre-wrap"></span>
-          <span id="upd-nas-file" style="opacity:.72"></span>
+          <span id="upd-msg" style="opacity:.85"></span>
+          <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+            <span style="opacity:.72">「下载到 NAS」保存到下方文件夹（可改成任意飞牛存储空间路径，如 /vol1/更新包），下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级：</span>
+            <input id="upd-nas-path" class="inp" type="text" placeholder="留空 = 默认数据目录 update 文件夹" style="max-width:360px">
+          </div>
+          <div style="margin-top:6px"><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="set-upd-auto" onchange="saveAutoUpdate()"> <b>自动更新</b><span style="opacity:.72">（后台每 6 小时检查，发现新版本自动下载并<b>直接安装重启服务</b>，无需手动操作）</span></label></div>
         </div></div>
         <div style="display:flex;flex-direction:column;gap:6px;align-items:stretch">
           <button class="op-btn" id="btn-upd-check" onclick="checkUpdate()">检查更新</button>
-          <button class="op-btn" id="btn-dl-nas" onclick="updateDownload('nas')" style="display:none" title="保存到 NAS 数据目录 update 文件夹，再到应用中心手动安装">下载到 NAS</button>
-          <button class="op-btn" id="btn-dl-browser" onclick="updateDownload('browser')" style="display:none" title="经 NAS 代理下载安装包到本电脑（无需直连 GitHub）">下载到本电脑</button>
+          <button class="op-btn" id="btn-upd-install" onclick="updateInstall()" style="display:none;border-color:var(--accent);color:var(--accent)" title="自动下载并安装新版本，安装后服务自动重启">立即更新</button>
+          <button class="op-btn" id="btn-dl-nas" onclick="updateDownload('nas')" title="下载最新版安装包到 NAS 指定文件夹">下载到 NAS</button>
+          <button class="op-btn" id="btn-dl-browser" onclick="updateDownload('browser')" title="经 NAS 代理下载安装包到本电脑（浏览器下载）">下载到本电脑</button>
         </div>
         <button class="mod-hide" data-mod="m-set-update" title="隐藏此模块">✕</button>
-      </div>
-      <div class="set-row" data-mod="m-set-autoupd">
-        <div class="s-label"><b>自动检查更新</b><div class="s-sub">后台每 6 小时自动从 GitHub 检查新版本，发现新版后在设置导航与「关于」处亮红点提示</div></div>
-        <select id="set-upd-autocheck" class="inp" style="max-width:110px"><option value="1">开启</option><option value="0">关闭</option></select>
-        <button class="op-btn" onclick="saveUpdateCfg()">保存</button>
-        <button class="mod-hide" data-mod="m-set-autoupd" title="隐藏此模块">✕</button>
-      </div>
-      <div class="set-row" data-mod="m-set-autodl">
-        <div class="s-label"><b>自动下载新版本</b><div class="s-sub">自动检查发现新版本后，自动把安装包下载到 NAS 数据目录 update 文件夹。受飞牛应用中心安装机制限制，最后一步需在应用中心「手动安装」选择该文件完成升级</div></div>
-        <select id="set-upd-autodl" class="inp" style="max-width:110px"><option value="1">开启</option><option value="0">关闭</option></select>
-        <button class="op-btn" onclick="saveUpdateCfg()">保存</button>
-        <button class="mod-hide" data-mod="m-set-autodl" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-about">
         <div class="s-label"><b>关于 飞牛监控（fnMonitor）</b><div class="s-sub">
@@ -971,7 +965,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.2 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.3 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1735,14 +1729,13 @@ function renderUpdateStatus(cfg){
   const st = cfg.update_status || {};
   if (cfg.version) { setText("upd-cur", "v" + cfg.version); setText("about-ver", cfg.version); }
   if (cfg.arch) setText("upd-arch", cfg.arch);
-  const sel1 = $("set-upd-autocheck"), sel2 = $("set-upd-autodl");
-  if (sel1) sel1.value = cfg.update_autocheck ? "1" : "0";
-  if (sel2) sel2.value = cfg.update_autodownload ? "1" : "0";
+  const auto = $("set-upd-auto");
+  if (auto) auto.checked = !!cfg.update_autoupdate;
   if (st.last_check) setText("upd-status",
     "上次检查：" + st.last_check + (st.latest ? " · 线上最新 v" + st.latest : "") + (st.error ? " · " + st.error : ""));
-  if (st.downloaded_file) setText("upd-nas-file", "已下载到 NAS：" + st.downloaded_file);
+  if (st.downloaded_file) setText("upd-msg", "已下载到 NAS：" + st.downloaded_file);
   // 已有自动检查结果且发现新版：直接呈现
-  if (st.has_update && st.latest) renderUpdateResult({ has_update: true, latest: st.latest });
+  if (st.has_update && st.latest) renderUpdateResult({ has_update: true, latest: st.latest, current: cfg.version });
 }
 function renderUpdateResult(u){
   const res = $("upd-result"), notes = $("upd-notes"), about = $("about-update");
@@ -1752,14 +1745,17 @@ function renderUpdateResult(u){
     res.textContent = "发现新版本 v" + u.latest + "（当前 v" + (u.current || "") + "）";
     if (notes) notes.textContent = (u.notes || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").slice(0, 500);
     UPD_HAS_NEW = true;
-    ["btn-dl-nas", "btn-dl-browser"].forEach(id => { const b = $(id); if (b) b.style.display = ""; });
-    if (about) about.textContent = "发现新版本 v" + u.latest + "，可在上方「软件更新」处下载升级";
+    const inst = $("btn-upd-install");
+    if (inst) inst.style.display = "";
+    if (about) about.textContent = "发现新版本 v" + u.latest + "，可一键更新，或使用下载功能自行安装";
     const tab = document.querySelector('.tab[data-tab="settings"]');
     if (tab) tab.classList.add("has-update");
   } else {
     res.textContent = "已是最新版本";
     notes.textContent = "";
-    ["btn-dl-nas", "btn-dl-browser"].forEach(id => { const b = $(id); if (b) b.style.display = "none"; });
+    UPD_HAS_NEW = false;
+    const inst = $("btn-upd-install");
+    if (inst) inst.style.display = "none";
     if (about) about.textContent = "";
     const tab = document.querySelector('.tab[data-tab="settings"]');
     if (tab) tab.classList.remove("has-update");
@@ -1777,28 +1773,63 @@ async function checkUpdate(){
   if (btn){ btn.disabled = false; btn.textContent = "检查更新"; }
 }
 async function updateDownload(mode){
-  if (mode === "browser"){ window.open("/api/update/download?to=browser", "_blank"); return; }
-  const btn = $("btn-dl-nas");
+  const msg = $("upd-msg");
+  const btn = mode === "nas" ? $("btn-dl-nas") : $("btn-dl-browser");
   if (btn){ btn.disabled = true; btn.textContent = "下载中…"; }
   try {
-    const j = await getJSON("/api/update/download?to=nas");
-    if (j.ok) setText("upd-nas-file", "已下载到 NAS：" + j.path + " —— " + (j.note || ""));
-    else setText("upd-nas-file", "下载失败：" + (j.error || "未知错误"));
-  } catch(e){ setText("upd-nas-file", "下载失败：" + e.message); }
-  if (btn){ btn.disabled = false; btn.textContent = "下载到 NAS"; }
+    if (mode === "nas"){
+      const path = ($("upd-nas-path") ? $("upd-nas-path").value.trim() : "");
+      const q = path ? "&path=" + encodeURIComponent(path) : "";
+      const j = await getJSON("/api/update/download?to=nas" + q);
+      if (msg) msg.textContent = j.ok
+        ? "已下载到 NAS：" + j.path + (j.note ? " —— " + j.note : "")
+        : "下载失败：" + (j.error || "未知错误");
+    } else {
+      // 应用中心为 iframe 嵌入，window.open 会被拦截；改用 fetch+blob 触发浏览器下载
+      if (msg) msg.textContent = "正在经 NAS 代理下载到本电脑…";
+      const r = await fetch("/api/update/download?to=browser");
+      if (!r.ok){ const j = await r.json().catch(() => ({})); throw new Error(j.error || "HTTP " + r.status); }
+      const blob = await r.blob();
+      const cd = r.headers.get("Content-Disposition") || "";
+      const m = cd.match(/filename="?([^";]+)"?/);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = m ? m[1] : "fnmonitor.fpk";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+      if (msg) msg.textContent = "已开始下载到本电脑（若浏览器弹出保存对话框，选择保存位置即可）";
+    }
+  } catch(e){ if (msg) msg.textContent = "下载失败：" + e.message; }
+  if (btn){ btn.disabled = false; btn.textContent = mode === "nas" ? "下载到 NAS" : "下载到本电脑"; }
 }
-async function saveUpdateCfg(){
+async function updateInstall(){
+  if (!confirm("将自动下载最新版本并直接安装（安装后服务自动重启，期间页面会短暂断开），是否继续？")) return;
+  const btn = $("btn-upd-install");
+  if (btn){ btn.disabled = true; btn.textContent = "下载安装中…"; }
+  setText("upd-msg", "正在下载并安装新版本，请稍候…");
+  try {
+    const j = await getJSON("/api/update/install");
+    if (j.ok){
+      setText("upd-msg", j.note || "安装完成，服务重启中…");
+      setTimeout(() => location.reload(), 4000);  // 服务重启后刷新页面
+    } else {
+      setText("upd-msg", "更新失败：" + (j.error || "未知错误"));
+      if (btn){ btn.disabled = false; btn.textContent = "立即更新"; }
+    }
+  } catch(e){
+    setText("upd-msg", "更新请求中断（服务可能正在重启），页面将自动刷新…");
+    setTimeout(() => location.reload(), 4000);
+  }
+}
+async function saveAutoUpdate(){
   const msg = $("settings-msg");
   try {
     const r = await fetch("/api/config/save", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        update_autocheck: $("set-upd-autocheck") ? $("set-upd-autocheck").value : "1",
-        update_autodownload: $("set-upd-autodl") ? $("set-upd-autodl").value : "0"
-      })
+      body: JSON.stringify({ update_autoupdate: $("set-upd-auto").checked ? "1" : "0" })
     });
     const j = await r.json();
-    if (msg && j.ok){ msg.textContent = "更新设置已保存"; setTimeout(() => { msg.textContent = ""; }, 4000); }
+    if (msg && j.ok){ msg.textContent = $("set-upd-auto").checked ? "自动更新已开启" : "自动更新已关闭"; setTimeout(() => { msg.textContent = ""; }, 4000); }
     else if (msg) msg.textContent = "保存失败: " + (j.error || "未知错误");
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
@@ -1841,14 +1872,14 @@ async function saveWeatherCity(){
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
 async function resetUI(){
-  if (!confirm("确定恢复默认界面？面板顺序 / 隐藏状态 / 主题 / 布局将重置为初始状态。")) return;
+  if (!confirm("确定恢复默认界面？面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小将重置为初始状态。")) return;
   try {
-    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-hide-mods","fnmonitor-tab"].forEach(k => localStorage.removeItem(k));
+    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-hide-mods","fnmonitor-tab","fnmonitor-font-scale"].forEach(k => localStorage.removeItem(k));
   } catch(e){}
   try {
     await fetch("/api/ui", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], hiddenMods: [], range: "10m", tab: "home" })
+      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], hiddenMods: [], range: "10m", tab: "home", fontScale: 1 })
     });
   } catch(e){}
   location.reload();
@@ -2221,7 +2252,7 @@ const MOD_LABELS = {
   "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
-  "m-set-update": "设置·软件更新", "m-set-autoupd": "设置·自动检查更新", "m-set-autodl": "设置·自动下载新版本", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
+  "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
