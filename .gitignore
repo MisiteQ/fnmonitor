@@ -1,0 +1,11 @@
+# Python 编译产物
+__pycache__/
+*.pyc
+
+# 打包产物与工具
+*.fpk
+fnpack.exe
+
+# 系统文件
+Thumbs.db
+.DS_Store
