@@ -604,7 +604,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.0</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.1</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -892,9 +892,8 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-sync">
-        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。该文件跟随下方「数据保存目录」存放。修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
+        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。保存位置由下方「<b>数据保存目录</b>」统一决定，修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
-        <button class="op-btn" onclick="gotoDataDir()" title="滚动到下方「数据保存目录」进行修改">修改保存目录</button>
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row ui-mgmt" id="ui-mgmt">
@@ -910,8 +909,9 @@ body{display:flex;flex-direction:column;min-height:100vh}
       </div>
       <div class="set-row" data-mod="m-set-datadir">
         <div class="s-label"><b>数据保存目录（持久化）</b><div class="s-sub">历史数据 / 界面设置的本地保存位置。默认 = 软件安装数据目录下的 <b>localdata</b> 文件夹；可改为飞牛存储空间路径（如 /vol1/监控数据）。留空 = 默认 localdata。保存后需在应用中心重启「飞牛监控」生效</div></div>
-        <input id="set-data-dir" class="inp" type="text" placeholder="留空=默认 localdata 目录" style="max-width:240px">
-        <button class="op-btn" onclick="saveConfig()">保存</button>
+        <input id="set-data-dir" class="inp" type="text" placeholder="留空=默认 localdata 目录" style="max-width:360px" oninput="dataDirChanged()">
+        <button class="op-btn" id="btn-dd-save" onclick="saveConfig()">保存</button>
+        <button class="op-btn" id="btn-dd-cancel" onclick="cancelDataDir()" style="display:none" title="还原为已保存的目录">取消</button>
         <button class="mod-hide" data-mod="m-set-datadir" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-resetui">
@@ -961,7 +961,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.1 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1691,18 +1691,31 @@ async function saveConfig(){
         if (j.config.history_interval != null) $("set-hist-interval").value = j.config.history_interval;
         if (j.config.port) $("set-port").value = j.config.port;
       }
+      if ("data_dir" in data){  // 保存成功后以当前输入为新 baseline，隐藏「取消」
+        DATADIR_BASELINE = data.data_dir;
+        dataDirChanged();
+      }
     } else msg.textContent = "保存失败: " + (j.error || "未知错误");
     setTimeout(() => { msg.textContent = ""; }, 5000);
   } catch(e){
     if (msg) msg.textContent = "请求失败: " + e.message;
   }
 }
-/* 「界面设置同步 → 修改保存目录」：滚动到数据目录设置行并聚焦输入框 */
-function gotoDataDir(){
-  const row = document.querySelector('[data-mod="m-set-datadir"]');
-  if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+/* 「数据保存目录」编辑状态：输入与已保存值不一致时显示「取消」，可一键还原 */
+let DATADIR_BASELINE = "";
+function dataDirChanged(){
   const inp = $("set-data-dir");
-  if (inp) setTimeout(() => inp.focus(), 350);
+  if (!inp) return;
+  const dirty = inp.value.trim() !== DATADIR_BASELINE;
+  const c = $("btn-dd-cancel"), s = $("btn-dd-save");
+  if (c) c.style.display = dirty ? "" : "none";
+  if (s) s.style.opacity = dirty ? "1" : ".55";
+}
+function cancelDataDir(){
+  const inp = $("set-data-dir");
+  if (!inp) return;
+  inp.value = DATADIR_BASELINE;
+  dataDirChanged();
 }
 /* ---------- 软件更新（GitHub 在线升级） ---------- */
 let UPD_HAS_NEW = false;
@@ -1790,6 +1803,9 @@ async function loadConfigForm(){
     if (c.weather_city != null) $("set-weather-city").value = c.weather_city;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
     else if (c.data_dir_actual) $("set-data-dir").placeholder = "当前默认：" + c.data_dir_actual;
+    // 数据目录 baseline：供「取消」还原 & 判断是否有未保存修改
+    DATADIR_BASELINE = ($("set-data-dir").value || "").trim();
+    dataDirChanged();
     // 界面同步设置：显示 ui.json 实际保存位置
     const uiPath = $("ui-sync-path");
     if (uiPath) uiPath.textContent = c.ui_file || ((c.data_dir_actual || "数据目录") + "/ui.json");
