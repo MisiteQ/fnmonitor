@@ -32,7 +32,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.8.3"
+VERSION = "2.8.4"
 DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": ""}
 
 # ---------------------------------------------------------------------------
@@ -2284,6 +2284,7 @@ class Collector(threading.Thread):
         self._last_memory = {"items": [], "dual": False}
         self._last_memory_ts = 0.0
         self._last_hist_ts = 0.0
+        self._last_cleanup_ts = 0.0
         self._cfg_mtime = 0.0
 
     def stop(self):
@@ -2453,21 +2454,23 @@ class Collector(threading.Thread):
                 rows.append((now, "diskio_w:" + str(it.get("name", "?")),
                              _r2(float(it.get("write_rate", 0) or 0) / 1048576.0)))
             self.db.write(rows)
-        # ---- 清理过期历史 ----
-        try:
-            self.db.cleanup(self.config.get("retention_days", 7))
-        except Exception:
-            pass
+        # ---- 清理过期历史（每小时一次即可；原先每 10 秒一次 DELETE，大表时白耗 CPU/IO 并放大 WAL 写入） ----
+        if now - self._last_cleanup_ts >= 3600:
+            self._last_cleanup_ts = now
+            try:
+                self.db.cleanup(self.config.get("retention_days", 7))
+            except Exception:
+                pass
 
-        # ---- Docker（每 15 秒） ----
-        if now - self._last_docker_ts >= 15:
+        # ---- Docker（每 30 秒；docker ps 为外部进程调用，容器列表变化慢，无需高频） ----
+        if now - self._last_docker_ts >= 30:
             self._last_docker = collect_docker()
             self._last_docker_ts = now
         snapshot["docker"] = self._last_docker
 
-        # ---- 功能模块（每 30 秒） ----
+        # ---- 功能模块（每 60 秒；systemctl / docker images / ss 均为外部进程调用） ----
         try:
-            if now - self._last_modules_ts >= 30:
+            if now - self._last_modules_ts >= 60:
                 self._last_modules = collect_modules(self._last_docker)
                 self._last_modules_ts = now
         except Exception:
@@ -2513,8 +2516,8 @@ class Collector(threading.Thread):
             self._last_fans_ts = now
         snapshot["fans"] = self._last_fans
 
-        # ---- 内置应用统计（相册/影视/音乐，每 10 分钟） ----
-        if now - self._last_apps_ts >= 120:
+        # ---- 内置应用统计（相册/影视/音乐，每 10 分钟；目录遍历 + 数据库 COUNT 为重操作，手动刷新按钮可即时更新） ----
+        if now - self._last_apps_ts >= 600:
             self._last_apps = collect_app_stats()
             self._last_apps_ts = now
         snapshot["apps"] = self._last_apps
@@ -2541,12 +2544,26 @@ class MonitorApp:
         self.www_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
         self.db_path = os.path.join(data_dir, "monitor.db")
         self._weather_cache = None
+        # ---- API 响应缓存：多客户端轮询时复用，避免重复查库 / 序列化（CPU 优化核心之一） ----
+        self._overview_bytes = b""
+        self._overview_ts = 0.0
+        self._sysinfo_cache = None
+        self._sysinfo_ts = 0.0
+        self._proc_cache = None
+        self._proc_ts = 0.0
+        self._hist_cache = {}
         self._weather_ts = 0.0
 
     def make_handler(self):
         app = self
 
         class Handler(BaseHTTPRequestHandler):
+            # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程（原 HTTP/1.0
+            # 每个请求都新建/销毁线程，多客户端高频轮询时线程与 glibc malloc arena
+            # 反复增长，是进程 RSS 虚高的重要原因）；timeout 保证空闲连接最终回收
+            protocol_version = "HTTP/1.1"
+            timeout = 65
+
             def do_GET(self):
                 try:
                     self._handle()
@@ -2572,7 +2589,7 @@ class MonitorApp:
                     self.end_headers()
                     return
                 if path == "/api/overview":
-                    self._json(app.api_overview())
+                    self._send_bytes(app.api_overview())
                     return
                 if path == "/api/docker":
                     self._json(app.api_docker())
@@ -2699,7 +2716,9 @@ class MonitorApp:
                 self.send_error(404, "Not Found")
 
             def _json(self, obj):
-                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self._send_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+            def _send_bytes(self, body):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -2737,10 +2756,26 @@ class MonitorApp:
 
     # ---- API 实现 ----
     def api_overview(self):
+        """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
+
+        轮询接口每 5 秒被每个打开的页面调用一次；快照本身每 interval 秒才更新，
+        序列化结果在更新周期内完全一致，直接复用可省掉每客户端的 json.dumps 与
+        system_info() 的 /proc 读取。"""
+        now = time.time()
+        if self._overview_bytes and now - self._overview_ts < 5:
+            return self._overview_bytes
         snap = self.collector.get_snapshot()
-        snap["system"] = system_info()
+        snap["system"] = self._cached_system_info(now)
         snap["config"] = dict(self.config)
-        return snap
+        self._overview_bytes = json.dumps(snap, ensure_ascii=False).encode("utf-8")
+        self._overview_ts = now
+        return self._overview_bytes
+
+    def _cached_system_info(self, now):
+        if self._sysinfo_cache is None or now - self._sysinfo_ts >= 60:
+            self._sysinfo_cache = system_info()
+            self._sysinfo_ts = now
+        return self._sysinfo_cache
 
     def api_docker(self):
         snap = self.collector.get_snapshot()
@@ -2755,9 +2790,31 @@ class MonitorApp:
         return {"modules": collect_modules()}
 
     def api_processes(self):
-        return {"processes": top_processes()}
+        """进程 Top 列表（ps 外部命令结果缓存 15 秒，多客户端轮询复用）。"""
+        now = time.time()
+        if self._proc_cache is None or now - self._proc_ts >= 15:
+            self._proc_cache = {"processes": top_processes()}
+            self._proc_ts = now
+        return self._proc_cache
 
     def api_history(self, metric, range_):
+        """趋势查询（结果缓存 25 秒）。
+
+        历史数据每 history_interval(默认 60) 秒才新增一个点，前端却每 30 秒拉 9 个
+        指标、多客户端时请求成倍放大；「全部」范围单次查询最多 43200 行，缓存后
+        同周期内只查一次库。缓存项上限 24 个，超出整体清空（组合数有限，足够用）。"""
+        key = (metric, range_)
+        now = time.time()
+        cached = self._hist_cache.get(key)
+        if cached and now - cached[0] < 25:
+            return cached[1]
+        if len(self._hist_cache) > 24:
+            self._hist_cache.clear()
+        data = self._api_history_impl(metric, range_)
+        self._hist_cache[key] = (now, data)
+        return data
+
+    def _api_history_impl(self, metric, range_):
         seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
         if metric == "net":
             return self.api_net_history(range_)

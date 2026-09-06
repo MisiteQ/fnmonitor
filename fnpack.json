@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.8.3/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.8.4/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.8.4": {
+          "changelog": "① 大幅降低 CPU / 内存占用：历史库清理降为每小时、应用统计降为 10 分钟、Docker / 模块采集降频；总览 / 趋势 / 进程接口结果缓存复用，多设备同时打开不再成倍消耗<br>② 内存优化：HTTP 长连接减少线程创建，启动限制 glibc 内存 arena 数量<br>③ 前端后台标签页自动暂停轮询，切回立即刷新",
+          "updated_at": "2026-09-06T14:30:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.8.4/fnmonitor-2.8.4-x86.fpk",
+              "sha256": "69904643c8c9da3526ca40b7e56897a408ce455ddd6559d4198f0bbcca3907f3",
+              "size": 242554
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.8.4/fnmonitor-2.8.4-arm.fpk",
+              "sha256": "713d7badd6b776e1f8da034b0458a025c9215f6b780f6f26df3fbc96a0cf5781",
+              "size": 242556
+            }
+          }
+        },
         "2.8.3": {
           "changelog": "① 接入 FnDepot 外部应用源：仓库根目录新增 fnpack.json 索引（V2 规范），在 FnDepot 客户端添加本仓库地址即可直接安装与升级<br>② 本次无功能代码变更，功能与 v2.8.2 一致",
           "updated_at": "2026-09-05T20:30:00+08:00",

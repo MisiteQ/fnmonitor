@@ -34,6 +34,9 @@ start() {
         exit 1
     fi
     cd "$APP_DIR" || { echo "错误：无法进入应用目录 $APP_DIR" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+    # 限制 glibc 多线程 malloc arena 数量（默认最多 8×核数）。Python 线程池服务在
+    # 多核 NAS 上 RSS 常因 arena 碎片虚高到数百 MB，压到 2 后内存占用可下降数倍
+    export MALLOC_ARENA_MAX=2
     nohup $SERVICE_CMD >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1.5

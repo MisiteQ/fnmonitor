@@ -602,7 +602,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.8.3</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.8.4</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -922,7 +922,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.8.3 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.8.4 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1580,6 +1580,7 @@ setInterval(updateLunar, 1000);
 /* ---------- 温度墙 / 功耗 / 显卡 / 内存轮询 ---------- */
 let wallCache = { sensors: null, power: null, gpu: null, mem: null };
 async function pollWall(){
+  if (document.hidden) return;
   try {
     const sensors = await getJSON("/api/sensors");
     const power = await getJSON("/api/power");
@@ -1835,6 +1836,7 @@ function renderTrends(range, spanSec){
   ], { area: true, spanSeconds: spanSec, unit: " MB/s" });
 }
 async function loadHistory(){
+  if (document.hidden) return; // 后台标签页跳过 9 项历史查询（「全部」范围单次最多 4.3 万行）
   const range = state.range;
   const statusEl = $("trend-status");
   const spanSec = (range in SPAN_MAP) ? SPAN_MAP[range] : 3600;
@@ -1890,6 +1892,7 @@ async function loadHistory(){
 /* ---------- 轮询 ---------- */
 let lastOk = 0;
 async function pollOverview(){
+  if (document.hidden) return; // 后台标签页暂停轮询，避免多标签/切走后白白消耗 NAS 资源
   try {
     const o = await getJSON("/api/overview");
     state.overview = o;
@@ -1906,7 +1909,7 @@ async function pollOverview(){
     $("status-text").textContent = "连接失败";
   }
 }
-async function pollPorts(){ try { const j = await getJSON("/api/ports"); renderPorts(j.ports || {}); } catch(e){} }
+async function pollPorts(){ if (document.hidden) return; try { const j = await getJSON("/api/ports"); renderPorts(j.ports || {}); } catch(e){} }
 /* ---------- 天气（总览卡） ---------- */
 function renderWeather(w){
   const card = document.querySelector(".card.weather");
@@ -1920,16 +1923,16 @@ function renderWeather(w){
   if (v) v.innerHTML = (w.desc || "🌡") + " " + Number(w.temp).toFixed(2) + "<small>°C</small>";
   if (s) s.innerHTML = w.city + " · 体感 " + Number(w.feels).toFixed(2) + "°C · 湿度 " + Math.round(Number(w.humidity)||0) + "% · 风 " + Number(w.wind).toFixed(2);
 }
-async function pollWeather(){
+async function pollWeather(){ if (document.hidden) return;
   try {
     const w = await getJSON("/api/weather");
     state.weather = w;
     renderWeather(w);
   } catch(e){ renderWeather(null); }
 }
-async function pollDocker(){ try { state.docker = await getJSON("/api/docker"); renderDocker(state.docker); } catch(e){} }
-async function pollProcesses(){ try { state.processes = await getJSON("/api/processes"); renderProcesses(state.processes); } catch(e){} }
-async function pollApps(refresh){ try { state.apps = await getJSON("/api/apps" + (refresh ? "?refresh=1" : "")); renderApps(state.apps); } catch(e){} }
+async function pollDocker(){ if (document.hidden) return; try { state.docker = await getJSON("/api/docker"); renderDocker(state.docker); } catch(e){} }
+async function pollProcesses(){ if (document.hidden) return; try { state.processes = await getJSON("/api/processes"); renderProcesses(state.processes); } catch(e){} }
+async function pollApps(refresh){ if (document.hidden && !refresh) return; try { state.apps = await getJSON("/api/apps" + (refresh ? "?refresh=1" : "")); renderApps(state.apps); } catch(e){} }
 /* 顶部刷新按钮：立即刷新全部数据（带旋转反馈） */
 function globalRefresh(){
   const btn = document.getElementById("refresh-btn");
@@ -2396,12 +2399,16 @@ if (themeBtn){
   loadHistory();
   setInterval(pollOverview, 5000);
   setInterval(pollWall, 10000);
-  setInterval(pollDocker, 15000);
-  setInterval(pollProcesses, 30000);
-  setInterval(pollApps, 30000);
+  setInterval(pollDocker, 30000);
+  setInterval(pollProcesses, 60000); // 进程表 ps 为外部命令，60 秒足够
+  setInterval(pollApps, 60000);      // 应用统计后端已降为 10 分钟采集
   setInterval(pollPorts, 60000);
   setInterval(pollWeather, 600000);
-  setInterval(loadHistory, 30000);
+  setInterval(loadHistory, 60000);   // 历史每 60 秒才新增一个点，30 秒拉取是重复查询
+  // 切回本标签页时立即补一次刷新（后台期间轮询被暂停，数据会滞后）
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden){ pollOverview(); pollWall(); pollDocker(); loadHistory(); }
+  });
 })();
 
 /* ---------- 全屏切换（F11 拦截 + 顶栏按钮） ----------
