@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.5/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.6/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.9.6": {
+          "changelog": "移除云纹背景装饰：撤销 v2.9.4 / v2.9.5 引入的云纹背景与「显示云纹」开关，页面与面板恢复纯色背景；界面配置向后兼容，旧配置残留字段自动忽略",
+          "updated_at": "2026-09-07T03:30:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.6/fnmonitor-2.9.6-x86.fpk",
+              "sha256": "e154f08e559d4cf9ff0b6563fb4f0807579cbc1e5b6ee2512fa1a18f830da488",
+              "size": 265709
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.6/fnmonitor-2.9.6-arm.fpk",
+              "sha256": "2357372ff14d32b52114549c05869ea3259709dfedb5f4966832b39ec1fefe3d",
+              "size": 265703
+            }
+          }
+        },
         "2.9.5": {
           "changelog": "云纹背景全新纹样：金色螺旋涡卷云头 + 流水波浪线（传统霞纹构图），矢量单元无缝平铺、均匀分布不堆积，随主题明暗自适应",
           "updated_at": "2026-09-07T02:50:00+08:00",
