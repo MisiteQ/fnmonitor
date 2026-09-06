@@ -230,7 +230,6 @@ main section[data-panel="processes"]{--p-acc:#64748b}
 main section[data-panel="docker"]{--p-acc:#0ea5e9}
 main section[data-panel="ports"]{--p-acc:#6366f1}
 main section[data-panel="apps"]{--p-acc:#22c55e}
-main section[data-panel="export"]{--p-acc:#eab308}
 main section[data-panel="settings"]{--p-acc:#94a3b8}
 .drag-handle{cursor:grab;color:var(--dim);font-size:14px;user-select:none;line-height:1;padding:0 2px}
 .drag-handle:active{cursor:grabbing}
@@ -379,6 +378,17 @@ tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
 .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .save-msg{font-size:12px;color:var(--emerald);min-height:16px}
 .export-box{display:flex;flex-direction:column;gap:12px}
+/* 设置页分组标题 */
+.set-group{font-size:12px;font-weight:800;color:var(--accent);letter-spacing:2px;margin:16px 4px 4px;padding-left:8px;border-left:3px solid var(--accent);line-height:1.1}
+.settings .set-group:first-child{margin-top:2px}
+/* 云纹背景装饰：半透明中式祥云平铺，随主题明暗自适应；body.cloud-off 关闭 */
+:root{--cloud-img:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280' viewBox='0 0 280 280'%3E%3Cg fill='none' stroke='%23909499' stroke-opacity='0.16' stroke-width='1.3' stroke-linecap='round'%3E%3Cpath d='M46 92 a15 15 0 1 1 15 15 h38 a24 24 0 0 0 -16 -42 a26 26 0 0 0 -37 27z'/%3E%3Cpath d='M60 107 h56'/%3E%3Cpath d='M196 46 a12 12 0 1 1 12 12 h30 a19 19 0 0 0 -13 -33 a20 20 0 0 0 -29 21z'/%3E%3Cpath d='M206 58 h38'/%3E%3Cpath d='M74 218 a13 13 0 1 1 13 13 h33 a20 20 0 0 0 -14 -36 a22 22 0 0 0 -32 23z'/%3E%3Cpath d='M85 231 h42'/%3E%3Ccircle cx='236' cy='160' r='9'/%3E%3Ccircle cx='252' cy='176' r='4'/%3E%3Ccircle cx='30' cy='30' r='5'/%3E%3Ccircle cx='140' cy='160' r='3.5'/%3E%3Cpath d='M120 262 q10 -12 22 0 q10 10 22 0'/%3E%3Cpath d='M226 236 q8 -10 18 0 q8 8 18 0'/%3E%3C/g%3E%3C/svg%3E")}
+body{background-image:var(--cloud-img)}
+.panel{background-image:var(--cloud-img)}
+.side{background-image:var(--cloud-img)}
+body.cloud-off{background-image:none}
+body.cloud-off .panel{background-image:none}
+body.cloud-off .side{background-image:none}
 .export-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 15px;background:var(--bg2);border:1px solid var(--border);border-radius:12px}
 .e-label{flex:1;min-width:220px}
 .e-label b{font-size:13px}
@@ -604,7 +614,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.3</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.4</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -826,39 +836,6 @@ body{display:flex;flex-direction:column;min-height:100vh}
     <div id="proc-body"><div class="empty">加载中…</div></div>
   </section>
 
-  <!-- 数据导出 -->
-  <section class="panel" data-panel="export" data-tab="settings">
-    <div class="panel-head">
-      <span class="drag-handle" title="按住拖动调整位置">⠿</span>
-      <div class="panel-title">📤 数据导出</div>
-      <button class="panel-hide" data-panel="export" title="隐藏此面板">✕</button>
-    </div>
-    <div class="export-box">
-      <div class="export-row" data-mod="m-ex-csv">
-        <div class="e-label"><b>历史趋势数据</b><div class="e-sub">CPU / 内存 / 存储 / 网络等所有历史指标，导出为 CSV 表格（可用 Excel / WPS 打开）</div></div>
-        <select id="export-range" class="sel">
-          <option value="all">全部历史</option>
-          <option value="7d">最近 7 天</option>
-          <option value="24h">最近 24 小时</option>
-          <option value="6h">最近 6 小时</option>
-          <option value="1h">最近 1 小时</option>
-        </select>
-        <a class="op-btn" id="export-csv" href="#" onclick="return doDownload('/api/export?type=history&range=' + encodeURIComponent(document.getElementById('export-range') ? document.getElementById('export-range').value : '7d'))">⬇ 导出 CSV</a>
-        <button class="mod-hide" data-mod="m-ex-csv" title="隐藏此模块">✕</button>
-      </div>
-      <div class="export-row" data-mod="m-ex-json">
-        <div class="e-label"><b>当前状态快照</b><div class="e-sub">概览 / Docker / 进程 / 内置应用 / 系统信息，导出为 JSON</div></div>
-        <a class="op-btn" id="export-status" href="#" onclick="return doDownload('/api/export?type=status')">⬇ 导出 JSON</a>
-        <button class="mod-hide" data-mod="m-ex-json" title="隐藏此模块">✕</button>
-      </div>
-      <div class="export-row" data-mod="m-ex-report">
-        <div class="e-label"><b>一键健康报告（健康诊断）</b><div class="e-sub">最近 7 天各指标 平均 / 最大 / 最近 统计 + 异常告警，导出为 HTML 报告</div></div>
-        <a class="op-btn" id="export-report" href="#" onclick="return doDownload('/api/report?format=html')">📄 生成报告</a>
-        <button class="mod-hide" data-mod="m-ex-report" title="隐藏此模块">✕</button>
-      </div>
-    </div>
-  </section>
-
   <!-- 设置 -->
   <section class="panel" data-panel="settings" data-tab="settings">
     <div class="panel-head">
@@ -867,6 +844,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
       <button class="panel-hide" data-panel="settings" title="隐藏此面板">✕</button>
     </div>
     <div class="settings">
+      <div class="set-group">服务</div>
       <div class="set-row" data-mod="m-set-port">
         <div class="s-label"><b>服务监听端口</b><div class="s-sub">修改后需在 应用中心 → 飞牛监控 中「重启」应用生效；并需在飞牛防火墙放行新端口</div></div>
         <input id="set-port" class="inp" type="number" min="1" max="65535" placeholder="8777">
@@ -891,8 +869,16 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" onclick="saveConfig()">保存</button>
         <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-set-weather">
+        <div class="s-label"><b>天气位置（自定义）</b><div class="s-sub">填城市名（如 徐州）或 纬度,经度（如 34.26,117.18）；留空=按网络自动定位。需联网</div></div>
+        <input id="set-weather-city" class="inp" type="text" placeholder="徐州  或  34.26,117.18" style="max-width:200px">
+        <button class="op-btn" onclick="saveWeatherCity()">保存</button>
+        <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
+      </div>
+
+      <div class="set-group">界面外观</div>
       <div class="set-row" data-mod="m-set-sync">
-        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。保存位置由下方「<b>数据保存目录</b>」统一决定，修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
+        <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。保存位置由「<b>数据保存目录</b>」统一决定，修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
@@ -906,17 +892,23 @@ body{display:flex;flex-direction:column;min-height:100vh}
         </select>
         <button class="mod-hide" data-mod="m-set-font" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-set-cloud">
+        <div class="s-label"><b>云纹背景装饰</b><div class="s-sub">在页面与面板背景叠加一层半透明中式祥云纹理（极淡，不遮挡内容），随主题自动适配明暗；关闭后恢复纯色背景。立即生效并自动同步到 NAS 端界面配置</div></div>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="set-cloud-bg" onchange="onCloudBgChange()"> <b>显示云纹</b></label>
+        <button class="mod-hide" data-mod="m-set-cloud" title="隐藏此模块">✕</button>
+      </div>
       <div class="set-row ui-mgmt" id="ui-mgmt">
         <div class="s-label"><b>界面管理（显示 / 隐藏恢复）</b><div class="s-sub">被隐藏的面板和小模块都会列在这里，点击名称即可单独恢复显示；也可以点击右侧按钮一次性全部恢复</div></div>
         <div class="hidden-list" id="ui-hidden-list"><span class="none-hint">加载中…</span></div>
         <button class="op-btn" onclick="restorePanels()">恢复全部</button>
       </div>
-      <div class="set-row" data-mod="m-set-weather">
-        <div class="s-label"><b>天气位置（自定义）</b><div class="s-sub">填城市名（如 徐州）或 纬度,经度（如 34.26,117.18）；留空=按网络自动定位。需联网</div></div>
-        <input id="set-weather-city" class="inp" type="text" placeholder="徐州  或  34.26,117.18" style="max-width:200px">
-        <button class="op-btn" onclick="saveWeatherCity()">保存</button>
-        <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
+      <div class="set-row" data-mod="m-set-resetui">
+        <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小 / 云纹背景恢复为默认样式</div></div>
+        <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
+        <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
       </div>
+
+      <div class="set-group">数据</div>
       <div class="set-row" data-mod="m-set-datadir">
         <div class="s-label"><b>数据保存目录（持久化）</b><div class="s-sub">历史数据 / 界面设置的本地保存位置。默认 = 软件安装数据目录下的 <b>localdata</b> 文件夹；可改为飞牛存储空间路径（如 /vol1/监控数据）。留空 = 默认 localdata。保存后需在应用中心重启「飞牛监控」生效</div></div>
         <input id="set-data-dir" class="inp" type="text" placeholder="留空=默认 localdata 目录" style="max-width:360px" oninput="dataDirChanged()">
@@ -924,11 +916,30 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" id="btn-dd-cancel" onclick="cancelDataDir()" style="display:none" title="还原为已保存的目录">取消</button>
         <button class="mod-hide" data-mod="m-set-datadir" title="隐藏此模块">✕</button>
       </div>
-      <div class="set-row" data-mod="m-set-resetui">
-        <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局恢复为默认样式</div></div>
-        <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
-        <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
+      <div class="set-row" data-mod="m-ex-csv">
+        <div class="s-label"><b>导出历史趋势数据</b><div class="s-sub">CPU / 内存 / 存储 / 网络等所有历史指标，导出为 CSV 表格（可用 Excel / WPS 打开）</div></div>
+        <select id="export-range" class="inp" style="max-width:130px">
+          <option value="all">全部历史</option>
+          <option value="7d">最近 7 天</option>
+          <option value="24h">最近 24 小时</option>
+          <option value="6h">最近 6 小时</option>
+          <option value="1h">最近 1 小时</option>
+        </select>
+        <a class="op-btn" id="export-csv" href="#" onclick="return doDownload('/api/export?type=history&range=' + encodeURIComponent(document.getElementById('export-range') ? document.getElementById('export-range').value : '7d'))">⬇ 导出 CSV</a>
+        <button class="mod-hide" data-mod="m-ex-csv" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-ex-json">
+        <div class="s-label"><b>导出当前状态快照</b><div class="s-sub">概览 / Docker / 进程 / 内置应用 / 系统信息，导出为 JSON</div></div>
+        <a class="op-btn" id="export-status" href="#" onclick="return doDownload('/api/export?type=status')">⬇ 导出 JSON</a>
+        <button class="mod-hide" data-mod="m-ex-json" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-ex-report">
+        <div class="s-label"><b>一键健康报告（健康诊断）</b><div class="s-sub">最近 7 天各指标 平均 / 最大 / 最近 统计 + 异常告警，导出为 HTML 报告</div></div>
+        <a class="op-btn" id="export-report" href="#" onclick="return doDownload('/api/report?format=html')">📄 生成报告</a>
+        <button class="mod-hide" data-mod="m-ex-report" title="隐藏此模块">✕</button>
+      </div>
+
+      <div class="set-group">更新与关于</div>
       <div class="set-row" data-mod="m-set-update">
         <div class="s-label"><b>软件更新（GitHub 在线升级）</b><div class="s-sub">
           当前版本 <b id="upd-cur">--</b> · NAS 架构 <b id="upd-arch">--</b> · <span id="upd-status">尚未检查，点击「检查更新」</span><br>
@@ -965,7 +976,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.3 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.4 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1872,14 +1883,14 @@ async function saveWeatherCity(){
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
 async function resetUI(){
-  if (!confirm("确定恢复默认界面？面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小将重置为初始状态。")) return;
+  if (!confirm("确定恢复默认界面？面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小 / 云纹背景将重置为初始状态。")) return;
   try {
-    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-hide-mods","fnmonitor-tab","fnmonitor-font-scale"].forEach(k => localStorage.removeItem(k));
+    ["fnmonitor-theme","fnmonitor-layout-version","fnmonitor-panel-order","fnmonitor-hide-panels","fnmonitor-hide-mods","fnmonitor-tab","fnmonitor-font-scale","fnmonitor-cloud"].forEach(k => localStorage.removeItem(k));
   } catch(e){}
   try {
     await fetch("/api/ui", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], hiddenMods: [], range: "10m", tab: "home", fontScale: 1 })
+      body: JSON.stringify({ theme: "fresh", layoutVersion: LAYOUT_VERSION, panelOrder: [], hiddenPanels: [], hiddenMods: [], range: "10m", tab: "home", fontScale: 1, cloudBg: 1 })
     });
   } catch(e){}
   location.reload();
@@ -2252,7 +2263,7 @@ const MOD_LABELS = {
   "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
-  "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
+  "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小", "m-set-cloud": "设置·云纹背景",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
@@ -2369,6 +2380,7 @@ function saveUI(){
     tab: state.tab || "home",
     sideCollapsed: document.documentElement.classList.contains("side-min"),
     fontScale: parseFloat($("set-font-scale") ? $("set-font-scale").value : "1") || 1,
+    cloudBg: !document.body.classList.contains("cloud-off"),
   };
   try {
     localStorage.setItem("fnmonitor-theme", ui.theme);
@@ -2440,6 +2452,8 @@ async function loadUI(){
     }
     // 字体大小以服务器配置为准（跨设备一致）
     if (ui.fontScale) applyFontScale(String(ui.fontScale));
+    // 云纹背景开关（跨设备一致）
+    if (ui.cloudBg != null) applyCloudBg(!!ui.cloudBg);
   } catch(e){}
 }
 (function(){
@@ -2575,6 +2589,24 @@ function onFontScaleChange(){
   let s = "1";
   try { s = localStorage.getItem("fnmonitor-font-scale") || "1"; } catch(e){}
   applyFontScale(s);
+})();
+
+/* ---------- 云纹背景装饰（半透明祥云纹理，可开关，随界面配置同步） ---------- */
+function applyCloudBg(on){
+  document.body.classList.toggle("cloud-off", !on);
+  const cb = $("set-cloud-bg");
+  if (cb) cb.checked = !!on;
+  try { localStorage.setItem("fnmonitor-cloud", on ? "1" : "0"); } catch(e){}
+}
+function onCloudBgChange(){
+  applyCloudBg($("set-cloud-bg").checked);
+  saveUI();  // 防抖 600ms 后自动同步到服务器 ui.json
+}
+(function initCloudBg(){
+  // 启动先用本机快照应用，默认开启云纹
+  let on = true;
+  try { on = localStorage.getItem("fnmonitor-cloud") !== "0"; } catch(e){}
+  applyCloudBg(on);
 })();
 
 (async function init(){

@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.3/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.4/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.9.4": {
+          "changelog": "设置页分组重排（界面外观 / 数据 / 服务 / 更新与关于）；数据导出移入设置页；新增云纹背景装饰（半透明祥云纹理，可随时开关并跨设备同步）",
+          "updated_at": "2026-09-07T02:00:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.4/fnmonitor-2.9.4-x86.fpk",
+              "sha256": "35f6ea500b1977bd06b9adb4c55b681ac40f20f2409f7f43f27f05ad0eabb492",
+              "size": 266422
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.4/fnmonitor-2.9.4-arm.fpk",
+              "sha256": "90ef5b51a824beb2da22a4f9391eb61d5763b29602d688311a3d02c7cb808ebb",
+              "size": 266412
+            }
+          }
+        },
         "2.9.3": {
           "changelog": "软件更新模块合并重构；修复「下载到本电脑」与「下载到 NAS」（支持自定义保存文件夹）；新增「立即更新」一键升级与「自动更新」开关（自动下载+安装+重启，带备份回滚）；字体默认恢复 2.8.4 原始大小",
           "updated_at": "2026-09-07T01:10:00+08:00",
