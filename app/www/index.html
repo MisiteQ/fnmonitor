@@ -283,11 +283,11 @@ main section[data-panel="settings"]{--p-acc:#94a3b8}
 .core-row .c-val{width:44px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text);font-weight:600}
 .mem-line{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:3px 0}
 .mem-line b{color:var(--text);font-weight:600}
-.segbar{display:flex;height:9px;border-radius:99px;overflow:hidden;margin:8px 0;background:var(--bar-track)}
+.segbar{display:flex;height:14px;border-radius:99px;overflow:hidden;margin:8px 0;background:var(--bar-track)}
 .segbar i{display:block;height:100%}
 .legend2{display:flex;gap:12px;font-size:11px;color:var(--muted);flex-wrap:wrap}
 .legend2 span{display:flex;align-items:center;gap:4px}
-.legend2 i{width:9px;height:9px;border-radius:3px;display:inline-block}
+.legend2 i{width:12px;height:12px;border-radius:3px;display:inline-block}
 
 /* ===== 图表 ===== */
 .chart-grid{gap:13px}
@@ -604,7 +604,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.1</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.2</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -896,6 +896,16 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" onclick="pushUI()">立即同步到服务器</button>
         <button class="mod-hide" data-mod="m-set-sync" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-set-font">
+        <div class="s-label"><b>字体大小</b><div class="s-sub">整体缩放页面文字与界面元素，立即生效；选择后自动保存到 NAS 服务器端的界面配置（ui.json），换设备 / 清浏览器缓存后仍生效</div></div>
+        <select id="set-font-scale" class="inp" style="max-width:130px" onchange="onFontScaleChange()">
+          <option value="0.9">较小（90%）</option>
+          <option value="1" selected>标准（100%）</option>
+          <option value="1.1">较大（110%）</option>
+          <option value="1.25">特大（125%）</option>
+        </select>
+        <button class="mod-hide" data-mod="m-set-font" title="隐藏此模块">✕</button>
+      </div>
       <div class="set-row ui-mgmt" id="ui-mgmt">
         <div class="s-label"><b>界面管理（显示 / 隐藏恢复）</b><div class="s-sub">被隐藏的面板和小模块都会列在这里，点击名称即可单独恢复显示；也可以点击右侧按钮一次性全部恢复</div></div>
         <div class="hidden-list" id="ui-hidden-list"><span class="none-hint">加载中…</span></div>
@@ -961,7 +971,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.1 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.2 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -2211,7 +2221,7 @@ const MOD_LABELS = {
   "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
-  "m-set-update": "设置·软件更新", "m-set-autoupd": "设置·自动检查更新", "m-set-autodl": "设置·自动下载新版本", "m-set-about": "设置·关于",
+  "m-set-update": "设置·软件更新", "m-set-autoupd": "设置·自动检查更新", "m-set-autodl": "设置·自动下载新版本", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
@@ -2327,6 +2337,7 @@ function saveUI(){
     range: state.range || "10m",
     tab: state.tab || "home",
     sideCollapsed: document.documentElement.classList.contains("side-min"),
+    fontScale: parseFloat($("set-font-scale") ? $("set-font-scale").value : "1") || 1,
   };
   try {
     localStorage.setItem("fnmonitor-theme", ui.theme);
@@ -2334,6 +2345,7 @@ function saveUI(){
     localStorage.setItem("fnmonitor-panel-order", JSON.stringify(ui.panelOrder));
     localStorage.setItem("fnmonitor-hide-panels", JSON.stringify(ui.hiddenPanels));
     localStorage.setItem("fnmonitor-hide-mods", JSON.stringify(ui.hiddenMods));
+    localStorage.setItem("fnmonitor-font-scale", String(ui.fontScale));
   } catch(e){}
   clearTimeout(uiSyncTimer);
   uiSyncTimer = setTimeout(() => {
@@ -2395,6 +2407,8 @@ async function loadUI(){
     if (ui.tab && document.querySelector('.tab[data-tab="' + ui.tab + '"]')){
       switchTab(ui.tab);
     }
+    // 字体大小以服务器配置为准（跨设备一致）
+    if (ui.fontScale) applyFontScale(String(ui.fontScale));
   } catch(e){}
 }
 (function(){
@@ -2511,6 +2525,25 @@ if (themeBtn){
   let t = "fresh";
   try { t = localStorage.getItem("fnmonitor-theme") || "fresh"; } catch(e){}
   applyTheme(t);
+})();
+
+/* ---------- 字体大小（整体缩放，保存到 ui.json 跨设备同步） ---------- */
+function applyFontScale(v){
+  const scale = Math.min(1.5, Math.max(0.8, parseFloat(v) || 1));
+  document.body.style.zoom = scale === 1 ? "" : String(scale);
+  const sel = $("set-font-scale");
+  if (sel) sel.value = String(scale);
+  try { localStorage.setItem("fnmonitor-font-scale", String(scale)); } catch(e){}
+}
+function onFontScaleChange(){
+  applyFontScale($("set-font-scale").value);
+  saveUI();  // 防抖 600ms 后自动同步到服务器 ui.json
+}
+(function initFontScale(){
+  // 启动时先用本机缓存快照应用，避免等服务器配置期间字体闪变
+  let s = "1";
+  try { s = localStorage.getItem("fnmonitor-font-scale") || "1"; } catch(e){}
+  applyFontScale(s);
 })();
 
 (async function init(){

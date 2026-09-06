@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.1"
+VERSION = "2.9.2"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动检查更新周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3244,7 +3244,7 @@ class MonitorApp:
         clean = {}
         # 注意：layoutVersion / tab 必须一并持久化，否则前端 loadUI 会因
         # 服务器端 layoutVersion 恒为 0 < 本地版本而每次刷新重置布局
-        for k in ("theme", "layoutVersion", "panelOrder", "hiddenPanels", "hiddenMods", "range", "tab", "sideCollapsed"):
+        for k in ("theme", "layoutVersion", "panelOrder", "hiddenPanels", "hiddenMods", "range", "tab", "sideCollapsed", "fontScale"):
             if k in data:
                 clean[k] = data[k]
         try:
