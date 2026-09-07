@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.7"
+VERSION = "2.9.8"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3334,23 +3334,37 @@ class MonitorApp:
         return os.path.join(self.data_dir, "ui.json")
 
     def api_ui_get(self):
-        try:
-            with open(self._ui_config_path(), "r", errors="ignore") as f:
-                return {"ui": json.load(f)}
-        except Exception:
-            return {"ui": {}}
+        # 主文件读取失败（损坏/并发写入中断）时回退备份，避免用户界面配置整体丢失
+        for p in (self._ui_config_path(), self._ui_config_path() + ".bak"):
+            try:
+                with open(p, "r", errors="ignore") as f:
+                    return {"ui": json.load(f)}
+            except Exception:
+                continue
+        return {"ui": {}}
 
     def api_ui_set(self, data):
-        """保存前端 UI 配置（主题/面板顺序/隐藏/模块隐藏）到本地文件，跨设备不重置。"""
+        """保存前端 UI 配置（主题/面板顺序/隐藏/模块隐藏）到本地文件，跨设备不重置。
+        写入前备份上一份有效配置，并用临时文件 + 原子替换落盘（多端并发写入不会写坏 ui.json）。"""
         clean = {}
         # 注意：layoutVersion / tab 必须一并持久化，否则前端 loadUI 会因
         # 服务器端 layoutVersion 恒为 0 < 本地版本而每次刷新重置布局
         for k in ("theme", "layoutVersion", "panelOrder", "hiddenPanels", "hiddenMods", "range", "tab", "sideCollapsed", "fontScale"):
             if k in data:
                 clean[k] = data[k]
+        path = self._ui_config_path()
         try:
-            with open(self._ui_config_path(), "w", encoding="utf-8") as f:
+            try:
+                with open(path, "rb") as f:
+                    bak = f.read()
+                with open(path + ".bak", "wb") as f:
+                    f.write(bak)
+            except Exception:
+                pass
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(clean, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, path)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}

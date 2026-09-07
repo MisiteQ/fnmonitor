@@ -606,7 +606,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.7</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.9.8</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -963,7 +963,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.7 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.9.8 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -2352,6 +2352,11 @@ function restorePanels(){
 
 /* ---------- UI 配置持久化（同步到服务器本地文件，换设备/清缓存不重置） ---------- */
 let uiSyncTimer = null;
+/* 启动门禁：loadUI 从服务器恢复配置完成前，saveUI 只写本地缓存不回写服务器。
+   手机 APP 的 webview localStorage 不持久（每次打开为空），启动早期 applyTheme/switchTab
+   触发的 saveUI 会把"空默认布局"POST 上去覆盖服务器已保存配置，导致用户设置丢失。 */
+let uiBootReady = false;
+let uiPending = false;
 /* 布局版本：新增面板时递增，升级后自动重置一次面板顺序/隐藏状态，避免旧布局挤乱新面板 */
 const LAYOUT_VERSION = 7;
 function saveUI(){
@@ -2377,13 +2382,26 @@ function saveUI(){
     localStorage.setItem("fnmonitor-font-scale", String(ui.fontScale));
   } catch(e){}
   clearTimeout(uiSyncTimer);
-  uiSyncTimer = setTimeout(() => {
-    fetch("/api/ui", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(ui)
-    }).catch(() => {});
-  }, 600);
+  if (!uiBootReady){ uiPending = true; return; }  // 启动竞态保护：服务器配置恢复前不回写
+  const uiBody = JSON.stringify(ui);
+  uiSyncTimer = setTimeout(() => { _postUI(uiBody); }, 600);
+}
+/* 实际 POST 界面配置；失败时浮动提示并自动重试一次（不再静默丢失） */
+function _postUI(body, retry){
+  fetch("/api/ui", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body
+  }).then(r => { if (!r.ok) throw new Error("status " + r.status); }).catch(() => {
+    try {
+      const t = document.createElement("div");
+      t.textContent = retry ? "界面设置同步失败，请检查连接后重试" : "界面设置同步失败，正在重试…";
+      t.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:9999;background:#c0392b;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.25);";
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    } catch(e){}
+    if (!retry) setTimeout(() => _postUI(body, true), 5000);
+  });
 }
 function pushUI(){
   saveUI();
@@ -2394,13 +2412,16 @@ function pushUI(){
 async function loadUI(){
   try {
     const r = await fetch("/api/ui", { cache: "no-store" });
-    if (!r.ok) return;
+    if (!r.ok){ uiBootReady = true; if (uiPending){ uiPending = false; saveUI(); } return; }
     const j = await r.json();
     const ui = j.ui || {};
     if (ui.theme) applyTheme(ui.theme);
-    // 服务器端布局版本校验：旧版本保存的布局（不含新面板）在升级后重置一次
+    // 服务器端布局版本校验：旧版本保存的布局（含 layoutVersion 字段且低于当前版本）升级后重置一次。
+    // 注意：服务器返回空配置 / 缺 layoutVersion（首次使用或读取失败）时不得覆盖保存，
+    // 否则损坏场景会把用户已保存的配置冲成默认布局。
     const srvLayoutV = parseInt(ui.layoutVersion || "0", 10);
-    if (srvLayoutV < LAYOUT_VERSION){
+    if (ui.layoutVersion !== undefined && srvLayoutV < LAYOUT_VERSION){
+      uiBootReady = true;  // 重置分支需真实回写默认布局
       try {
         localStorage.removeItem("fnmonitor-panel-order");
         localStorage.removeItem("fnmonitor-hide-panels");
@@ -2439,6 +2460,9 @@ async function loadUI(){
     // 字体大小以服务器配置为准（跨设备一致）
     if (ui.fontScale) applyFontScale(String(ui.fontScale));
   } catch(e){}
+  // 服务器配置加载完成：解除回写门禁；启动期间被门禁挂起的保存（用户操作）补发一次
+  uiBootReady = true;
+  if (uiPending){ uiPending = false; saveUI(); }
 }
 (function(){
   // 隐藏按钮（面板级）
