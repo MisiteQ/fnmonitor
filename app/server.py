@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.8"
+VERSION = "2.9.9"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3717,6 +3717,11 @@ def load_config(data_dir):
         for k in ("interval", "retention_days", "port", "history_interval"):
             if k in user:
                 cfg[k] = int(user[k])
+        # 在线更新开关必须随配置恢复（此前不在读取白名单，重启/升级后回落默认值，
+        # 用户开启的「自动更新」失效）
+        for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
+            if k in user:
+                cfg[k] = 1 if str(user[k]) in ("1", "true", "on") else 0
         if "weather_city" in user:
             cfg["weather_city"] = str(user["weather_city"])
         if "data_dir" in user:
