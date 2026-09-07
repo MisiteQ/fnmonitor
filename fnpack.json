@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.8/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.9/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.9.9": {
+          "changelog": "修复「自动更新」等在线更新开关在重启 / 升级后不保存：启动加载配置未读取这三个字段导致开关回落默认值，现已加入加载白名单，重启 / 升级后设置完整保留",
+          "updated_at": "2026-09-07T07:05:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.9/fnmonitor-2.9.9-x86.fpk",
+              "sha256": "500330904c482a26de4097f8dc586311bd8f0d98847cdacefd1fc3e77ad0581d",
+              "size": 267921
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.9/fnmonitor-2.9.9-arm.fpk",
+              "sha256": "78787a0f5b3a547483b22249bba0ab7f0a8808763e81e1e34ca70b85d5e4e5e8",
+              "size": 267843
+            }
+          }
+        },
         "2.9.8": {
           "changelog": "修复飞牛手机 APP 端界面设置不保存：启动门禁防止默认布局覆盖服务器配置，期间设置自动补发；保存失败浮动提示并自动重试；ui.json 原子写入 + 自动备份回退，配置不再整体丢失",
           "updated_at": "2026-09-07T06:10:00+08:00",
