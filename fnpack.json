@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.9.9/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.11.0/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.11.0": {
+          "changelog": "① 新增「流量统计」：今日/本月/开机累计上下行流量、容器流量 TOP 10、累计流量趋势图，支持导出 CSV，可配置排除 Docker 网桥流量<br>② 新增「功耗统计」：今日/本月 kWh 与电费估算、累计 kWh 趋势、硬盘休眠状态，无 RAPL 时自动回退估算模型（可配置 TDP/电价/单盘/网卡功耗）<br>③ 界面整合：流量统计与功耗统计并入「资源趋势」面板、温度墙并入硬件面板（「硬件与温度」）、阵列设定并入磁盘信息、进程 TOP 默认放最后<br>④ 数据可用性自动隐藏：启动 5 分钟后自动隐藏从未返回数据的面板（界面管理可恢复）<br>⑤ 图表优化：修复累计趋势图闪烁、折线图按实际宽度绘制坐标文字统一、隐藏同排模块后自动撑满<br>⑥ 硬盘休眠状态剔除 dm 虚拟设备，仅显示物理硬盘",
+          "updated_at": "2026-09-07T19:50:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.11.0/fnmonitor-2.11.0-x86.fpk",
+              "sha256": "7b4f02e673a4688ff8986d1a9568c59427ea0cbfbd80efe9af09ea88b0e58e1d",
+              "size": 288834
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.11.0/fnmonitor-2.11.0-arm.fpk",
+              "sha256": "5d5de748d61222c7b1342b8ab5204067c7ff5ce60ab7a94a8e43cd51a22c965d",
+              "size": 288836
+            }
+          }
+        },
         "2.9.9": {
           "changelog": "修复「自动更新」等在线更新开关在重启 / 升级后不保存：启动加载配置未读取这三个字段导致开关回落默认值，现已加入加载白名单，重启 / 升级后设置完整保留",
           "updated_at": "2026-09-07T07:05:00+08:00",
