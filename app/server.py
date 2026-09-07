@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.6"
+VERSION = "2.9.7"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -2716,8 +2716,7 @@ class UpdateManager:
         import shutil
         import sys
         import tarfile
-        app_dir = os.path.dirname(os.path.abspath(__file__))       # <应用根>/app
-        root = os.path.dirname(app_dir)                            # 应用根目录
+        app_dir = os.path.dirname(os.path.abspath(__file__))       # 应用安装目录（NAS 上 server.py 平铺于 TRIM_APPDEST）
         tmp = os.path.join(self.data_dir, "update", "_extract")
         shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp, exist_ok=True)
@@ -2757,7 +2756,7 @@ class UpdateManager:
                 s = os.path.join(tmp, item)
                 if not os.path.exists(s):
                     continue
-                d = os.path.join(root, item)
+                d = os.path.join(app_dir, item)  # 覆盖到应用目录内；此前误写上级目录导致管理中心读到的 manifest 版本不更新
                 if os.path.isdir(s):
                     shutil.copytree(s, d, dirs_exist_ok=True)
                 else:
