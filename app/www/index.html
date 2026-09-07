@@ -223,7 +223,6 @@ main section[data-panel="overview"]{--p-acc:#10b981}
 main section[data-panel="detail"]{--p-acc:#0ea5e9}
 main section[data-panel="disks"]{--p-acc:#8b5cf6}
 main section[data-panel="hardware"]{--p-acc:#ec4899}
-main section[data-panel="wall"]{--p-acc:#ef4444}
 main section[data-panel="powergpu"]{--p-acc:#f97316}
 main section[data-panel="trend"]{--p-acc:#10b981}
 main section[data-panel="processes"]{--p-acc:#64748b}
@@ -250,6 +249,10 @@ main section[data-panel="settings"]{--p-acc:#94a3b8}
 .card .value small{font-size:13px;font-weight:600;color:var(--muted);margin-left:2px}
 .card .sub{font-size:12px;color:var(--muted);margin-top:auto;padding-top:8px;overflow-wrap:anywhere;word-break:break-word}
 .card .sub b{color:var(--text);font-weight:600}
+.card.sm{min-height:auto;padding:10px 12px}
+.card.sm .label{font-size:11px;margin-bottom:4px}
+.card.sm .value{font-size:18px}
+.card.sm .value small{font-size:11px}
 .card.ip .value{font-size:13.5px;line-height:1.55;white-space:pre-line;color:var(--accent);font-weight:700}
 .bar{height:6px;border-radius:99px;background:var(--bar-track);margin-top:10px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:99px;transition:width .6s ease}
@@ -290,6 +293,8 @@ main section[data-panel="settings"]{--p-acc:#94a3b8}
 
 /* ===== 图表 ===== */
 .chart-grid{gap:13px}
+/* 自适应图表网格：仅用于流量统计 / 功耗统计面板，隐藏其中一个模块后另一个自动撑满整行（资源趋势面板保持固定 2 列） */
+.chart-grid.adaptive{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
 .chart-box{padding:13px 14px;min-width:0}
 .chart-box .c-title{font-size:12.5px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px}
 .chart-box svg{width:100%;height:auto;display:block;min-height:140px}
@@ -606,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.9.9</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.11.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -682,6 +687,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
       <div id="disks-body"><div class="empty">加载中…</div></div>
     </div>
     <div class="detail-box" data-mod="m-partio" style="margin-top:14px"><h4>📂 磁盘分区与 IO<button class="mod-hide" data-mod="m-partio" title="隐藏此模块">✕</button></h4><div id="disk-detail"><div class="empty">加载中…</div></div></div>
+    <div id="raid-section"></div>
   </section>
 
   <!-- 端口占用（与 Docker 同页） -->
@@ -694,25 +700,15 @@ body{display:flex;flex-direction:column;min-height:100vh}
     <div class="port-box" id="ports-body"><div class="empty">加载中…</div></div>
   </section>
 
-  <!-- 硬件信息 -->
+  <!-- 硬件监控（硬件配置 + 温度概览 + 传感器 + 风扇） -->
   <section class="panel" data-panel="hardware" data-tab="home">
     <div class="panel-head">
       <span class="drag-handle" title="按住拖动调整位置">⠿</span>
-      <div class="panel-title">🖥️ 硬件与传感器 <span class="tag">硬件配置 / 温度 / 风扇</span></div>
+      <div class="panel-title">🖥️ 硬件与温度 <span class="tag">硬件配置 / 传感器 / 风扇</span></div>
       <button class="panel-hide" data-panel="hardware" title="隐藏此面板">✕</button>
     </div>
     <div id="hardware-body"><div class="empty">加载中…</div></div>
     <div id="mem-slots"></div>
-    <div id="sys-extra"></div>
-  </section>
-
-  <!-- 温度墙（参照网络主流硬件监控面板） -->
-  <section class="panel" data-panel="wall" data-tab="home">
-    <div class="panel-head">
-      <span class="drag-handle" title="按住拖动调整位置">⠿</span>
-      <div class="panel-title">🌡️ 温度墙 <span class="tag">CPU / 主板 / GPU / 全部测点</span></div>
-      <button class="panel-hide" data-panel="wall" title="隐藏此面板">✕</button>
-    </div>
     <div class="mod-block" data-mod="m-wall-hero">
       <div class="mod-head"><span>🌡️ 温度概览</span><button class="mod-hide" data-mod="m-wall-hero" title="隐藏此模块">✕</button></div>
       <div class="wall-hero">
@@ -722,10 +718,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <div class="wall-hero-item"><div class="wh-label">全部测点最高</div><div class="wh-value" id="wall-max">--<small>°C</small></div></div>
       </div>
     </div>
-    <div class="mod-block" data-mod="m-wall-body">
-      <div class="mod-head"><span>全部温度测点</span><button class="mod-hide" data-mod="m-wall-body" title="隐藏此模块">✕</button></div>
-      <div id="wall-body"><div class="empty">加载中…</div></div>
-    </div>
+    <div id="sys-extra"></div>
   </section>
 
   <!-- 实时功耗 & 显卡（参照网络主流硬件监控面板） -->
@@ -738,7 +731,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
     <div id="power-body"><div class="empty">加载中…</div></div>
   </section>
 
-  <!-- 趋势 -->
+  <!-- 趋势（含流量统计 / 功耗统计） -->
   <section class="panel" data-panel="trend" data-tab="home">
     <div class="panel-head">
       <span class="drag-handle" title="按住拖动调整位置">⠿</span>
@@ -783,6 +776,16 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <div class="c-title"><span>磁盘读写 (MB/s)</span><span class="legend"><span><i style="background:#34d399"></i>读</span><span><i style="background:#a78bfa"></i>写</span></span><button class="mod-hide" data-mod="m-ch-diskio" title="隐藏此模块">✕</button></div>
         <div id="chart-diskio"></div>
       </div>
+    </div>
+    <!-- 流量统计（并入资源趋势） -->
+    <div class="mod-block" data-mod="m-sec-traffic" style="margin-top:14px">
+      <div class="sens-title" style="margin:0 0 10px">📊 流量统计 <span class="tag">网卡 / 容器 / 时段汇总</span><button class="mod-hide" data-mod="m-sec-traffic" title="隐藏此模块">✕</button></div>
+      <div id="traffic-body"><div class="empty">加载中…</div></div>
+    </div>
+    <!-- 功耗统计（并入资源趋势） -->
+    <div class="mod-block" data-mod="m-sec-powerstats">
+      <div class="sens-title" style="margin:0 0 10px">💡 功耗统计 <span class="tag">kWh / 电费 / 估算</span><button class="mod-hide" data-mod="m-sec-powerstats" title="隐藏此模块">✕</button></div>
+      <div id="powerstats-body"><div class="empty">加载中…</div></div>
     </div>
   </section>
 
@@ -868,6 +871,41 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
       </div>
 
+      <div class="set-group">流量与功耗</div>
+      <div class="set-row" data-mod="m-set-tdp">
+        <div class="s-label"><b>CPU TDP（瓦）</b><div class="s-sub">RAPL 不可用时（AMD / ARM）的功耗估算基线。默认 65W，ARM SoC 建议 15-35W</div></div>
+        <input id="set-tdp" class="inp" type="number" min="5" max="500" placeholder="65" style="max-width:100px">
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-tdp" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-rate">
+        <div class="s-label"><b>电价（元/kWh）</b><div class="s-sub">功耗统计面板电费估算用，默认 0.6 元/kWh</div></div>
+        <input id="set-rate" class="inp" type="number" min="0" max="10" step="0.01" placeholder="0.6" style="max-width:100px">
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-rate" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-diskw">
+        <div class="s-label"><b>单盘典型功耗（瓦）</b><div class="s-sub">估算模型中每块活动硬盘的功耗，默认 8W（3.5 HDD）；SSD 可设 3W</div></div>
+        <input id="set-diskw" class="inp" type="number" min="0" max="50" placeholder="8" style="max-width:100px">
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-diskw" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-nicw">
+        <div class="s-label"><b>网卡固定功耗（瓦）</b><div class="s-sub">每块物理网卡的固定损耗，默认 5W</div></div>
+        <input id="set-nicw" class="inp" type="number" min="0" max="50" placeholder="5" style="max-width:100px">
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-nicw" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-bridge">
+        <div class="s-label"><b>排除 Docker 网桥流量</b><div class="s-sub">开启后不计入 docker/veth/br-/virbr/tun/tap 等虚拟网卡的累计流量</div></div>
+        <select id="set-bridge" class="inp" style="max-width:120px">
+          <option value="0">计入</option>
+          <option value="1">排除</option>
+        </select>
+        <button class="op-btn" onclick="saveTrafficConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-bridge" title="隐藏此模块">✕</button>
+      </div>
+
       <div class="set-group">界面外观</div>
       <div class="set-row" data-mod="m-set-sync">
         <div class="s-label"><b>界面设置同步</b><div class="s-sub">主题 / 面板布局 / 隐藏状态保存到服务器本地文件 <b>ui.json</b>，换电脑或清浏览器缓存后自动恢复。<br>当前保存位置：<b id="ui-sync-path" style="word-break:break-all">读取中…</b><br><span style="opacity:.72">数据实际保存在 NAS 服务器端上述文件中（浏览器里仅存显示缓存，换设备后仍以 NAS 数据为准）。保存位置由「<b>数据保存目录</b>」统一决定，修改目录并重启应用后，界面数据将保存到新位置（旧 ui.json 不会自动迁移，需要保留可在重启前手动拷贝）</span></div></div>
@@ -925,6 +963,16 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <a class="op-btn" id="export-report" href="#" onclick="return doDownload('/api/report?format=html')">📄 生成报告</a>
         <button class="mod-hide" data-mod="m-ex-report" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-ex-traffic">
+        <div class="s-label"><b>导出流量统计 CSV</b><div class="s-sub">各网卡累计字节 / 丢包 / 错包 + 容器累计流量</div></div>
+        <a class="op-btn" href="#" onclick="return doDownload('/api/export?type=traffic&range=' + encodeURIComponent(document.getElementById('export-range') ? document.getElementById('export-range').value : '7d'))">⬇ 导出流量 CSV</a>
+        <button class="mod-hide" data-mod="m-ex-traffic" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-ex-power">
+        <div class="s-label"><b>导出功耗统计 CSV</b><div class="s-sub">整机功耗 / 估算功耗 / 累计 kWh 时间序列</div></div>
+        <a class="op-btn" href="#" onclick="return doDownload('/api/export?type=power&range=' + encodeURIComponent(document.getElementById('export-range') ? document.getElementById('export-range').value : '7d'))">⬇ 导出功耗 CSV</a>
+        <button class="mod-hide" data-mod="m-ex-power" title="隐藏此模块">✕</button>
+      </div>
 
       <div class="set-group">更新与关于</div>
       <div class="set-row" data-mod="m-set-update">
@@ -963,7 +1011,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.9.9 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.11.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1015,8 +1063,10 @@ function pctColor(v){ v = Number(v)||0; return v >= 90 ? "var(--red)" : v >= 75 
 
 /* ---------- SVG 折线图 ---------- */
 function drawChart(el, series, opts){
+  if (!el) return;
   opts = opts || {};
-  const W = 560, H = 150, padL = 58, padR = 14, padT = 12, padB = 26;
+  // 按容器实际像素宽度绘制（不拉伸 SVG），轴文字保持真实字号不随容器宽度放大
+  const W = Math.max(320, el.clientWidth || 560), H = 150, padL = 58, padR = 14, padT = 12, padB = 26;
   const iw = W - padL - padR, ih = H - padT - padB;
   let allTs = [], allVals = [];
   series.forEach(s => (s.points || []).forEach(p => { allTs.push(p[0]); allVals.push(p[1]); }));
@@ -1047,9 +1097,10 @@ function drawChart(el, series, opts){
   const X = (ts) => padL + (ts - t0) / tSpan * iw;
   const Y = (v) => padT + (1 - (v - vMin) / (vMax - vMin)) * ih;
   const fmtV = opts.valueFmt || ((v) => Number(v).toFixed(2));
+  const fs = opts.fontSize || 11;  // 轴标签字号（px，真实像素不随容器拉伸）
 
   // 渐变面积填充（每系列一个垂直渐变，替代纯色低透明填充，观感更现代）
-  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '" preserveAspectRatio="none">';
+  let svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '">';
   let defs = "", agi = 0;
   // 网格 + Y 轴
   const steps = 5;
@@ -1057,7 +1108,7 @@ function drawChart(el, series, opts){
     const v = vMin + (vMax - vMin) * i / steps;
     const y = Y(v);
     svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" style="stroke:var(--border)" stroke-width="1"/>';
-    svg += '<text x="' + (padL - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" style="fill:var(--muted)">' + fmtV(v) + '</text>';
+    svg += '<text x="' + (padL - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="' + fs + '" style="fill:var(--muted)">' + fmtV(v) + '</text>';
   }
   // X 轴时间刻度
   const xticks = 5;
@@ -1071,7 +1122,7 @@ function drawChart(el, series, opts){
     if (span <= 7200) label = p(d.getHours()) + ":" + p(d.getMinutes());
     else if (span <= 172800) label = (d.getMonth()+1) + "/" + d.getDate() + " " + p(d.getHours()) + "时";
     else label = (d.getMonth()+1) + "/" + d.getDate();
-    svg += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" style="fill:var(--muted)">' + label + '</text>';
+    svg += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="' + fs + '" style="fill:var(--muted)">' + label + '</text>';
   }
   // 系列折线 + 面积
   series.forEach(s => {
@@ -1300,6 +1351,29 @@ function renderDisksDetail(o){
   });
   h += "</table></div>";
   body.innerHTML = h;
+
+  // 阵列设定（RAID 阵列 + 阵列卡）— 与磁盘信息放一块
+  const raidEl = $("raid-section");
+  if (raidEl){
+    const rc = (o && o.raidcard) || {};
+    const raid = (o && o.raid) || [];
+    let rh = "";
+    if (raid.length || (rc.type && rc.type !== "none")){
+      rh += '<div class="hw-box" data-mod="m-hw-raid" style="margin-top:14px"><h4>🎴 阵列设定<button class="mod-hide" data-mod="m-hw-raid" title="隐藏此模块">✕</button></h4>';
+      if (raid.length){
+        raid.forEach(r => {
+          rh += '<div class="hw-line"><span>' + esc(r.device) + ' <span class="tag on">' + esc(r.status) + '</span></span><b>' + esc((r.members || []).join(", ")) + "</b></div>";
+        });
+      } else rh += '<div class="hw-line"><span>RAID</span><b>无 mdadm RAID 阵列</b></div>';
+      if (rc.type && rc.type !== "none"){
+        rh += '<div class="hw-line"><span>阵列卡</span><b>' + esc(rc.label || "--") + "</b></div>" +
+          '<div class="hw-line"><span>说明</span><b>' + esc(rc.detail || "") + "</b></div>" +
+          (rc.storcli ? '<div class="hw-line"><span>storcli</span><b class="mono">' + esc(rc.storcli.slice(0, 600)) + "</b></div>" : "");
+      }
+      rh += "</div>";
+    }
+    raidEl.innerHTML = rh;
+  }
 }
 
 /* ---------- 端口占用渲染 ---------- */
@@ -1378,31 +1452,14 @@ function renderHardware(o){
   renderSysExtra(o);
 }
 
-/* ---------- 传感器 / 风扇 / 阵列卡渲染（参照网络主流硬件监控面板） ---------- */
+/* ---------- 传感器 / 风扇渲染（参照网络主流硬件监控面板） ---------- */
 function renderSysExtra(o){
   const el = $("sys-extra");
   if (!el) return;
   const sensors = (o && o.sensors) || {};
   const fans = (o && o.fans) || [];
-  const rc = (o && o.raidcard) || {};
-  const raid = (o && o.raid) || [];
   let h = "";
-  // 阵列设定（RAID 阵列 + 阵列卡合并）
-  if (raid.length || (rc.type && rc.type !== "none")){
-    h += '<div class="hw-box" data-mod="m-hw-raid" style="margin-top:14px"><h4>🎴 阵列设定<button class="mod-hide" data-mod="m-hw-raid" title="隐藏此模块">✕</button></h4>';
-    if (raid.length){
-      raid.forEach(r => {
-        h += '<div class="hw-line"><span>' + esc(r.device) + ' <span class="tag on">' + esc(r.status) + '</span></span><b>' + esc((r.members || []).join(", ")) + "</b></div>";
-      });
-    } else h += '<div class="hw-line"><span>RAID</span><b>无 mdadm RAID 阵列</b></div>';
-    if (rc.type && rc.type !== "none"){
-      h += '<div class="hw-line"><span>阵列卡</span><b>' + esc(rc.label || "--") + "</b></div>" +
-        '<div class="hw-line"><span>说明</span><b>' + esc(rc.detail || "") + "</b></div>" +
-        (rc.storcli ? '<div class="hw-line"><span>storcli</span><b class="mono">' + esc(rc.storcli.slice(0, 600)) + "</b></div>" : "");
-    }
-    h += "</div>";
-  }
-  // 温度分类 + 电压（温度测点卡片横向平铺，自适应填满整行）
+  // 温度分类 + 电压（紧接温度概览，温度测点卡片横向平铺，自适应填满整行）
   const temps = sensors.temps || [];
   if (temps.length || sensors.available){
     const typeName = {cpu: "CPU", pch: "芯片组", board: "主板", acpi: "ACPI", disk: "硬盘", gpu: "GPU"};
@@ -1454,10 +1511,8 @@ function wallColor(v, max){
   return "var(--emerald)";
 }
 function renderWall(sensors, gpuList){
-  const body = $("wall-body");
-  if (!body) return;
+  // 温度概览 hero 四数（已合并到硬件面板内，不再渲染独立的全部测点列表）
   const temps = (sensors && sensors.temps) || [];
-  // hero 四数：CPU / 主板 / GPU / 最高
   let cpuT = null, mbT = null, gpuT = null;
   temps.forEach(t => {
     const tp = t.type || "";
@@ -1466,7 +1521,6 @@ function renderWall(sensors, gpuList){
     if (tp === "acpi" && (mbT == null || t.value > mbT)) mbT = t.value;
     if (tp === "gpu" && (gpuT == null || t.value > gpuT)) gpuT = t.value;
   });
-  // GPU 温度优先取 GPU 实时监控（sensors 中通常无 GPU 测点）
   if (gpuT == null && gpuList && gpuList.length){
     gpuList.forEach(g => { if (g.temp != null && (gpuT == null || g.temp > gpuT)) gpuT = g.temp; });
   }
@@ -1480,19 +1534,6 @@ function renderWall(sensors, gpuList){
     el.style.color = wallColor(v, null);
   };
   setHero("wall-cpu", cpuT); setHero("wall-mb", mbT); setHero("wall-gpu", gpuT); setHero("wall-max", maxT);
-  // 彩色测点墙
-  if (!temps.length){ body.innerHTML = '<div class="empty">未读取到温度传感器（需系统安装 lm-sensors）</div>'; return; }
-  let h = '<div class="wall-grid">';
-  temps.forEach(t => {
-    const c = wallColor(t.value, t.max);
-    h += '<div class="wall-chip" style="border-left:3px solid ' + c + '">' +
-      '<div class="wc-name" title="' + esc(t.raw || t.name) + '">' + esc(t.name) + '</div>' +
-      '<div class="wc-val" style="color:' + c + '">' + (t.value != null ? t.value.toFixed(2) : "--") + '<small>°C</small></div>' +
-      (t.max ? '<div class="wc-badge">阈值 ' + t.max.toFixed(2) + "°</div>" : "") +
-      "</div>";
-  });
-  h += "</div>";
-  body.innerHTML = h;
 }
 
 /* ---------- 实时功耗 & 显卡 ---------- */
@@ -1538,7 +1579,105 @@ function renderPowerGpu(power, gpuData){
   body.innerHTML = h;
 }
 
-/* ---------- 内存插槽 ---------- */
+/* ---------- 流量统计面板 ---------- */
+function fmtBytes(v){
+  v = Number(v) || 0;
+  if (v < 1024) return v + " B";
+  if (v < 1048576) return (v / 1024).toFixed(1) + " KB";
+  if (v < 1073741824) return (v / 1048576).toFixed(2) + " MB";
+  if (v < 1099511627776) return (v / 1073741824).toFixed(2) + " GB";
+  return (v / 1099511627776).toFixed(2) + " TB";
+}
+function fmtBytesShort(v){
+  v = Number(v) || 0;
+  if (v < 1048576) return (v / 1024).toFixed(0) + "K";
+  if (v < 1073741824) return (v / 1048576).toFixed(1) + "M";
+  if (v < 1099511627776) return (v / 1073741824).toFixed(2) + "G";
+  return (v / 1099511627776).toFixed(2) + "T";
+}
+function renderTraffic(d){
+  const body = $("traffic-body");
+  if (!body) return;
+  if (!d){ body.innerHTML = '<div class="empty">流量数据加载中…</div>'; return; }
+  const t = d.totals || {};
+  const cs = d.containers || [];
+  const rt = d.realtime || {};
+  let h = '<div class="cards">';
+  h += trafficCard("今日下载", fmtBytes(t.today_rx), "↓");
+  h += trafficCard("今日上传", fmtBytes(t.today_tx), "↑");
+  h += trafficCard("本月下载", fmtBytes(t.month_rx), "↓");
+  h += trafficCard("本月上传", fmtBytes(t.month_tx), "↑");
+  h += trafficCard("开机累计下载", fmtBytes(t.boot_rx), "↓");
+  h += trafficCard("开机累计上传", fmtBytes(t.boot_tx), "↑");
+  h += '</div>';
+  h += '<div class="chart-grid adaptive">';
+  h += '<div class="chart-box" data-mod="m-ch-traffic"><div class="c-title"><span>累计流量趋势</span><span class="legend"><span><i style="background:#fbbf24"></i>下行累计</span><span><i style="background:#fb7185"></i>上行累计</span></span><button class="mod-hide" data-mod="m-ch-traffic" title="隐藏此模块">✕</button></div><div id="chart-traffic"></div></div>';
+  h += '<div class="chart-box" data-mod="m-ctr-top"><div class="c-title"><span>容器流量 TOP 10</span><button class="mod-hide" data-mod="m-ctr-top" title="隐藏此模块">✕</button></div><div id="ctr-top" style="overflow-x:auto"></div></div>';
+  h += '</div>';
+  body.innerHTML = h;
+  const top = cs.slice(0, 10);
+  let th = '<table><tr><th>#</th><th>容器名</th><th>累计入</th><th>累计出</th><th>合计</th></tr>';
+  top.forEach((c, i) => {
+    th += "<tr><td>" + (i+1) + "</td><td><b>" + esc(c.name) + "</b></td>" +
+          "<td>" + fmtBytes(c.in_bytes) + "</td><td>" + fmtBytes(c.out_bytes) + "</td>" +
+          "<td>" + fmtBytes(c.total_bytes) + "</td></tr>";
+  });
+  if (!top.length) th += '<tr><td colspan=5 class="empty">无运行中的容器</td></tr>';
+  th += "</table>";
+  const ct = $("ctr-top"); if (ct) ct.innerHTML = th;
+  // 重绘趋势图（renderTraffic 重建 innerHTML 会销毁之前 drawChart 画的 SVG，
+  // 需要在面板重建后立即重绘，否则趋势图会一会显示一会消失）
+  if (cachedHistory){
+    try { renderTrends(state.range, (state.range in SPAN_MAP) ? SPAN_MAP[state.range] : 3600); } catch(e){}
+  }
+}
+function trafficCard(title, value, suffix){
+  return '<div class="card sm"><div class="label">' + title + '</div><div class="value">' + value + ' <small>' + suffix + '</small></div></div>';
+}
+
+/* ---------- 功耗统计面板 ---------- */
+function renderPowerStats(d){
+  const body = $("powerstats-body");
+  if (!body) return;
+  if (!d){ body.innerHTML = '<div class="empty">功耗数据加载中…</div>'; return; }
+  const e = d.energy || {};
+  const c = d.cost || {};
+  const r = d.realtime || {};
+  const sourceBadge = r.source === "rapl" ? '<span style="color:#22c55e">硬件 RAPL</span>'
+    : r.source === "estimated" ? '<span style="color:#eab308">模型估算</span>'
+    : '<span style="color:#94a3b8">未知</span>';
+  let h = '<div class="cards">';
+  h += trafficCard("今日耗电", (e.today_kwh || 0).toFixed(3) + " kWh", "");
+  h += trafficCard("今日电费", "¥" + (c.today_yuan || 0).toFixed(2), "");
+  h += trafficCard("本月耗电", (e.month_kwh || 0).toFixed(3) + " kWh", "");
+  h += trafficCard("本月电费", "¥" + (c.month_yuan || 0).toFixed(2), "");
+  h += trafficCard("当前功耗", (r.power_w || 0).toFixed(1) + " W", "");
+  h += '</div>';
+  h += '<div class="card sm" data-mod="m-power-source"><div class="label">数据来源</div><div class="value" style="font-size:14px">' + sourceBadge + '</div></div>';
+  h += '<div class="chart-grid adaptive">';
+  h += '<div class="chart-box" data-mod="m-ch-power-kwh"><div class="c-title"><span>累计 kWh 趋势</span><button class="mod-hide" data-mod="m-ch-power-kwh" title="隐藏此模块">✕</button></div><div id="chart-power-kwh"></div></div>';
+  // 硬盘休眠状态
+  const disks = d.disks || [];
+  if (disks.length){
+    h += '<div class="chart-box" data-mod="m-disk-standby"><div class="c-title"><span>硬盘休眠状态</span><button class="mod-hide" data-mod="m-disk-standby" title="隐藏此模块">✕</button></div><div style="overflow-x:auto">';
+    h += '<table><tr><th>硬盘</th><th>状态</th></tr>';
+    disks.forEach(dk => {
+      const stateColor = dk.state === "standby" ? '#94a3b8' : dk.state === "active/idle" ? '#22c55e' : '#eab308';
+      h += "<tr><td><b>" + esc(dk.name) + "</b></td><td><span style='color:" + stateColor + "'>" + esc(dk.state) + "</span></td></tr>";
+    });
+    h += '</table></div></div>';
+  } else {
+    h += '<div class="chart-box"><div class="c-title"><span>硬盘休眠状态</span></div><div class="empty">无硬盘休眠数据</div></div>';
+  }
+  h += '</div>';
+  body.innerHTML = h;
+  // 重绘趋势图（同 renderTraffic 原因）
+  if (cachedHistory){
+    try { renderTrends(state.range, (state.range in SPAN_MAP) ? SPAN_MAP[state.range] : 3600); } catch(e){}
+  }
+}
+
+
 function renderMemory(memData){
   const el = $("mem-slots");
   if (!el) return;
@@ -1620,6 +1759,8 @@ setInterval(updateLunar, 1000);
 
 /* ---------- 温度墙 / 功耗 / 显卡 / 内存轮询 ---------- */
 let wallCache = { sensors: null, power: null, gpu: null, mem: null };
+/* 数据可用性追踪：启动后 5 分钟内若某数据源始终无有效数据，则自动隐藏对应面板/模块 */
+const dataHealth = { sensors: false, power: false, gpu: false, traffic: false, powerStats: false, docker: false, apps: false, memory: false };
 async function pollWall(){
   if (document.hidden) return;
   try {
@@ -1628,9 +1769,31 @@ async function pollWall(){
     const gpu = await getJSON("/api/gpu");
     const mem = await getJSON("/api/memory");
     wallCache = { sensors: sensors, power: power, gpu: gpu, mem: mem };
+    if (sensors && Array.isArray(sensors.temps) && sensors.temps.length) dataHealth.sensors = true;
+    if (power && power.ok) dataHealth.power = true;
+    if (gpu && Array.isArray(gpu.gpu) && gpu.gpu.length) dataHealth.gpu = true;
+    if (mem && Array.isArray(mem.items) && mem.items.length) dataHealth.memory = true;
     renderWall(sensors, (gpu && gpu.gpu) || []);
     renderPowerGpu(power, gpu);
     renderMemory(mem);
+  } catch(e){}
+}
+
+/* ---------- 流量统计 / 功耗统计轮询 ---------- */
+async function pollTraffic(){
+  if (document.hidden) return;
+  try {
+    const d = await getJSON("/api/traffic");
+    if (d) dataHealth.traffic = true;
+    renderTraffic(d);
+  } catch(e){}
+}
+async function pollPowerStats(){
+  if (document.hidden) return;
+  try {
+    const d = await getJSON("/api/power_stats");
+    if (d) dataHealth.powerStats = true;
+    renderPowerStats(d);
   } catch(e){}
 }
 
@@ -1702,6 +1865,34 @@ async function saveConfig(){
   } catch(e){
     if (msg) msg.textContent = "请求失败: " + e.message;
   }
+}
+/* 保存功耗估算参数 */
+async function savePowerConfig(){
+  const data = {};
+  const tdp = parseFloat($("set-tdp") ? $("set-tdp").value : "");
+  const rate = parseFloat($("set-rate") ? $("set-rate").value : "");
+  const diskw = parseFloat($("set-diskw") ? $("set-diskw").value : "");
+  const nicw = parseFloat($("set-nicw") ? $("set-nicw").value : "");
+  if (!isNaN(tdp)) data.power_tdp_w = tdp;
+  if (!isNaN(rate)) data.power_rate_yuan = rate;
+  if (!isNaN(diskw)) data.power_disk_typical_w = diskw;
+  if (!isNaN(nicw)) data.power_nic_fixed_w = nicw;
+  const msg = $("settings-msg");
+  try {
+    const r = await fetch("/api/config/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) });
+    const j = await r.json();
+    if (msg){ msg.textContent = j.ok ? "功耗参数已保存" : "保存失败: " + (j.error || ""); setTimeout(() => msg.textContent = "", 5000); }
+  } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
+}
+/* 保存流量配置 */
+async function saveTrafficConfig(){
+  const data = { traffic_exclude_bridge: $("set-bridge") ? $("set-bridge").value : "0" };
+  const msg = $("settings-msg");
+  try {
+    const r = await fetch("/api/config/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) });
+    const j = await r.json();
+    if (msg){ msg.textContent = j.ok ? "流量配置已保存" : "保存失败: " + (j.error || ""); setTimeout(() => msg.textContent = "", 5000); }
+  } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
 /* 「数据保存目录」编辑状态：输入与已保存值不一致时显示「取消」，可一键还原 */
 let DATADIR_BASELINE = "";
@@ -1840,6 +2031,11 @@ async function loadConfigForm(){
     if (c.retention_days != null) $("set-retention").value = c.retention_days;
     if (c.history_interval != null) $("set-hist-interval").value = c.history_interval;
     if (c.weather_city != null) $("set-weather-city").value = c.weather_city;
+    if (c.power_tdp_w != null && $("set-tdp")) $("set-tdp").value = c.power_tdp_w;
+    if (c.power_rate_yuan != null && $("set-rate")) $("set-rate").value = c.power_rate_yuan;
+    if (c.power_disk_typical_w != null && $("set-diskw")) $("set-diskw").value = c.power_disk_typical_w;
+    if (c.power_nic_fixed_w != null && $("set-nicw")) $("set-nicw").value = c.power_nic_fixed_w;
+    if (c.traffic_exclude_bridge != null && $("set-bridge")) $("set-bridge").value = c.traffic_exclude_bridge;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
     else if (c.data_dir_actual) $("set-data-dir").placeholder = "当前默认：" + c.data_dir_actual;
     // 数据目录 baseline：供「取消」还原 & 判断是否有未保存修改
@@ -2008,6 +2204,38 @@ function renderTrends(range, spanSec){
     { name: "读", color: "#34d399", points: mergeTrend(h.diskioR, state.liveTrend.diskioR) },
     { name: "写", color: "#a78bfa", points: mergeTrend(h.diskioW, state.liveTrend.diskioW) },
   ], { area: true, spanSeconds: spanSec, unit: " MB/s" });
+  // 流量累计趋势图（流量统计面板内）
+  drawChart($("chart-traffic"), [
+    { name: "下行累计", color: "#fbbf24", points: h.trafficRx || [] },
+    { name: "上行累计", color: "#fb7185", points: h.trafficTx || [] },
+  ], { area: false, spanSeconds: spanSec, valueFmt: fmtBytesShort });
+  // kWh 累计趋势图（功耗统计面板内）：将功率历史积分成累计 kWh
+  const kwhPoints = integrateKwh(h.powerHist || []);
+  drawChart($("chart-power-kwh"), [
+    { name: "累计 kWh", color: "#eab308", points: kwhPoints },
+  ], { area: true, spanSeconds: spanSec, unit: " kWh", valueFmt: v => v.toFixed(3) });
+}
+/* 窗口尺寸变化后按新容器宽度重绘图表（drawChart 按实际像素宽度绘制，需重取 clientWidth） */
+let _rzTimer = null;
+window.addEventListener("resize", function(){
+  clearTimeout(_rzTimer);
+  _rzTimer = setTimeout(function(){
+    if (cachedHistory){ try { renderTrends(state.range, (state.range in SPAN_MAP) ? SPAN_MAP[state.range] : 3600); } catch(e){} }
+  }, 200);
+});
+/* 将功率历史时间序列积分成累计 kWh：相邻样本差 × 功率 / 3.6e6 */
+function integrateKwh(powerPoints){
+  if (!powerPoints || powerPoints.length < 2) return [];
+  let cum = 0;
+  const out = [];
+  for (let i = 1; i < powerPoints.length; i++){
+    const dt = powerPoints[i][0] - powerPoints[i-1][0];
+    if (dt > 0 && dt < 600){
+      cum += powerPoints[i-1][1] * dt / 3_600_000;
+    }
+    out.push([powerPoints[i][0], cum]);
+  }
+  return out;
 }
 async function loadHistory(){
   if (document.hidden) return; // 后台标签页跳过 9 项历史查询（「全部」范围单次最多 4.3 万行）
@@ -2024,6 +2252,8 @@ async function loadHistory(){
   const tempMb = await getJSON("/api/history?metric=temp_mb&range=" + range).catch(() => null);
   const fan = await getJSON("/api/history?metric=fan_avg&range=" + range).catch(() => null);
   const diskio = await getJSON("/api/history?metric=diskio&range=" + range).catch(() => null);
+  const netBytes = await getJSON("/api/history?metric=net_bytes&range=" + range).catch(() => null);
+  const ctrIn = await getJSON("/api/history?metric=ctr_in&range=" + range).catch(() => null);
   // 磁盘 IO 单点补齐：历史仅 1 个点时复制为 2 点（等值水平线），保证趋势图始终可见
   const pad2 = (p) => { if (!p) return []; if (p.length === 1){ const t = p[0][0]; return [p[0], [t + 60, p[0][1]]]; } return p; };
   cachedHistory = {
@@ -2034,6 +2264,9 @@ async function loadHistory(){
     temp: (temp && temp.points) || [], tempMb: (tempMb && tempMb.points) || [],
     fan: (fan && fan.points) || [],
     diskioR: pad2((diskio && diskio.r) || []), diskioW: pad2((diskio && diskio.w) || []),
+    trafficRx: (netBytes && netBytes.rx) || [], trafficTx: (netBytes && netBytes.tx) || [],
+    ctrIn: (ctrIn && ctrIn.points) || [], ctrOut: (ctrIn && ctrIn.out) || [],
+    powerHist: (power && power.points) || [],
   };
   renderTrends(range, spanSec);
   if (statusEl){
@@ -2104,16 +2337,16 @@ async function pollWeather(){ if (document.hidden) return;
     renderWeather(w);
   } catch(e){ renderWeather(null); }
 }
-async function pollDocker(){ if (document.hidden) return; try { state.docker = await getJSON("/api/docker"); renderDocker(state.docker); } catch(e){} }
+async function pollDocker(){ if (document.hidden) return; try { state.docker = await getJSON("/api/docker"); dataHealth.docker = true; renderDocker(state.docker); } catch(e){} }
 async function pollProcesses(){ if (document.hidden) return; try { state.processes = await getJSON("/api/processes"); renderProcesses(state.processes); } catch(e){} }
-async function pollApps(refresh){ if (document.hidden && !refresh) return; try { state.apps = await getJSON("/api/apps" + (refresh ? "?refresh=1" : "")); renderApps(state.apps); } catch(e){} }
+async function pollApps(refresh){ if (document.hidden && !refresh) return; try { state.apps = await getJSON("/api/apps" + (refresh ? "?refresh=1" : "")); dataHealth.apps = true; renderApps(state.apps); } catch(e){} }
 /* 顶部刷新按钮：立即刷新全部数据（带旋转反馈） */
 function globalRefresh(){
   const btn = document.getElementById("refresh-btn");
   if (btn){ btn.classList.add("spin"); setTimeout(() => btn.classList.remove("spin"), 700); }
   const st = document.getElementById("status-text");
   if (st) st.textContent = "刷新中…";
-  pollOverview(); pollDocker(); pollProcesses(); pollApps(true); pollPorts(); loadHistory(); pollWall(); pollWeather();
+  pollOverview(); pollDocker(); pollProcesses(); pollApps(true); pollPorts(); loadHistory(); pollWall(); pollWeather(); pollTraffic(); pollPowerStats();
   setTimeout(() => { if (st && st.textContent === "刷新中…") st.textContent = "已刷新 " + new Date().toLocaleTimeString("zh-CN", {hour12:false}); }, 1200);
 }
 
@@ -2229,7 +2462,8 @@ function persistHiddenPanels(){
 /* 隐藏项名称（用于恢复条标签显示） */
 const PANEL_LABELS = {
   clock: "时间与天气", overview: "服务器状态", detail: "资源详情", disks: "磁盘信息",
-  ports: "端口占用", hardware: "硬件与传感器", wall: "温度墙", powergpu: "功耗与显卡",
+  ports: "端口占用", hardware: "硬件与温度", powergpu: "功耗与显卡",
+  traffic: "流量统计", powerstats: "功耗统计",
   trend: "资源趋势", docker: "Docker 容器", apps: "内置应用统计", processes: "进程 TOP",
   export: "数据导出", settings: "设置",
 };
@@ -2246,12 +2480,18 @@ const MOD_LABELS = {
   "m-power": "CPU 实时功耗", "m-gpu": "显卡实时状态",
   "m-ch-main": "CPU/内存趋势", "m-ch-disk": "存储趋势", "m-ch-net": "网络趋势",
   "m-ch-power": "功耗趋势", "m-ch-temp": "温度趋势", "m-ch-fan": "风扇趋势", "m-ch-diskio": "磁盘 IO 趋势",
+  "m-ch-traffic": "累计流量趋势", "m-ctr-top": "容器流量 TOP",
+  "m-ch-power-kwh": "kWh 累计趋势", "m-disk-standby": "硬盘休眠状态",
+  "m-sec-traffic": "流量统计区段", "m-sec-powerstats": "功耗统计区段",
   "m-dk-stats": "容器状态计数", "m-dk-list": "容器列表",
   "m-ex-csv": "导出 CSV", "m-ex-json": "导出 JSON", "m-ex-report": "一键健康报告",
+  "m-ex-traffic": "导出流量 CSV", "m-ex-power": "导出功耗 CSV",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
   "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
+  "m-set-tdp": "设置·CPU TDP", "m-set-rate": "设置·电价", "m-set-diskw": "设置·单盘功耗",
+  "m-set-nicw": "设置·网卡功耗", "m-set-bridge": "设置·排除网桥流量",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
 /* 应用模块隐藏状态：只接管曾被本功能隐藏过的元素，避免与天气卡等数据驱动的 display 冲突 */
@@ -2358,7 +2598,7 @@ let uiSyncTimer = null;
 let uiBootReady = false;
 let uiPending = false;
 /* 布局版本：新增面板时递增，升级后自动重置一次面板顺序/隐藏状态，避免旧布局挤乱新面板 */
-const LAYOUT_VERSION = 7;
+const LAYOUT_VERSION = 10;  // v2.11.0：流量统计/功耗统计并入资源趋势面板，重置旧面板顺序与隐藏记录
 function saveUI(){
   const ids = [];
   document.querySelectorAll("main section[data-panel]").forEach(p => ids.push(p.dataset.panel));
@@ -2599,6 +2839,53 @@ function onFontScaleChange(){
   applyFontScale(s);
 })();
 
+/* ---------- 5 分钟数据可用性自动隐藏 ---------- */
+/* 启动后 5 分钟检查各数据源是否曾返回有效数据，未获取到数据的面板/模块自动隐藏。
+   用户仍可在 设置 → 界面管理 中手动恢复。仅执行一次，不会反复隐藏。
+   若触发时浏览器标签页处于后台（轮询全部暂停），则延后到标签页再次可见后执行。 */
+let autoHideDone = false;
+function autoHideEmptyPanels(){
+  if (autoHideDone) return;
+  // 标签页不可见时轮询全部暂停，此时 dataHealth 不可信，延后到可见时执行
+  if (document.hidden){
+    document.addEventListener("visibilitychange", function _vh(){
+      if (!document.hidden && autoHideDone === false){
+        document.removeEventListener("visibilitychange", _vh);
+        // 等 3 秒让轮询补一轮数据再判断
+        setTimeout(autoHideEmptyPanels, 3000);
+      }
+    });
+    return;
+  }
+  autoHideDone = true;
+  let changed = false;
+  // 温度概览模块：无温度传感器数据
+  if (!dataHealth.sensors && !state.hiddenMods.has("m-wall-hero")){
+    state.hiddenMods.add("m-wall-hero"); changed = true;
+  }
+  // 实时功耗与显卡面板：RAPL 不可用且无独立显卡 → 整个面板隐藏
+  if (!dataHealth.power && !dataHealth.gpu && !state.hiddenPanels.has("powergpu")){
+    state.hiddenPanels.add("powergpu"); changed = true;
+  }
+  // 流量统计区段（资源趋势面板内）：API 始终无数据
+  if (!dataHealth.traffic && !state.hiddenMods.has("m-sec-traffic")){
+    state.hiddenMods.add("m-sec-traffic"); changed = true;
+  }
+  // 功耗统计区段（资源趋势面板内）：API 始终无数据
+  if (!dataHealth.powerStats && !state.hiddenMods.has("m-sec-powerstats")){
+    state.hiddenMods.add("m-sec-powerstats"); changed = true;
+  }
+  // Docker 面板：Docker 未安装或不可用
+  if (!dataHealth.docker && !state.hiddenPanels.has("docker")){
+    state.hiddenPanels.add("docker"); changed = true;
+  }
+  if (changed){
+    persistMods();
+    persistHiddenPanels();
+    applyPanels();
+    saveUI();
+  }
+}
 
 (async function init(){
   (function(){
@@ -2616,7 +2903,7 @@ function onFontScaleChange(){
     try { t = localStorage.getItem("fnmonitor-tab") || "home"; } catch(e){}
     switchTab(t);
   })();
-  await Promise.all([pollOverview(), pollDocker(), pollProcesses(), pollApps(), pollPorts(), loadConfigForm(), pollWall()]);
+  await Promise.all([pollOverview(), pollDocker(), pollProcesses(), pollApps(), pollPorts(), loadConfigForm(), pollWall(), pollTraffic(), pollPowerStats()]);
   pollWeather(); // 天气需外网，异步加载不阻塞首屏
   await loadUI();
   loadHistory();
@@ -2627,10 +2914,14 @@ function onFontScaleChange(){
   setInterval(pollApps, 60000);      // 应用统计后端已降为 10 分钟采集
   setInterval(pollPorts, 60000);
   setInterval(pollWeather, 600000);
+  setInterval(pollTraffic, 15000);
+  setInterval(pollPowerStats, 15000);
   setInterval(loadHistory, 60000);   // 历史每 60 秒才新增一个点，30 秒拉取是重复查询
+  // 启动 5 分钟后检查数据可用性：从未获取到数据的面板/模块自动隐藏
+  setTimeout(autoHideEmptyPanels, 5 * 60 * 1000);
   // 切回本标签页时立即补一次刷新（后台期间轮询被暂停，数据会滞后）
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden){ pollOverview(); pollWall(); pollDocker(); loadHistory(); }
+    if (!document.hidden){ pollOverview(); pollWall(); pollDocker(); loadHistory(); pollTraffic(); pollPowerStats(); }
   });
 })();
 

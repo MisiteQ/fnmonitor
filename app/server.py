@@ -34,12 +34,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.9.9"
+VERSION = "2.11.0"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -669,6 +669,67 @@ def get_rapl_power():
     return watts
 
 
+# ===================== 功耗估算模型（RAPL 不可用时回退） =====================
+def estimate_power(cpu_percent, disks_active, nics, tdp_w, disk_w, nic_w):
+    """无硬件功耗传感器时，基于 CPU 负载 + 硬盘数 + 网卡数估算整机功耗（瓦）。
+    公式：base = TDP * (cpu%/100 * 0.7 + 0.3) + disks_active * disk_w + nics * nic_w"""
+    try:
+        cpu_p = float(cpu_percent) if cpu_percent is not None else 0
+        base = tdp_w * (cpu_p / 100.0 * 0.7 + 0.3)
+        return round(base + disks_active * disk_w + nics * nic_w, 2)
+    except Exception:
+        return round(tdp_w * 0.3, 2)
+
+
+# ===================== 硬盘休眠状态检测 =====================
+def read_disk_standby_states():
+    """读取各物理硬盘的休眠状态（hdparm -C）。返回 [{name, state}]。
+    state: active/idle | standby | unknown"""
+    out_list = []
+    try:
+        for name in os.listdir("/sys/block"):
+            # dm= device-mapper 虚拟设备（LVM/luks），与「硬盘信息」物理盘口径保持一致
+            if name.startswith(("loop", "ram", "sr", "md", "dm")):
+                continue
+            dev = "/dev/" + name
+            so, rc = run_cmd(["hdparm", "-C", dev], timeout=3)
+            state = "unknown"
+            if rc == 0:
+                for line in so.splitlines():
+                    line = line.strip()
+                    if line.startswith("drive state is:"):
+                        state = line.split(":", 1)[1].strip().strip('"')
+                        break
+            out_list.append({"name": name, "state": state})
+    except Exception:
+        pass
+    return out_list
+
+
+# ===================== Docker NetIO 解析 =====================
+def parse_docker_netio(s):
+    """解析 docker stats 的 NetIO 字段（如 '1.23GB / 4.56GB'）→ (in_bytes, out_bytes) int。"""
+    if not s or "/" not in s:
+        return (0, 0)
+    parts = s.split("/")
+    if len(parts) != 2:
+        return (0, 0)
+    units = {"B": 1, "KB": 1024, "MB": 1048576, "GB": 1073741824, "TB": 1099511627776, "PB": 1125899906842624}
+    def to_bytes(v):
+        v = v.strip()
+        for u in sorted(units, key=len, reverse=True):
+            if v.endswith(u):
+                try:
+                    return int(float(v[:-len(u)].strip()) * units[u])
+                except Exception:
+                    return 0
+        try:
+            return int(float(v))
+        except Exception:
+            return 0
+    return (to_bytes(parts[0]), to_bytes(parts[1]))
+
+
 # ===================== GPU 实时监控（网络主流硬件监控面板功能） =====================
 def _gpu_ident_list():
     """lspci 识别显卡设备：vendor/type/name/pci。"""
@@ -1219,8 +1280,12 @@ def read_net_dev():
             out[iface] = {
                 "rx_bytes": int(fields[0]),
                 "rx_packets": int(fields[1]),
+                "rx_errs": int(fields[2]),
+                "rx_drop": int(fields[3]),
                 "tx_bytes": int(fields[8]),
                 "tx_packets": int(fields[9]),
+                "tx_errs": int(fields[10]),
+                "tx_drop": int(fields[11]),
             }
         except Exception:
             pass
@@ -1246,6 +1311,8 @@ def collect_net(prev, prev_ts, now):
             "rx_bytes": c["rx_bytes"], "tx_bytes": c["tx_bytes"],
             "rx_rate": round(rate_rx, 1), "tx_rate": round(rate_tx, 1),
             "rx_packets": c["rx_packets"], "tx_packets": c["tx_packets"],
+            "rx_drop": c.get("rx_drop", 0), "tx_drop": c.get("tx_drop", 0),
+            "rx_errs": c.get("rx_errs", 0), "tx_errs": c.get("tx_errs", 0),
         })
     ifaces.sort(key=lambda x: -(x["rx_rate"] + x["tx_rate"]))
     return ifaces
@@ -1575,6 +1642,9 @@ def collect_docker():
                 c["mem_usage"] = s.get("MemUsage", "")
                 c["mem_percent"] = str(s.get("MemPerc", "")).replace("%", "").strip()
                 c["net"] = s.get("NetIO", "")
+                in_b, out_b = parse_docker_netio(s.get("NetIO", ""))
+                c["net_in_bytes"] = in_b
+                c["net_out_bytes"] = out_b
     # 状态排序：运行中优先
     order = {"running": 0, "restarting": 1, "paused": 2, "exited": 3, "created": 4, "dead": 5}
     containers.sort(key=lambda c: order.get(c["state"], 9))
@@ -2225,6 +2295,23 @@ class History:
             return []
         return rows
 
+    def query_prefix(self, prefix, seconds):
+        """按前缀批量查询历史指标（如 'net_rx_bytes:' 返回所有网卡的累计字节历史）。
+        seconds=0 表示全部保留期。返回 [(ts, metric, value)] 列表。"""
+        cutoff = (time.time() - seconds) if seconds else 0
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=15)
+            try:
+                cur = conn.execute(
+                    "SELECT ts, metric, value FROM metrics WHERE metric LIKE ? AND ts>=? ORDER BY ts",
+                    (prefix + "%", cutoff),
+                )
+                return cur.fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            return []
+
     def cleanup(self, retention_days):
         cutoff = time.time() - retention_days * 86400
         conn = sqlite3.connect(self.db_path, timeout=15)
@@ -2393,9 +2480,11 @@ class Collector(threading.Thread):
         try:
             if now - self._last_power_ts >= 10:
                 self._last_power = get_rapl_power()
+                if self._last_power.get("ok"):
+                    self._last_power["source"] = "rapl"
                 self._last_power_ts = now
         except Exception:
-            self._last_power = {"ok": False}
+            self._last_power = {"ok": False, "source": "unknown"}
         snapshot["power"] = self._last_power
         # ---- GPU 实时（每 10 秒） ----
         try:
@@ -2442,13 +2531,44 @@ class Collector(threading.Thread):
             for it in ifaces:
                 rows.append((now, "net_rx:" + it["iface"], _r2(it["rx_rate"])))
                 rows.append((now, "net_tx:" + it["iface"], _r2(it["tx_rate"])))
+            # ---- 网卡累计字节/丢包/错误（历史维度，用于流量周期汇总） ----
+            virt_prefixes = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
+            exclude_bridge = bool(self.config.get("traffic_exclude_bridge", 0))
+            for it in ifaces:
+                iname = it["iface"]
+                is_virt = iname.startswith(virt_prefixes)
+                if is_virt and exclude_bridge:
+                    continue
+                rows.append((now, "net_rx_bytes:" + iname, float(it["rx_bytes"])))
+                rows.append((now, "net_tx_bytes:" + iname, float(it["tx_bytes"])))
+                rows.append((now, "net_drop:" + iname, float(it.get("rx_drop", 0) + it.get("tx_drop", 0))))
+                rows.append((now, "net_err:" + iname, float(it.get("rx_errs", 0) + it.get("tx_errs", 0))))
             if temps.get("cpu"):
                 rows.append((now, "temp", _r2(temps["cpu"])))
             if temps.get("system"):
                 rows.append((now, "temp_mb", _r2(temps["system"])))
-            # ---- RAPL 功耗（历史维度） ----
+            # ---- RAPL 功耗（历史维度） + 估算模型回退 ----
             if self._last_power.get("ok"):
                 rows.append((now, "power", _r2(self._last_power.get("total", 0))))
+            else:
+                # 无硬件功耗传感器时使用估算模型
+                try:
+                    disks_active = sum(1 for d in (self._last_disks_detail or []) if d.get("state") != "standby")
+                    nics_active = len([i for i in ifaces if not i["iface"].startswith(virt_prefixes)])
+                    est_w = estimate_power(
+                        cpu_percent, disks_active, nics_active,
+                        float(self.config.get("power_tdp_w", 65)),
+                        float(self.config.get("power_disk_typical_w", 8)),
+                        float(self.config.get("power_nic_fixed_w", 5)),
+                    )
+                    rows.append((now, "power", _r2(est_w)))
+                    rows.append((now, "power_est", _r2(est_w)))
+                    self._last_power = {"ok": True, "total": est_w, "source": "estimated"}
+                except Exception:
+                    pass
+            # 设置功耗来源标记（RAPL 可用时）
+            if "source" not in self._last_power:
+                self._last_power["source"] = "rapl" if self._last_power.get("ok") else "unknown"
             # ---- 风扇平均 RPM（历史维度） ----
             fans = self._last_sensors.get("fans", [])
             valid_rpm = [f["rpm"] for f in fans if f.get("rpm")]
@@ -2460,6 +2580,18 @@ class Collector(threading.Thread):
                              _r2(float(it.get("read_rate", 0) or 0) / 1048576.0)))
                 rows.append((now, "diskio_w:" + str(it.get("name", "?")),
                              _r2(float(it.get("write_rate", 0) or 0) / 1048576.0)))
+            # ---- 容器累计流量（历史维度） ----
+            try:
+                for c in (self._last_docker.get("containers") or []):
+                    if c.get("state") != "running":
+                        continue
+                    cname = c.get("name") or ""
+                    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", cname):
+                        continue
+                    rows.append((now, "ctr_in:" + cname, float(c.get("net_in_bytes", 0))))
+                    rows.append((now, "ctr_out:" + cname, float(c.get("net_out_bytes", 0))))
+            except Exception:
+                pass
             self.db.write(rows)
         # ---- 清理过期历史（每小时一次即可；原先每 10 秒一次 DELETE，大表时白耗 CPU/IO 并放大 WAL 写入） ----
         if now - self._last_cleanup_ts >= 3600:
@@ -2812,6 +2944,13 @@ class MonitorApp:
         self._proc_ts = 0.0
         self._hist_cache = {}
         self._weather_ts = 0.0
+        # 流量/功耗统计 API 缓存（5s TTL，同 overview 模式）
+        self._traffic_cache = None
+        self._traffic_ts = 0.0
+        self._power_stats_cache = None
+        self._power_stats_ts = 0.0
+        self._disk_standby_cache = None
+        self._disk_standby_ts = 0.0
 
     def make_handler(self):
         app = self
@@ -2898,6 +3037,12 @@ class MonitorApp:
                 if path == "/api/power":
                     self._json(app.api_power())
                     return
+                if path == "/api/traffic":
+                    self._json(app.api_traffic())
+                    return
+                if path == "/api/power_stats":
+                    self._json(app.api_power_stats())
+                    return
                 if path == "/api/gpu":
                     self._json(app.api_gpu())
                     return
@@ -2962,6 +3107,16 @@ class MonitorApp:
                         body = json.dumps(app.api_export_status(), ensure_ascii=False, indent=2).encode("utf-8")
                         self._download(body, "application/json; charset=utf-8",
                                        "fnmonitor_status_%s.json" % time.strftime("%Y%m%d_%H%M%S"))
+                    elif export_type == "traffic":
+                        range_ = (qs.get("range") or ["7d"])[0]
+                        body = app.api_traffic_csv(range_)
+                        self._download(body, "text/csv; charset=utf-8",
+                                       "fnmonitor_traffic_%s.csv" % time.strftime("%Y%m%d_%H%M%S"))
+                    elif export_type == "power":
+                        range_ = (qs.get("range") or ["7d"])[0]
+                        body = app.api_power_csv(range_)
+                        self._download(body, "text/csv; charset=utf-8",
+                                       "fnmonitor_power_%s.csv" % time.strftime("%Y%m%d_%H%M%S"))
                     else:
                         range_ = (qs.get("range") or ["7d"])[0]
                         body = app.api_export_history_csv(range_)
@@ -3117,6 +3272,10 @@ class MonitorApp:
         seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
         if metric == "net":
             return self.api_net_history(range_)
+        if metric == "net_bytes":
+            return self.api_net_bytes_history(range_)
+        if metric == "ctr_in":
+            return self.api_ctr_history(range_)
         if metric == "diskio":
             return self.api_diskio_history(range_)
         rows = self.collector.db.query(metric, seconds)
@@ -3150,6 +3309,11 @@ class MonitorApp:
             if metric == "power":
                 p = snap.get("power", {})
                 return p.get("total") if p.get("ok") else None
+            if metric == "power_est":
+                p = snap.get("power", {})
+                if p.get("source") == "estimated":
+                    return p.get("total")
+                return None
             if metric == "fan_avg":
                 fans = snap.get("sensors", {}).get("fans", [])
                 rpms = [f.get("rpm") for f in fans if f.get("rpm")]
@@ -3401,6 +3565,16 @@ class MonitorApp:
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
             if k in data:
                 cur[k] = 1 if str(data[k]) in ("1", "true", "on") else 0
+        # 流量与功耗配置
+        for k in ("traffic_exclude_bridge",):
+            if k in data:
+                cur[k] = 1 if str(data[k]) in ("1", "true", "on") else 0
+        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+            if k in data:
+                try:
+                    cur[k] = float(data[k])
+                except Exception:
+                    pass
         if "data_dir" in data:
             nd = str(data["data_dir"]).strip()
             if nd and os.path.isabs(nd):
@@ -3421,6 +3595,16 @@ class MonitorApp:
             for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
                 if k in cur:
                     self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
+            # 流量与功耗配置同步到内存
+            for k in ("traffic_exclude_bridge",):
+                if k in cur:
+                    self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
+            for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+                if k in cur:
+                    try:
+                        self.config[k] = float(cur[k])
+                    except Exception:
+                        pass
             if "data_dir" in cur:
                 self.config["data_dir"] = str(cur["data_dir"]).strip()
             self.collector._cfg_mtime = 0.0  # 强制采集线程下次重载
@@ -3441,6 +3625,225 @@ class MonitorApp:
     def api_power(self):
         """实时功耗（RAPL）。"""
         return self.collector.get_snapshot().get("power", {"ok": False})
+
+    def api_traffic(self):
+        """流量统计：实时速率 + 各网卡累计/丢包/错误 + 今日/本月/开机累计 + 容器流量 TOP。"""
+        now = time.time()
+        if self._traffic_cache and now - self._traffic_ts < 5:
+            return self._traffic_cache
+        snap = self.collector.get_snapshot()
+        ifaces = snap.get("net", [])
+        virt_prefixes = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
+        exclude_bridge = bool(self.config.get("traffic_exclude_bridge", 0))
+        # 实时速率汇总
+        total_rx_rate = sum(it.get("rx_rate", 0) for it in ifaces)
+        total_tx_rate = sum(it.get("tx_rate", 0) for it in ifaces)
+        # 开机累计（/proc/net/dev 计数器开机归零，当前值即开机以来累计）
+        boot_rx = sum(it.get("rx_bytes", 0) for it in ifaces if it["iface"] != "lo" and not (it["iface"].startswith(virt_prefixes) and exclude_bridge))
+        boot_tx = sum(it.get("tx_bytes", 0) for it in ifaces if it["iface"] != "lo" and not (it["iface"].startswith(virt_prefixes) and exclude_bridge))
+        # 今日/本月周期汇总：从历史累计字节计算差值
+        import datetime
+        _now = datetime.datetime.now()
+        today_start = datetime.datetime(_now.year, _now.month, _now.day).timestamp()
+        month_start = datetime.datetime(_now.year, _now.month, 1).timestamp()
+        today_sec = now - today_start
+        month_sec = now - month_start
+        def _period_totals(prefix, seconds):
+            rows = self.collector.db.query_prefix(prefix, seconds)
+            if not rows:
+                return 0
+            by_iface = {}
+            for ts, metric, value in rows:
+                iface = metric.split(":", 1)[1] if ":" in metric else metric
+                if iface not in by_iface:
+                    by_iface[iface] = []
+                by_iface[iface].append((ts, value))
+            total = 0
+            for iface, pts in by_iface.items():
+                if exclude_bridge and iface.startswith(virt_prefixes):
+                    continue
+                if iface == "lo":
+                    continue
+                earliest = pts[0][1]
+                latest = pts[-1][1]
+                total += max(0, latest - earliest)
+            return total
+        today_rx = _period_totals("net_rx_bytes:", today_sec)
+        today_tx = _period_totals("net_tx_bytes:", today_sec)
+        month_rx = _period_totals("net_rx_bytes:", month_sec)
+        month_tx = _period_totals("net_tx_bytes:", month_sec)
+        # 容器流量 TOP
+        containers = []
+        docker_data = snap.get("docker", {})
+        if docker_data.get("available"):
+            for c in docker_data.get("containers", []):
+                if c.get("state") != "running":
+                    continue
+                in_b = c.get("net_in_bytes", 0)
+                out_b = c.get("net_out_bytes", 0)
+                containers.append({
+                    "name": c.get("name", ""),
+                    "in_bytes": in_b,
+                    "out_bytes": out_b,
+                    "total_bytes": in_b + out_b,
+                })
+            containers.sort(key=lambda x: -x["total_bytes"])
+        result = {
+            "realtime": {"rx_rate": round(total_rx_rate, 1), "tx_rate": round(total_tx_rate, 1)},
+            "ifaces": ifaces,
+            "totals": {
+                "boot_rx": boot_rx, "boot_tx": boot_tx,
+                "today_rx": today_rx, "today_tx": today_tx,
+                "month_rx": month_rx, "month_tx": month_tx,
+            },
+            "containers": containers[:20],
+            "config": {"exclude_bridge": exclude_bridge},
+        }
+        self._traffic_cache = result
+        self._traffic_ts = now
+        return result
+
+    def api_power_stats(self):
+        """功耗统计：实时功耗 + kWh 能耗 + 电费 + 硬盘休眠状态。"""
+        now = time.time()
+        if self._power_stats_cache and now - self._power_stats_ts < 5:
+            return self._power_stats_cache
+        snap = self.collector.get_snapshot()
+        power = snap.get("power", {"ok": False})
+        source = power.get("source", "unknown")
+        power_w = power.get("total", 0) if power.get("ok") else 0
+        # kWh 计算：从 power 历史积分
+        hist_interval = int(self.config.get("history_interval", 60))
+        import datetime
+        _now = datetime.datetime.now()
+        today_start = datetime.datetime(_now.year, _now.month, _now.day).timestamp()
+        month_start = datetime.datetime(_now.year, _now.month, 1).timestamp()
+        today_sec = now - today_start
+        month_sec = now - month_start
+        def _kwh_from_history(seconds):
+            rows = self.collector.db.query("power", seconds)
+            if not rows:
+                return 0.0
+            # 用样本间隔中位数积分
+            if len(rows) < 2:
+                return round(rows[0][1] * hist_interval / 3_600_000, 4)
+            dts = [rows[i+1][0] - rows[i][0] for i in range(len(rows)-1)]
+            dts.sort()
+            median_dt = dts[len(dts)//2] if dts else hist_interval
+            total_j = sum(v * median_dt for _, v in rows)
+            return round(total_j / 3_600_000, 4)
+        today_kwh = _kwh_from_history(today_sec)
+        month_kwh = _kwh_from_history(month_sec)
+        # 开机累计估算
+        uptime = snap.get("uptime", 0)
+        boot_kwh = round(power_w * uptime / 3_600_000, 4) if uptime > 0 else 0.0
+        # 电费
+        rate = float(self.config.get("power_rate_yuan", 0.6))
+        # 硬盘休眠状态（60s 缓存），并与「硬盘信息」(lsblk 物理盘) 校对，只保留物理硬盘
+        if now - self._disk_standby_ts >= 60:
+            self._disk_standby_cache = read_disk_standby_states()
+            self._disk_standby_ts = now
+        standby = self._disk_standby_cache or []
+        phy_names = {d.get("name") for d in (getattr(self.collector, "_last_disks_detail", None) or []) if d.get("name")}
+        if phy_names:
+            standby = [d for d in standby if d.get("name") in phy_names]
+        result = {
+            "realtime": {"power_w": power_w, "source": source, "package": power.get("package", 0), "core": power.get("core", 0), "dram": power.get("dram", 0)},
+            "energy": {"today_kwh": today_kwh, "month_kwh": month_kwh, "boot_kwh": boot_kwh},
+            "cost": {"today_yuan": round(today_kwh * rate, 2), "month_yuan": round(month_kwh * rate, 2), "rate_yuan_per_kwh": rate},
+            "disks": standby,
+            "estimation_params": {
+                "tdp_w": float(self.config.get("power_tdp_w", 65)),
+                "disk_typical_w": float(self.config.get("power_disk_typical_w", 8)),
+                "nic_fixed_w": float(self.config.get("power_nic_fixed_w", 5)),
+            },
+        }
+        self._power_stats_cache = result
+        self._power_stats_ts = now
+        return result
+
+    def api_net_bytes_history(self, range_):
+        """各网卡累计字节时间序列（聚合 net_rx_bytes:* / net_tx_bytes:*）。"""
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
+        rows_rx = self.collector.db.query_prefix("net_rx_bytes:", seconds)
+        rows_tx = self.collector.db.query_prefix("net_tx_bytes:", seconds)
+        # 按时间戳聚合所有网卡的总字节
+        rx_map = {}
+        for ts, metric, value in rows_rx:
+            rx_map[ts] = rx_map.get(ts, 0) + value
+        tx_map = {}
+        for ts, metric, value in rows_tx:
+            tx_map[ts] = tx_map.get(ts, 0) + value
+        all_ts = sorted(set(rx_map.keys()) | set(tx_map.keys()))
+        step = max(1, len(all_ts) // 720)
+        sampled = all_ts[::step]
+        return {"rx": [[t, rx_map.get(t, 0)] for t in sampled],
+                "tx": [[t, tx_map.get(t, 0)] for t in sampled]}
+
+    def api_ctr_history(self, range_):
+        """容器累计流量时间序列（聚合 ctr_in:* / ctr_out:*）。"""
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 3600)
+        rows_in = self.collector.db.query_prefix("ctr_in:", seconds)
+        rows_out = self.collector.db.query_prefix("ctr_out:", seconds)
+        in_map = {}
+        for ts, metric, value in rows_in:
+            in_map[ts] = in_map.get(ts, 0) + value
+        out_map = {}
+        for ts, metric, value in rows_out:
+            out_map[ts] = out_map.get(ts, 0) + value
+        all_ts = sorted(set(in_map.keys()) | set(out_map.keys()))
+        step = max(1, len(all_ts) // 720)
+        sampled = all_ts[::step]
+        return {"points": [[t, in_map.get(t, 0)] for t in sampled],
+                "out": [[t, out_map.get(t, 0)] for t in sampled]}
+
+    def api_traffic_csv(self, range_):
+        """导出流量统计 CSV。"""
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 604800)
+        rows = self.collector.db.query_prefix("net_", seconds)
+        ctr_rows = self.collector.db.query_prefix("ctr_", seconds)
+        by_ts = {}
+        metrics = []
+        for ts, metric, value in rows + ctr_rows:
+            if metric not in metrics:
+                metrics.append(metric)
+            if ts not in by_ts:
+                by_ts[ts] = {}
+            by_ts[ts][metric] = value
+        if not by_ts:
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(["说明", "流量历史库暂无采样数据"])
+            return ("\ufeff" + buf.getvalue()).encode("utf-8")
+        order = sorted(by_ts.keys())
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["时间(本地)", "unix_ts"] + metrics)
+        for ts in order:
+            row = by_ts[ts]
+            try:
+                iso = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            except Exception:
+                iso = str(ts)
+            w.writerow([iso, "%.3f" % ts] + [row.get(m, "") for m in metrics])
+        return ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+    def api_power_csv(self, range_):
+        """导出功耗统计 CSV。"""
+        seconds = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}.get(range_, 604800)
+        rows_power = self.collector.db.query("power", seconds)
+        rows_est = self.collector.db.query("power_est", seconds)
+        est_map = {ts: v for ts, v in rows_est}
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["时间(本地)", "unix_ts", "功耗(W)", "估算功耗(W)"])
+        for ts, v in rows_power:
+            try:
+                iso = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            except Exception:
+                iso = str(ts)
+            w.writerow([iso, "%.3f" % ts, v, est_map.get(ts, "")])
+        return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
     def api_gpu(self):
         """GPU 实时监控。"""
@@ -3722,6 +4125,16 @@ def load_config(data_dir):
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate"):
             if k in user:
                 cfg[k] = 1 if str(user[k]) in ("1", "true", "on") else 0
+        # 流量与功耗配置必须随配置恢复（同类 bug 见 v2.9.9 自动更新开关）
+        for k in ("traffic_exclude_bridge",):
+            if k in user:
+                cfg[k] = 1 if str(user[k]) in ("1", "true", "on") else 0
+        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+            if k in user:
+                try:
+                    cfg[k] = float(user[k])
+                except Exception:
+                    pass
         if "weather_city" in user:
             cfg["weather_city"] = str(user["weather_city"])
         if "data_dir" in user:
