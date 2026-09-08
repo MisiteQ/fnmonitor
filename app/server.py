@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.12.0"
+VERSION = "2.12.1"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3000,6 +3000,27 @@ class UpdateManager:
             shutil.rmtree(tmp, ignore_errors=True)
             return False, "安装失败已回滚: %s" % e
         shutil.rmtree(tmp, ignore_errors=True)
+        # fnOS 应用中心从 /var/apps/{TRIM_APPNAME}/manifest 读取版本号；
+        # 该目录与应用可执行文件目录（TRIM_APPDEST，server.py 所在的 target）
+        # 是两个不同位置：/var/apps/{appname}/ 是应用基础目录（manifest、ICON、cmd/），
+        # target/ 是软链接指向的可执行文件目录。内置更新只覆盖了 target 下的 manifest，
+        # 应用基础目录下的 manifest 仍是旧版本，导致应用中心显示版本号不刷新。
+        # 这里把新版 manifest / ICON 同步到应用基础目录。
+        app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
+        app_base = "/var/apps/%s" % app_name
+        if os.path.isdir(app_base) and os.path.abspath(app_base) != os.path.abspath(app_dir):
+            for item in ("manifest", "ICON.PNG", "ICON_256.PNG"):
+                s = os.path.join(app_dir, item)
+                if not os.path.exists(s):
+                    continue
+                d = os.path.join(app_base, item)
+                try:
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(s, d)
+                except Exception:
+                    pass
         # 刚装完新包，fnOS 在安装/升级时会读取新 app/ui/config；
         # 必须在这里把用户保存的 open_mode 写到新部署的 ui/config 上，
         # 否则用户之前选的"独立网页模式"会被 fpk 里的默认值覆盖、下次点桌面图标还是老样子。
