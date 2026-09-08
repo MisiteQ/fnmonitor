@@ -9,3 +9,8 @@ fnpack.exe
 # 系统文件
 Thumbs.db
 .DS_Store
+
+# IDE / 编辑器
+.trae/
+.vscode/
+.idea/

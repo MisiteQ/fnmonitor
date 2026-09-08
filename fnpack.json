@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.11.0/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.0/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.12.0": {
+          "changelog": "① 修复处理器核心/线程数读取错误：此前把逻辑线程数误当物理核心数，超线程 CPU 显示「8 核 / 8 线程」，多路 CPU 完全错误；现改用 lscpu 拓扑（Socket × Core/socket）+ cpuinfo 去重回退，核心/线程/插槽均准确<br>② 总览 CPU 卡片同时显示物理核/逻辑线程数；每核柱形改为系统 CPU1..N 编号，超线程标注逻辑线程口径；CPU 时间统计纳入 steal（虚拟机内更准）<br>③ 修复 RAPL 总功耗虚高一倍：封装域本身已包含核心/非核心，旧代码四者直接相加；现整机=封装+内存，实时功耗与功耗统计完全同源<br>④ AMD/ARM 无 RAPL 时统一显示模型估算值并标注来源，不再实时面板「不可用」而统计页有数据<br>⑤ 新增「飞牛桌面打开方式」设置：可选飞牛窗口（iframe）或浏览器新标签页（url，新默认）；图标打包不再覆盖用户自定义图标<br>⑥ 全屏按钮按打开方式自适应：iframe 模式下提示点 fnOS 窗口标题栏最大化，独立网页模式下走 Fullscreen API<br>⑦ 功耗统计面板「数据来源」徽章并入标题 tag；新增顶部横幅：iframe 内设置了 url 模式时一键跳到浏览器新标签页",
+          "updated_at": "2026-09-08T15:20:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.0/fnmonitor-2.12.0-x86.fpk",
+              "sha256": "9bf70d19ea1fbc7d47ba78674a3af7f7dbd0bd6678aa857f9d53c69a0178b914",
+              "size": 249612
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.0/fnmonitor-2.12.0-arm.fpk",
+              "sha256": "848de772507bcd7436fcd2930f659c6b37ad9b2f861afc3c12c3a4019137f9ae",
+              "size": 249612
+            }
+          }
+        },
         "2.11.0": {
           "changelog": "① 新增「流量统计」：今日/本月/开机累计上下行流量、容器流量 TOP 10、累计流量趋势图，支持导出 CSV，可配置排除 Docker 网桥流量<br>② 新增「功耗统计」：今日/本月 kWh 与电费估算、累计 kWh 趋势、硬盘休眠状态，无 RAPL 时自动回退估算模型（可配置 TDP/电价/单盘/网卡功耗）<br>③ 界面整合：流量统计与功耗统计并入「资源趋势」面板、温度墙并入硬件面板（「硬件与温度」）、阵列设定并入磁盘信息、进程 TOP 默认放最后<br>④ 数据可用性自动隐藏：启动 5 分钟后自动隐藏从未返回数据的面板（界面管理可恢复）<br>⑤ 图表优化：修复累计趋势图闪烁、折线图按实际宽度绘制坐标文字统一、隐藏同排模块后自动撑满<br>⑥ 硬盘休眠状态剔除 dm 虚拟设备，仅显示物理硬盘",
           "updated_at": "2026-09-07T19:50:00+08:00",

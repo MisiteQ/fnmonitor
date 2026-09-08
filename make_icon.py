@@ -113,12 +113,19 @@ def main():
         (os.path.join("app", "ui", "images", "icon-64.png"), 64),
         (os.path.join("app", "ui", "images", "icon-256.png"), 256),
     ]
+    created = 0
     for rel, size in targets:
         path = os.path.join(ROOT, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            print("跳过已存在图标: %s" % rel)
+            continue
         with open(path, "wb") as f:
             f.write(build_icon(size))
         print("生成图标: %s (%dx%d, %d bytes)" % (rel, size, size, os.path.getsize(path)))
+        created += 1
+    if created == 0:
+        print("所有图标已存在，本次未重新生成。若需强制重建，先删除 ICON.PNG / ICON_256.PNG。")
     # 兼容旧路径：把规范图标也复制到 ui 根目录（部分 fnOS 版本读取 ui/ICON.PNG）
     compat = [
         (os.path.join(ROOT, "ICON.PNG"),
@@ -129,10 +136,8 @@ def main():
     for src, dst in compat:
         try:
             shutil.copyfile(src, dst)
-            print("兼容图标: %s" % os.path.relpath(dst, ROOT))
         except Exception as e:
             print("兼容图标跳过 %s: %s" % (os.path.relpath(dst, ROOT), e))
-    print("图标生成完成。")
 
 
 if __name__ == "__main__":

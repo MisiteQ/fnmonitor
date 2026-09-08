@@ -34,12 +34,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.11.0"
+VERSION = "2.12.0"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "open_mode": "url"}
+# 虚拟网卡前缀（Docker 网桥 / 容器 / VPN 等）：流量与功耗估算统一口径
+VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -95,7 +97,12 @@ def fmt_rate(n):
 # 系统资源采集（Linux /proc /sys）
 # ---------------------------------------------------------------------------
 def read_cpu_times():
-    """读取 /proc/stat 的 CPU 时间。返回 (总时间列表, 每核时间列表)。"""
+    """读取 /proc/stat 的 CPU 时间。返回 (总时间列表, 每核时间列表)。
+
+    取前 8 个字段：user/nice/system/idle/iowait/irq/softirq/steal。
+    steal（虚拟机被宿主机占用的时间）计入总量，虚拟机内使用率才准确；
+    guest/guest_nice 已包含在 user 中，不再重复计入。
+    cpuN 严格按数字后缀匹配，避免误收其他以 cpu 开头的行。"""
     total = None
     cores = []
     for line in read_text("/proc/stat").splitlines():
@@ -103,10 +110,10 @@ def read_cpu_times():
         if not parts:
             continue
         if parts[0] == "cpu":
-            total = [int(x) for x in parts[1:8]]
-        elif parts[0].startswith("cpu"):
+            total = [int(x) for x in parts[1:9]]
+        elif re.match(r"^cpu\d+$", parts[0]):
             try:
-                cores.append([int(x) for x in parts[1:8]])
+                cores.append([int(x) for x in parts[1:9]])
             except Exception:
                 pass
     return total, cores
@@ -182,6 +189,79 @@ def read_cpu_model():
         if line.startswith("model name"):
             return line.split(":", 1)[1].strip()
     return ""
+
+
+def read_cpu_topology():
+    """读取 CPU 拓扑，返回 (物理核心数, 逻辑线程数, 插槽数)。
+
+    优先 lscpu（x86/ARM 通用、字段稳定）：物理核 = Socket(s) × Core(s) per socket，
+    逻辑线程 = CPU(s)；缺失时回退 /proc/cpuinfo：processor 条目数 = 逻辑线程数，
+    物理核按 (physical id, core id) 去重，或累加各插槽的 "cpu cores" 字段。
+
+    注意：/proc/cpuinfo 的 processor 条目数是逻辑线程数（超线程下 ≠ 物理核数），
+    siblings 是「单插槽逻辑线程数」而非整机线程数，旧代码把这两项误当物理核/总线程，
+    导致超线程 CPU 显示 8核/8线程、多路 CPU 数值完全错误。"""
+    cores = threads = sockets = 0
+
+    def _first_int(s):
+        m = re.search(r"\d+", s or "")
+        return int(m.group(0)) if m else None
+
+    out, rc = run_cmd(["lscpu"], timeout=10)
+    if rc == 0 and out:
+        kv = {}
+        for line in out.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                kv[k.strip()] = v.strip()
+        cpus = _first_int(kv.get("CPU(s)"))
+        tpc = _first_int(kv.get("Thread(s) per core"))
+        cps = _first_int(kv.get("Core(s) per socket"))
+        skt = _first_int(kv.get("Socket(s)"))
+        if cpus:
+            threads = cpus
+        if skt:
+            sockets = skt
+        if cps and skt:
+            cores = cps * skt
+        elif cpus and tpc:
+            cores = cpus // tpc
+
+    if not threads or not cores:
+        proc_threads = 0
+        core_pairs = set()       # (physical id, core id) 去重 = 物理核数
+        socket_cores = set()     # (physical id, cpu cores) 各插槽物理核数
+        for block in re.split(r"\n\s*\n", read_text("/proc/cpuinfo")):
+            rec = {}
+            for line in block.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    rec[k.strip()] = v.strip()
+            if "processor" not in rec:
+                continue
+            proc_threads += 1
+            pid = rec.get("physical id")
+            cid = rec.get("core id")
+            if pid is not None and cid is not None:
+                core_pairs.add((pid, cid))
+            cc = rec.get("cpu cores")
+            if pid is not None and cc is not None:
+                try:
+                    socket_cores.add((pid, int(cc)))
+                except Exception:
+                    pass
+        if not threads:
+            threads = proc_threads
+        if not cores:
+            if core_pairs:
+                cores = len(core_pairs)
+            elif socket_cores:
+                cores = sum(c for _, c in socket_cores)
+            else:
+                cores = proc_threads  # ARM / 无拓扑字段：每线程即一核
+    if not sockets:
+        sockets = 1 if cores else 0
+    return cores, threads, sockets
 
 
 def _unescape_mount_path(s):
@@ -443,19 +523,15 @@ def collect_ports(docker_result=None):
 def collect_hardware():
     """硬件信息：CPU / 主板 / BIOS / 显卡 / 网卡（参照飞牛官方资源管理器信息项）。"""
     info = {"cpu": {}, "board": {}, "gpu": [], "net": []}
-    # CPU
+    # CPU（物理核 / 逻辑线程 / 插槽数走 lscpu 拓扑，/proc/cpuinfo 回退）
     info["cpu"]["model"] = read_cpu_model()
-    cores, threads = 0, 0
-    for line in read_text("/proc/cpuinfo").splitlines():
-        if line.startswith("processor"):
-            cores += 1
-        elif line.startswith("siblings"):
-            try:
-                threads = max(threads, int(line.split(":", 1)[1].strip()))
-            except Exception:
-                pass
+    try:
+        cores, threads, sockets = read_cpu_topology()
+    except Exception:
+        cores, threads, sockets = 0, 0, 0
     info["cpu"]["cores"] = cores
     info["cpu"]["threads"] = threads if threads else cores
+    info["cpu"]["sockets"] = sockets
     out, _ = run_cmd(["lscpu"], timeout=10)
     arch = ""
     for line in out.splitlines():
@@ -661,11 +737,14 @@ def get_rapl_power():
             if diff < 0:  # 计数器回绕
                 diff += _rapl_energy_max(paths[k])
             watts[k] = round(diff / 0.25 / 1e6, 2)
-    if not watts:
+    if not watts or "package" not in watts:
         return {"ok": False}
-    total = round(sum(watts.values()), 2)
+    # 注意：package（封装）域本身已包含 core（核心/PP0）与 uncore（非核心/PP1），
+    # 四者直接相加会把核心/非核心重复计入，总功耗虚高一倍以上。
+    # 整机实测功耗 = CPU 封装 + 内存（DRAM 是封装外的独立域）；core/uncore 仅作分项展示。
+    total = watts["package"] + watts.get("dram", 0.0)
     watts["ok"] = True
-    watts["total"] = total
+    watts["total"] = round(total, 2)
     return watts
 
 
@@ -2373,6 +2452,7 @@ class Collector(threading.Thread):
         self._last_fans_ts = 0.0
         self._last_power = {"ok": False}
         self._last_power_ts = 0.0
+        self._cpu_topo = None  # CPU 拓扑（物理核/逻辑线程/插槽），运行期不变只解析一次
         self._last_gpu = []
         self._last_gpu_ts = 0.0
         self._last_memory = {"items": [], "dual": False}
@@ -2433,11 +2513,22 @@ class Collector(threading.Thread):
             per_core = [calc_cpu_percent(a, b) for a, b in zip(self._prev_cores, cores)]
         self._prev_cpu = total
         self._prev_cores = cores
-        cores_num = len(cores) if cores else 0
+        cores_num = len(cores) if cores else 0  # /proc/stat 的 cpuN 条目数 = 逻辑线程数
+        # CPU 拓扑只解析一次（运行期不变）；cores=物理核数，threads=逻辑线程数，与硬件面板同源
+        if self._cpu_topo is None:
+            try:
+                self._cpu_topo = read_cpu_topology()
+            except Exception:
+                self._cpu_topo = (0, cores_num, 1)
+        phys_cores, logical_threads, cpu_sockets = self._cpu_topo
         load = read_loadavg()
         snapshot["cpu"] = {
             "percent": cpu_percent, "per_core": per_core, "load": load,
-            "cores": cores_num, "model": read_cpu_model(),
+            "cores": phys_cores or cores_num,
+            "threads": logical_threads or cores_num,
+            "sockets": cpu_sockets or 1,
+            "logical_cpus": cores_num,
+            "model": read_cpu_model(),
             "frequency_mhz": read_int_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq") // 1000,
         }
         # ---- 内存 ----
@@ -2476,12 +2567,32 @@ class Collector(threading.Thread):
         # ---- 温度 ----
         temps = read_temps()
         snapshot["temp"] = temps
-        # ---- 实时功耗 RAPL（每 10 秒，内部 0.25s 差分） ----
+        # ---- 实时功耗（每 10 秒）：RAPL 硬件传感器优先，不可用时即时回退估算模型 ----
+        # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
+        # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
+        # 而趋势图却有估算数据的自相矛盾。
         try:
             if now - self._last_power_ts >= 10:
-                self._last_power = get_rapl_power()
-                if self._last_power.get("ok"):
-                    self._last_power["source"] = "rapl"
+                rp = get_rapl_power()
+                if rp.get("ok"):
+                    rp["source"] = "rapl"
+                    self._last_power = rp
+                else:
+                    try:
+                        disks_active = sum(1 for d in (self._last_disks_detail or [])
+                                           if d.get("state") != "standby") or len(self._last_disks_detail or [])
+                        nics_active = len([i for i in ifaces
+                                           if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
+                        est_w = estimate_power(
+                            cpu_percent, disks_active, nics_active,
+                            float(self.config.get("power_tdp_w", 65)),
+                            float(self.config.get("power_disk_typical_w", 8)),
+                            float(self.config.get("power_nic_fixed_w", 5)),
+                        )
+                        self._last_power = {"ok": True, "total": est_w, "source": "estimated",
+                                            "package": None, "core": None, "uncore": None, "dram": None}
+                    except Exception:
+                        self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
         except Exception:
             self._last_power = {"ok": False, "source": "unknown"}
@@ -2532,7 +2643,7 @@ class Collector(threading.Thread):
                 rows.append((now, "net_rx:" + it["iface"], _r2(it["rx_rate"])))
                 rows.append((now, "net_tx:" + it["iface"], _r2(it["tx_rate"])))
             # ---- 网卡累计字节/丢包/错误（历史维度，用于流量周期汇总） ----
-            virt_prefixes = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
+            virt_prefixes = VIRT_IFACE_PREFIXES
             exclude_bridge = bool(self.config.get("traffic_exclude_bridge", 0))
             for it in ifaces:
                 iname = it["iface"]
@@ -2547,28 +2658,13 @@ class Collector(threading.Thread):
                 rows.append((now, "temp", _r2(temps["cpu"])))
             if temps.get("system"):
                 rows.append((now, "temp_mb", _r2(temps["system"])))
-            # ---- RAPL 功耗（历史维度） + 估算模型回退 ----
-            if self._last_power.get("ok"):
-                rows.append((now, "power", _r2(self._last_power.get("total", 0))))
-            else:
-                # 无硬件功耗传感器时使用估算模型
-                try:
-                    disks_active = sum(1 for d in (self._last_disks_detail or []) if d.get("state") != "standby")
-                    nics_active = len([i for i in ifaces if not i["iface"].startswith(virt_prefixes)])
-                    est_w = estimate_power(
-                        cpu_percent, disks_active, nics_active,
-                        float(self.config.get("power_tdp_w", 65)),
-                        float(self.config.get("power_disk_typical_w", 8)),
-                        float(self.config.get("power_nic_fixed_w", 5)),
-                    )
-                    rows.append((now, "power", _r2(est_w)))
-                    rows.append((now, "power_est", _r2(est_w)))
-                    self._last_power = {"ok": True, "total": est_w, "source": "estimated"}
-                except Exception:
-                    pass
-            # 设置功耗来源标记（RAPL 可用时）
-            if "source" not in self._last_power:
-                self._last_power["source"] = "rapl" if self._last_power.get("ok") else "unknown"
+            # ---- 功耗（历史维度）：与接口实时快照同源（RAPL 实测 / 模型估算） ----
+            pw = self._last_power or {}
+            if pw.get("ok") and pw.get("total"):
+                rows.append((now, "power", _r2(pw.get("total"))))
+                if pw.get("source") == "estimated":
+                    # 估算值额外写一份 power_est，导出 CSV 时可区分实测/估算口径
+                    rows.append((now, "power_est", _r2(pw.get("total"))))
             # ---- 风扇平均 RPM（历史维度） ----
             fans = self._last_sensors.get("fans", [])
             valid_rpm = [f["rpm"] for f in fans if f.get("rpm")]
@@ -2904,6 +3000,14 @@ class UpdateManager:
             shutil.rmtree(tmp, ignore_errors=True)
             return False, "安装失败已回滚: %s" % e
         shutil.rmtree(tmp, ignore_errors=True)
+        # 刚装完新包，fnOS 在安装/升级时会读取新 app/ui/config；
+        # 必须在这里把用户保存的 open_mode 写到新部署的 ui/config 上，
+        # 否则用户之前选的"独立网页模式"会被 fpk 里的默认值覆盖、下次点桌面图标还是老样子。
+        try:
+            saved_mode = str(self.config.get("open_mode") or "iframe").lower()
+            apply_launcher_open_mode(saved_mode)
+        except Exception as _e:
+            pass
         # 延迟替换进程重启（先让 HTTP 响应送达前端）
         def _restart():
             try:
@@ -3581,6 +3685,12 @@ class MonitorApp:
                 cur["data_dir"] = nd
             else:
                 cur.pop("data_dir", None)
+        # 飞牛桌面打开方式：iframe=飞牛窗口内打开 / url=浏览器新标签页
+        if "open_mode" in data:
+            m = str(data["open_mode"]).lower()
+            if m in ("iframe", "url"):
+                cur["open_mode"] = m
+        launcher_note, launcher_error = "", ""
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(cur, f, ensure_ascii=False, indent=1)
@@ -3607,9 +3717,22 @@ class MonitorApp:
                         pass
             if "data_dir" in cur:
                 self.config["data_dir"] = str(cur["data_dir"]).strip()
+            if str(cur.get("open_mode", "")).lower() in ("iframe", "url"):
+                self.config["open_mode"] = str(cur["open_mode"]).lower()
+                # 立即改写桌面入口 ui/config，无需等重启
+                ok_l, msg_l = apply_launcher_open_mode(self.config["open_mode"])
+                if ok_l:
+                    launcher_note = "桌面打开方式已切换为：" + msg_l + "（重新点击桌面图标或重新登录飞牛后生效）"
+                else:
+                    launcher_error = msg_l
             self.collector._cfg_mtime = 0.0  # 强制采集线程下次重载
+            note_parts = []
+            if changed_port:
+                note_parts.append("端口修改需在应用中心重启「飞牛监控」后生效")
+            if launcher_note:
+                note_parts.append(launcher_note)
             return {"ok": True, "config": dict(self.config), "port_changed": changed_port,
-                    "note": "端口修改需在应用中心重启「飞牛监控」后生效" if changed_port else ""}
+                    "note": "；".join(note_parts), "launcher_error": launcher_error}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -3633,7 +3756,7 @@ class MonitorApp:
             return self._traffic_cache
         snap = self.collector.get_snapshot()
         ifaces = snap.get("net", [])
-        virt_prefixes = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
+        virt_prefixes = VIRT_IFACE_PREFIXES
         exclude_bridge = bool(self.config.get("traffic_exclude_bridge", 0))
         # 实时速率汇总
         total_rx_rate = sum(it.get("rx_rate", 0) for it in ifaces)
@@ -4111,6 +4234,33 @@ def top_processes(limit=20):
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+def apply_launcher_open_mode(mode):
+    """把飞牛桌面入口的打开方式写入应用目录 ui/config（type: iframe=飞牛窗口内打开 /
+    url=浏览器新标签页独立打开）。升级安装包会覆盖 ui/config，故服务启动时也按用户
+    配置重新应用一次。返回 (是否成功, 说明)。"""
+    if mode not in ("iframe", "url"):
+        return False, "不支持的打开方式: %s" % mode
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "config")
+        if not os.path.isfile(cfg_path):
+            return False, "未找到桌面入口配置 ui/config"
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        changed = False
+        for entry in (data.get(".url") or {}).values():
+            if isinstance(entry, dict) and entry.get("type") != mode:
+                entry["type"] = mode
+                changed = True
+        if changed:
+            tmp = cfg_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            os.replace(tmp, cfg_path)
+        return True, ("飞牛窗口内打开" if mode == "iframe" else "浏览器新标签页打开")
+    except Exception as e:
+        return False, str(e)
+
+
 def load_config(data_dir):
     cfg = dict(DEFAULT_CONFIG)
     cfg_path = os.path.join(data_dir, "config.json")
@@ -4139,6 +4289,9 @@ def load_config(data_dir):
             cfg["weather_city"] = str(user["weather_city"])
         if "data_dir" in user:
             cfg["data_dir"] = str(user["data_dir"]).strip()
+        # 飞牛桌面打开方式（iframe=飞牛窗口内打开 / url=浏览器新标签页）
+        if str(user.get("open_mode", "")).lower() in ("iframe", "url"):
+            cfg["open_mode"] = str(user["open_mode"]).lower()
     except Exception:
         pass
     return cfg
@@ -4196,6 +4349,13 @@ def main():
         args.data_dir = original_dir
     # 配置文件里指定了端口则优先（网页设置修改端口后重启生效）
     port = int(config.get("port") or 0) or args.port
+    # 按用户设置同步飞牛桌面入口打开方式（ui/config 会被升级包覆盖，每次启动重新应用）
+    try:
+        ok_l, msg_l = apply_launcher_open_mode(str(config.get("open_mode") or "iframe").lower())
+        if not ok_l:
+            print("[fnmonitor] 桌面打开方式应用失败: %s" % msg_l)
+    except Exception as e:
+        print("[fnmonitor] 桌面打开方式应用异常: %s" % e)
 
     app = MonitorApp(args.data_dir, config, args.host, port, cfg_dir=original_dir)
     handler = app.make_handler()

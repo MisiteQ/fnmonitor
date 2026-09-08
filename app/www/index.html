@@ -611,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.11.0</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.12.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -784,7 +784,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
     </div>
     <!-- 功耗统计（并入资源趋势） -->
     <div class="mod-block" data-mod="m-sec-powerstats">
-      <div class="sens-title" style="margin:0 0 10px">💡 功耗统计 <span class="tag">kWh / 电费 / 估算</span><button class="mod-hide" data-mod="m-sec-powerstats" title="隐藏此模块">✕</button></div>
+      <div class="sens-title" style="margin:0 0 10px">💡 功耗统计 <span class="tag">kWh / 电费 / 估算</span><span id="power-source-tag"></span><button class="mod-hide" data-mod="m-sec-powerstats" title="隐藏此模块">✕</button></div>
       <div id="powerstats-body"><div class="empty">加载中…</div></div>
     </div>
   </section>
@@ -869,6 +869,15 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <input id="set-weather-city" class="inp" type="text" placeholder="徐州  或  34.26,117.18" style="max-width:200px">
         <button class="op-btn" onclick="saveWeatherCity()">保存</button>
         <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-openmode">
+        <div class="s-label"><b>飞牛桌面打开方式</b><div class="s-sub">点击飞牛桌面「飞牛监控」图标时的打开方式：<b>飞牛窗口</b> = 在 fnOS 桌面内嵌窗口中打开；<b>独立网页</b> = 在浏览器新标签页打开（完整浏览器能力）。<span style="color:var(--amber);font-weight:600">保存后通过「软件更新」内置升级一次即可生效（fnOS 只在安装时读取入口配置）。若当前无新版本可更，可手动卸载 fnmonitor 后重新安装本 fpk 包</span>。当前已在飞牛窗口内打开，可先点下方链接立即在新标签页试用：<a href="/" target="_blank" rel="noopener">立即在新标签页打开 ↗</a></div></div>
+        <select id="set-open-mode" class="inp" style="max-width:200px">
+          <option value="url">浏览器新标签页（独立网页，默认）</option>
+          <option value="iframe">飞牛窗口内打开（iframe）</option>
+        </select>
+        <button class="op-btn" onclick="saveOpenMode()">保存</button>
+        <button class="mod-hide" data-mod="m-set-openmode" title="隐藏此模块">✕</button>
       </div>
 
       <div class="set-group">流量与功耗</div>
@@ -1011,7 +1020,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.11.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.12.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1653,7 +1662,6 @@ function renderPowerStats(d){
   h += trafficCard("本月电费", "¥" + (c.month_yuan || 0).toFixed(2), "");
   h += trafficCard("当前功耗", (r.power_w || 0).toFixed(1) + " W", "");
   h += '</div>';
-  h += '<div class="card sm" data-mod="m-power-source"><div class="label">数据来源</div><div class="value" style="font-size:14px">' + sourceBadge + '</div></div>';
   h += '<div class="chart-grid adaptive">';
   h += '<div class="chart-box" data-mod="m-ch-power-kwh"><div class="c-title"><span>累计 kWh 趋势</span><button class="mod-hide" data-mod="m-ch-power-kwh" title="隐藏此模块">✕</button></div><div id="chart-power-kwh"></div></div>';
   // 硬盘休眠状态
@@ -1671,6 +1679,9 @@ function renderPowerStats(d){
   }
   h += '</div>';
   body.innerHTML = h;
+  // 把数据来源徽章同步到标题 tag（紧跟 "kWh / 电费 / 估算"）
+  const st = $("power-source-tag");
+  if (st) st.innerHTML = sourceBadge;
   // 重绘趋势图（同 renderTraffic 原因）
   if (cachedHistory){
     try { renderTrends(state.range, (state.range in SPAN_MAP) ? SPAN_MAP[state.range] : 3600); } catch(e){}
@@ -1894,6 +1905,21 @@ async function saveTrafficConfig(){
     if (msg){ msg.textContent = j.ok ? "流量配置已保存" : "保存失败: " + (j.error || ""); setTimeout(() => msg.textContent = "", 5000); }
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
+/* 保存飞牛桌面打开方式（iframe=飞牛窗口 / url=浏览器新标签页） */
+async function saveOpenMode(){
+  const mode = $("set-open-mode") ? $("set-open-mode").value : "iframe";
+  const msg = $("settings-msg");
+  try {
+    const r = await fetch("/api/config/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ open_mode: mode }) });
+    const j = await r.json();
+    if (msg){
+      if (j.ok){
+        msg.textContent = (j.note || "打开方式已保存") + (j.launcher_error ? "；但入口配置写入失败: " + j.launcher_error : "");
+      } else msg.textContent = "保存失败: " + (j.error || "");
+      setTimeout(() => msg.textContent = "", 6000);
+    }
+  } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
+}
 /* 「数据保存目录」编辑状态：输入与已保存值不一致时显示「取消」，可一键还原 */
 let DATADIR_BASELINE = "";
 function dataDirChanged(){
@@ -2036,6 +2062,7 @@ async function loadConfigForm(){
     if (c.power_disk_typical_w != null && $("set-diskw")) $("set-diskw").value = c.power_disk_typical_w;
     if (c.power_nic_fixed_w != null && $("set-nicw")) $("set-nicw").value = c.power_nic_fixed_w;
     if (c.traffic_exclude_bridge != null && $("set-bridge")) $("set-bridge").value = c.traffic_exclude_bridge;
+    if ((c.open_mode === "url" || c.open_mode === "iframe") && $("set-open-mode")) $("set-open-mode").value = c.open_mode;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
     else if (c.data_dir_actual) $("set-data-dir").placeholder = "当前默认：" + c.data_dir_actual;
     // 数据目录 baseline：供「取消」还原 & 判断是否有未保存修改
@@ -2491,7 +2518,7 @@ const MOD_LABELS = {
   "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
   "m-set-tdp": "设置·CPU TDP", "m-set-rate": "设置·电价", "m-set-diskw": "设置·单盘功耗",
-  "m-set-nicw": "设置·网卡功耗", "m-set-bridge": "设置·排除网桥流量",
+  "m-set-nicw": "设置·网卡功耗", "m-set-bridge": "设置·排除网桥流量", "m-set-openmode": "设置·桌面打开方式",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
 /* 应用模块隐藏状态：只接管曾被本功能隐藏过的元素，避免与天气卡等数据驱动的 display 冲突 */
@@ -2928,13 +2955,39 @@ function autoHideEmptyPanels(){
 /* ---------- 全屏切换（F11 拦截 + 顶栏按钮） ----------
    浏览器原生 F11 全屏存在缺陷：鼠标移到屏幕顶部会弹出标题栏 / 菜单栏。
    这里拦截 F11 改走 Fullscreen API，全屏期间浏览器栏不会浮现；
-   顶栏按钮与手机端同样生效（移动端进入沉浸式全屏）。 */
+   顶栏按钮与手机端同样生效（移动端进入沉浸式全屏）。
+
+   注意飞牛 iframe 模式下：父页面未声明 allowfullscreen，
+   浏览器 Fullscreen API 会被静默拒绝；此时按钮改为提示用户
+   点 fnOS 窗口标题栏的最大化按钮。独立网页（顶层窗口）模式下
+   则正常调用 Fullscreen API 实现真正的浏览器全屏。 */
 (function(){
   const fsBtn = $("fullscreen-btn");
   const ICON_ENTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
   const ICON_EXIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>';
+  const ICON_WINMAX = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
   function fsEl(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function isIframe(){
+    try { return window.self !== window.top; } catch(e){ return true; }
+  }
+  function toast(text, ms){
+    try {
+      let el = document.getElementById("__fs_toast");
+      if (!el){ el = document.createElement("div"); el.id = "__fs_toast";
+        el.style.cssText = "position:fixed;top:70px;left:50%;transform:translateX(-50%);z-index:99999;" +
+          "background:var(--accent);color:#fff;padding:10px 18px;border-radius:10px;" +
+          "font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.22);pointer-events:none;opacity:0;" +
+          "transition:opacity .25s"; document.body.appendChild(el); }
+      el.textContent = text; el.style.opacity = "1";
+      clearTimeout(el._t); el._t = setTimeout(()=>{ el.style.opacity = "0"; }, ms || 2400);
+    } catch(e){}
+  }
   function fsToggle(){
+    // 飞牛 iframe 模式：Fullscreen API 被父页面拦截，提示用户操作 fnOS 窗口
+    if (isIframe()){
+      toast("当前在飞牛窗口内打开，请点击 fnOS 窗口标题栏的最大化按钮进行窗口级最大化", 3200);
+      return;
+    }
     if (fsEl()){
       if (document.exitFullscreen) { const p = document.exitFullscreen(); if (p && p.catch) p.catch(()=>{}); }
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
@@ -2942,13 +2995,24 @@ function autoHideEmptyPanels(){
       const el = document.documentElement;
       try {
         const p = el.requestFullscreen ? el.requestFullscreen() : (el.webkitRequestFullscreen ? el.webkitRequestFullscreen() : null);
-        if (p && p.catch) p.catch(()=>{});
-      } catch(e){}
+        if (p && p.catch) p.catch(err => toast("浏览器拒绝了全屏请求（可能是权限限制）", 2400));
+      } catch(e){ toast("浏览器不支持全屏 API", 2400); }
     }
   }
   function fsSync(){
+    const iframe = isIframe();
+    if (iframe){
+      if (fsBtn){
+        fsBtn.innerHTML = ICON_WINMAX;
+        fsBtn.title = "飞牛窗口内：请点击 fnOS 窗口标题栏的最大化按钮";
+      }
+      return;
+    }
     const on = !!fsEl();
-    if (fsBtn){ fsBtn.innerHTML = on ? ICON_EXIT : ICON_ENTER; fsBtn.title = on ? "退出全屏（F11 / Esc）" : "进入全屏（F11）"; }
+    if (fsBtn){
+      fsBtn.innerHTML = on ? ICON_EXIT : ICON_ENTER;
+      fsBtn.title = on ? "退出全屏（F11 / Esc）" : "进入全屏（F11）";
+    }
   }
   if (fsBtn){
     fsBtn.addEventListener("click", fsToggle);
@@ -2999,6 +3063,43 @@ function autoHideEmptyPanels(){
   window.addEventListener("resize", detectBottomInset);
   window.addEventListener("orientationchange", detectBottomInset);
   detectBottomInset();
+})();
+
+/* ---------- iframe 内独立网页模式横幅 ----------
+   用户设置 open_mode="url"（独立网页）后，如果仍在飞牛 iframe 内打开
+   （fnOS 入口缓存未刷新 / 服务未重启），则在页面顶部显示横幅，
+   一键跳到浏览器新标签页。只有同时满足两个条件才显示：
+   1) window.self !== window.top —— 当前确实在 iframe 内
+   2) /api/config 返回 open_mode === "url" */
+(function(){
+  try {
+    if (window.self === window.top) return; // 顶层窗口不需要
+  } catch(e){ return; }
+  fetch("/api/config", { cache: "no-store" })
+    .then(r => r.json())
+    .then(cfg => {
+      if ((cfg && cfg.open_mode) !== "url") return;
+      // 构建横幅
+      let bar = document.createElement("div");
+      bar.id = "__openmode_bar";
+      bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99998;" +
+        "background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;" +
+        "font-size:13px;padding:8px 16px;display:flex;align-items:center;justify-content:center;gap:10px;" +
+        "box-shadow:0 2px 12px rgba(59,130,246,.35);cursor:pointer;" +
+        "font-weight:500;transition:transform .25s,opacity .25s";
+      bar.innerHTML = '✨ 已开启独立网页模式，点击在浏览器新标签页打开 ↗';
+      bar.title = "在新标签页独立打开 fnmonitor（完整浏览器能力）";
+      bar.addEventListener("click", function(){
+        try { window.open(location.href, "_blank", "noopener"); } catch(e){}
+        bar.style.transform = "translateY(-100%)";
+        bar.style.opacity = "0";
+      });
+      document.body.appendChild(bar);
+      // 顶部 bar 出现后给 header 加点 padding，避免被遮住
+      const hdr = document.querySelector("header");
+      if (hdr) hdr.style.paddingTop = "38px";
+    })
+    .catch(()=>{});
 })();
 </script>
 </body>
