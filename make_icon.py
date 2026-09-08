@@ -127,6 +127,7 @@ def main():
     if created == 0:
         print("所有图标已存在，本次未重新生成。若需强制重建，先删除 ICON.PNG / ICON_256.PNG。")
     # 兼容旧路径：把规范图标也复制到 ui 根目录（部分 fnOS 版本读取 ui/ICON.PNG）
+    # 注意：目标文件已存在则跳过，绝不覆盖用户自定义图标
     compat = [
         (os.path.join(ROOT, "ICON.PNG"),
          os.path.join(ROOT, "app", "ui", "ICON.PNG")),
@@ -134,8 +135,12 @@ def main():
          os.path.join(ROOT, "app", "ui", "ICON_256.PNG")),
     ]
     for src, dst in compat:
+        if os.path.exists(dst) and os.path.getsize(dst) > 0:
+            print("跳过已存在兼容图标: %s" % os.path.relpath(dst, ROOT))
+            continue
         try:
             shutil.copyfile(src, dst)
+            print("复制兼容图标: %s" % os.path.relpath(dst, ROOT))
         except Exception as e:
             print("兼容图标跳过 %s: %s" % (os.path.relpath(dst, ROOT), e))
 

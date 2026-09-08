@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.1/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.2/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.12.2": {
+          "changelog": "更新应用图标：更换为新的应用图标，桌面 / 应用中心 / 包内图标统一更新；构建脚本 make_icon.py 已改为绝不覆盖已存在的用户自定义图标",
+          "updated_at": "2026-09-08T23:55:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.2/fnmonitor-2.12.2-x86.fpk",
+              "sha256": "c8974f9e9b89f634ef1d6e9e6dd8aaca7dfd2555e4090f148beb5b25614cf49c",
+              "size": 330837
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.12.2/fnmonitor-2.12.2-arm.fpk",
+              "sha256": "8671ff8dc830d6b2a5fbe0c0765c36bc50c6eaba103061c50d696d0ed0cdc02e",
+              "size": 330926
+            }
+          }
+        },
         "2.12.1": {
           "changelog": "修复内置更新后飞牛应用中心版本号不刷新：内置更新此前只覆盖了应用可执行文件目录（target，即 TRIM_APPDEST）下的 manifest，而飞牛应用中心实际从应用基础目录 /var/apps/{appname}/manifest 读取版本号；现已同步把新版 manifest / ICON 复制到应用基础目录，内置更新后应用中心版本号立即刷新为最新版本（升级到本版本的那一次更新仍由旧代码执行，应用中心版本号需待下一次内置更新后刷新）",
           "updated_at": "2026-09-08T23:30:00+08:00",
