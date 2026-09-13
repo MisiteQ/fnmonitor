@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.12.2"
+VERSION = "2.12.3"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -1114,11 +1114,13 @@ def collect_sensors():
         return data
     out, rc = run_cmd(["sensors", "-j"], timeout=10)
     data["available"] = (rc == 0 and bool(out.strip()))
-    if rc != 0 or not out.strip():
-        return data
+    # 注意：sensors 不可用（fnOS 默认未装 lm-sensors）时不能提前返回——
+    # 风扇通道仍需从 /sys/class/hwmon 直读补齐
     try:
-        parsed = json.loads(out)
+        parsed = json.loads(out) if out.strip() else {}
     except Exception:
+        parsed = {}
+    if not isinstance(parsed, dict):
         parsed = {}
     for chip, sub in parsed.items():
         if not isinstance(sub, dict):
@@ -1178,12 +1180,16 @@ def collect_sensors():
                 })
             # 风扇转速
             fan_rpm = None
+            fan_num = ""
             for fk in ("fan1_input", "fan2_input", "fan3_input", "fan4_input", "fan5_input", "fan6_input"):
                 if fk in val and isinstance(val[fk], (int, float)):
                     fan_rpm = val[fk]
+                    fan_num = re.sub(r"\D", "", fk)
                     break
             if fan_rpm is not None:
-                data["fans"].append({"name": chip, "rpm": int(fan_rpm)})
+                # chip/num 为内部去重字段（与 sysfs hwmon 通道对齐），输出前会剔除
+                data["fans"].append({"name": chip, "rpm": int(fan_rpm),
+                                     "chip": chip_prefix.lower(), "num": fan_num})
             # 电压（sensors 中 inN_input 单位为 mV）
             volt = None
             for vk in ("in0_input", "in1_input", "in2_input", "in3_input", "in4_input", "in5_input", "in6_input"):
@@ -1193,10 +1199,52 @@ def collect_sensors():
             if volt is not None:
                 label = key
                 data["volts"].append({"name": label, "value": round(float(volt) / 1000.0, 3)})
+    # ---- 风扇合并：直接读取内核 /sys/class/hwmon 风扇通道作为权威来源 ----
+    # 风扇平均转速原先仅依赖外部命令 sensors -j；fnOS 等精简系统默认未安装
+    # lm-sensors（sensors 命令不存在），即使 BIOS 可见转速、内核已驱动风扇芯片，
+    # 面板仍读不到任何数值。sysfs 直读与 sensors 同源且无外部依赖，两者按
+    # (芯片名, 通道号) 去重合并，sensors 未安装或未覆盖的通道由 sysfs 补齐。
+    merged_fans = []
+    seen_fans = set()
+    for f in data["fans"]:
+        key = (str(f.get("chip", "")).lower(), str(f.get("num", "")))
+        if key in seen_fans:
+            continue
+        seen_fans.add(key)
+        merged_fans.append({"name": f["name"], "rpm": f["rpm"]})
+    # sysfs 枚举异常不应影响温度/电压等其它传感器数据
+    try:
+        sysfs_fans = _hwmon_fans()
+    except Exception:
+        sysfs_fans = []
+    for sf in sysfs_fans:
+        key = (str(sf.get("chip", "")).lower(), str(sf.get("num", "")))
+        if key in seen_fans:
+            continue
+        seen_fans.add(key)
+        merged_fans.append({"name": sf.get("name") or ("风扇 " + str(sf.get("num", ""))),
+                            "rpm": int(sf.get("rpm") or 0)})
+    data["fans"] = merged_fans
     # 温度按 CPU / 芯片组 / 主板 / ACPI 顺序排列
     order = {"cpu": 0, "pch": 1, "board": 2, "acpi": 3, "disk": 4, "gpu": 5}
     data["temps"].sort(key=lambda t: (order.get(t["type"], 9), t["name"]))
     return data
+
+
+def _hwmon_resolve(hpath, dpath, fname):
+    """定位 hwmon 属性文件真实路径：优先 hwmonN/ 顶层，回退 hwmonN/device/。
+
+    新内核属性挂在 /sys/class/hwmon/hwmonN/ 下；部分 Nuvoton/ITE SuperIO 旧驱动
+    把 fanN_input / pwmN 挂在 hwmonN/device/ 下，只扫顶层会完全读不到风扇。
+    """
+    p = os.path.join(hpath, fname)
+    if os.path.exists(p):
+        return p
+    if dpath:
+        p2 = os.path.join(dpath, fname)
+        if os.path.exists(p2):
+            return p2
+    return p
 
 
 def _hwmon_fans():
@@ -1205,26 +1253,44 @@ def _hwmon_fans():
     base = "/sys/class/hwmon"
     if not os.path.isdir(base):
         return fans
+    try:
+        hw_list = sorted(os.listdir(base))
+    except Exception:
+        return fans
     idx = 0
-    for hw in sorted(os.listdir(base)):
+    for hw in hw_list:
         hpath = os.path.join(base, hw)
-        try:
-            entries = os.listdir(hpath)
-        except Exception:
+        if not os.path.isdir(hpath):
             continue
-        hname = read_text(os.path.join(hpath, "name")).strip() or hw
+        dpath = os.path.join(hpath, "device")
+        if not os.path.isdir(dpath):
+            dpath = ""
+        entries = set()
+        for d in (hpath, dpath):
+            if not d:
+                continue
+            try:
+                entries.update(os.listdir(d))
+            except Exception:
+                pass
+        if not entries:
+            continue
+        hname = (read_text(os.path.join(hpath, "name")).strip()
+                 or (read_text(os.path.join(dpath, "name")).strip() if dpath else "")
+                 or hw)
         fan_inputs = sorted([f for f in entries if f.startswith("fan") and f.endswith("_input")],
-                            key=lambda x: int(re.sub(r"\D", "", x)))
+                            key=lambda x: int(re.sub(r"\D", "", x) or 0))
         for f in fan_inputs:
             num = re.sub(r"\D", "", f)
-            rpm = read_int_file(os.path.join(hpath, f))
-            pwm = read_int_file(os.path.join(hpath, "pwm" + num))
-            enable = read_int_file(os.path.join(hpath, "pwm" + num + "_enable"))
+            rpm = read_int_file(_hwmon_resolve(hpath, dpath, f))
+            pwm_path = _hwmon_resolve(hpath, dpath, "pwm" + num)
+            pwm = read_int_file(pwm_path)
+            enable = read_int_file(_hwmon_resolve(hpath, dpath, "pwm" + num + "_enable"))
             fans.append({
                 "idx": idx, "hwmon": hw, "chip": hname, "num": num,
                 "name": hname + " 风扇 " + num, "rpm": rpm,
                 "duty": pwm, "enable": enable,
-                "path": os.path.join(hpath, "pwm" + num),
+                "path": pwm_path,
             })
             idx += 1
     return fans
@@ -1255,7 +1321,11 @@ def fan_enable_auto(idx):
     if idx < 0 or idx >= len(fans):
         return {"ok": False, "error": "无效的风扇序号"}
     f = fans[idx]
-    epath = os.path.join("/sys/class/hwmon", f["hwmon"], "pwm" + f["num"] + "_enable")
+    hpath = os.path.join("/sys/class/hwmon", f["hwmon"])
+    dpath = os.path.join(hpath, "device")
+    if not os.path.isdir(dpath):
+        dpath = ""
+    epath = _hwmon_resolve(hpath, dpath, "pwm" + f["num"] + "_enable")
     try:
         with open(epath, "w") as fh:
             fh.write("2")
