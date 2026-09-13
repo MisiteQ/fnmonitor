@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.12.3"
+VERSION = "2.13.0"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -1109,7 +1109,7 @@ def _classify_temp(name):
 
 def collect_sensors():
     """sensors -j 解析：温度分类 / 风扇转速 / 电压（参照网络主流硬件监控面板）。"""
-    data = {"temps": [], "fans": [], "volts": [], "available": False}
+    data = {"temps": [], "fans": [], "volts": [], "available": False, "fans_source": ""}
     if not is_linux():
         return data
     out, rc = run_cmd(["sensors", "-j"], timeout=10)
@@ -1206,17 +1206,21 @@ def collect_sensors():
     # (芯片名, 通道号) 去重合并，sensors 未安装或未覆盖的通道由 sysfs 补齐。
     merged_fans = []
     seen_fans = set()
+    fan_src = []
     for f in data["fans"]:
         key = (str(f.get("chip", "")).lower(), str(f.get("num", "")))
         if key in seen_fans:
             continue
         seen_fans.add(key)
         merged_fans.append({"name": f["name"], "rpm": f["rpm"]})
+    if merged_fans:
+        fan_src.append("sensors")
     # sysfs 枚举异常不应影响温度/电压等其它传感器数据
     try:
         sysfs_fans = _hwmon_fans()
     except Exception:
         sysfs_fans = []
+    n_hw = len(merged_fans)
     for sf in sysfs_fans:
         key = (str(sf.get("chip", "")).lower(), str(sf.get("num", "")))
         if key in seen_fans:
@@ -1224,7 +1228,30 @@ def collect_sensors():
         seen_fans.add(key)
         merged_fans.append({"name": sf.get("name") or ("风扇 " + str(sf.get("num", ""))),
                             "rpm": int(sf.get("rpm") or 0)})
+    if len(merged_fans) > n_hw:
+        fan_src.append("hwmon")
+    # ---- 标准 hwmon / sensors 均无风扇时，启用只读补充数据源（自动识别）----
+    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI、NEC
+    # 商用机私有 EC 邮箱（NEC 源带 DMI 白名单，其他主机零影响）。全程只读。
+    if not merged_fans:
+        for tag, getter in (("ipmi", _ipmi_fans),
+                            ("ibm-acpi", _ibm_acpi_fans),
+                            ("nec-ec", _nec_ec_fans)):
+            try:
+                extra = getter()
+            except Exception:
+                extra = []
+            if not extra:
+                continue
+            fan_src.append(tag)
+            for ef in extra:
+                key = (str(ef.get("chip", "")).lower(), str(ef.get("num", "")))
+                if key in seen_fans:
+                    continue
+                seen_fans.add(key)
+                merged_fans.append({"name": ef["name"], "rpm": int(ef["rpm"])})
     data["fans"] = merged_fans
+    data["fans_source"] = "+".join(fan_src)
     # 温度按 CPU / 芯片组 / 主板 / ACPI 顺序排列
     order = {"cpu": 0, "pch": 1, "board": 2, "acpi": 3, "disk": 4, "gpu": 5}
     data["temps"].sort(key=lambda t: (order.get(t["type"], 9), t["name"]))
@@ -1293,6 +1320,112 @@ def _hwmon_fans():
                 "path": pwm_path,
             })
             idx += 1
+    return fans
+
+
+def _ipmi_fans():
+    """通过 ipmitool 读取 BMC/IPMI 风扇转速（服务器主板、带 BMC 的准系统）。
+
+    依赖系统已安装 ipmitool（apt install ipmitool）且内核加载了 ipmi 驱动；
+    命令不存在、无 BMC 设备或执行超时时静默返回空列表，不产生额外影响。
+    典型输出：Fan1A | 4320 RPM | ok；百分比 / no reading 行会被跳过。
+    """
+    fans = []
+    if not is_linux() or not shutil.which("ipmitool"):
+        return fans
+    out, rc = run_cmd(["ipmitool", "sdr", "type", "Fan"], timeout=8)
+    if rc != 0 or not out:
+        return fans
+    for line in out.splitlines():
+        cols = line.split("|")
+        if len(cols) < 2:
+            continue
+        m = re.search(r"(\d+(?:\.\d+)?)\s*rpm", cols[1].strip().lower())
+        if not m:
+            continue
+        rpm = int(float(m.group(1)))
+        if rpm <= 0:
+            continue
+        name = cols[0].strip() or "IPMI 风扇"
+        slug = re.sub(r"[^a-z0-9]+", "", name.lower())[:12] or "0"
+        fans.append({"name": name, "rpm": rpm, "chip": "ipmi", "num": slug})
+    return fans
+
+
+def _ibm_acpi_fans():
+    """ThinkPad / ThinkCentre 的 thinkpad_acpi 风扇：/proc/acpi/ibm/fan。
+
+    文件由内核 thinkpad_acpi 驱动提供（speed 行为 RPM），纯文件读取、无外部
+    依赖；文件不存在或无转速读数时返回空列表。
+    """
+    path = "/proc/acpi/ibm/fan"
+    if not is_linux() or not os.path.exists(path):
+        return []
+    m = re.search(r"speed\s*:\s*(\d+)", read_text(path), re.IGNORECASE)
+    if not m:
+        return []
+    rpm = int(m.group(1))
+    if rpm <= 0:
+        return []
+    return [{"name": "ThinkPad 风扇", "rpm": rpm, "chip": "ibm-acpi", "num": "0"}]
+
+
+def _is_nec_machine():
+    """DMI 白名单：仅 NEC 主机（NEC Mate 等商用机）启用 0xA20 私有 EC 探测。"""
+    for fn in ("sys_vendor", "board_vendor", "chassis_vendor", "product_name"):
+        if "NEC" in read_text("/sys/class/dmi/id/" + fn).upper():
+            return True
+    return False
+
+
+def _nec_ec_fans():
+    """读取 NEC 商用机私有 EC 邮箱的风扇转速（与 BIOS 设置界面同源）。
+
+    NEC Mate 等机型使用 0xA20/0xA21/0xA22 三端口 IO 邮箱而非标准 ACPI EC，
+    Linux 无现成驱动（DSDT 中 PNP0C09 EC 为返回 0 的桩）。协议取自本机
+    DSDT 内固件自身使用的 GFAN/HWMG 方法：先选 bank1，寄存器 0x40-0x47
+    为 4 个风扇的 16 位小端转速（RPM）。读序列与固件完全一致，数据端口
+    0xA22 只做 IN 读、绝不写入；非 NEC 机器在 _is_nec_machine() 即返回，
+    不会触碰这组端口。
+    """
+    fans = []
+    if not is_linux() or not os.path.exists("/dev/port") or not _is_nec_machine():
+        return fans
+    p_idx, p_dat, p_val = 0xA20, 0xA21, 0xA22
+    try:
+        fh = open("/dev/port", "r+b", buffering=0)
+    except Exception:
+        return fans
+    try:
+        def ec_read(bank, reg):
+            fh.seek(p_idx)
+            fh.write(b"\xff")       # 邮箱选通复位
+            fh.seek(p_idx)
+            fh.write(bytes((bank,)))
+            fh.seek(p_dat)
+            fh.write(bytes((reg,)))
+            fh.seek(p_val)
+            b = fh.read(1)
+            fh.seek(p_idx)
+            fh.write(b"\xff")
+            return b[0] if b else 0
+
+        n = 0
+        for base in (0x40, 0x42, 0x44, 0x46):
+            try:
+                rpm = (ec_read(1, base) << 8) | ec_read(1, base + 1)
+            except Exception:
+                continue
+            # 合理性校验：0 表示该通道未接风扇；正常转速 300-30000 RPM
+            if 300 <= rpm <= 30000:
+                n += 1
+                fans.append({"name": "风扇 " + str(n), "rpm": rpm,
+                             "chip": "nec-ec", "num": str(base)})
+    finally:
+        try:
+            fh.close()
+        except Exception:
+            pass
     return fans
 
 
@@ -2516,7 +2649,7 @@ class Collector(threading.Thread):
         self._last_raid_ts = 0.0
         self._last_raidcard = {"type": "none", "label": "", "detail": ""}
         self._last_raidcard_ts = 0.0
-        self._last_sensors = {"temps": [], "fans": [], "volts": [], "available": False}
+        self._last_sensors = {"temps": [], "fans": [], "volts": [], "available": False, "fans_source": ""}
         self._last_sensors_ts = 0.0
         self._last_fans = []
         self._last_fans_ts = 0.0
@@ -3828,7 +3961,7 @@ class MonitorApp:
             return {"ok": False, "error": str(e)}
 
     def api_sensors(self):
-        return self.collector.get_snapshot().get("sensors", {"temps": [], "fans": [], "volts": [], "available": False})
+        return self.collector.get_snapshot().get("sensors", {"temps": [], "fans": [], "volts": [], "available": False, "fans_source": ""})
 
     def api_fans(self):
         return {"fans": self.collector.get_snapshot().get("fans", [])}

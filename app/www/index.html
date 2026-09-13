@@ -611,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.12.3</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.13.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -1020,7 +1020,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.12.3 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.13.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1080,7 +1080,12 @@ function drawChart(el, series, opts){
   let allTs = [], allVals = [];
   series.forEach(s => (s.points || []).forEach(p => { allTs.push(p[0]); allVals.push(p[1]); }));
   if (!allTs.length){
-    el.innerHTML = '<div class="empty" style="text-align:center;padding:56px 0">暂无数据 · 后台每 60 秒自动记录一条历史，稍后自动出现<br><span style="font-size:11px">若长时间为空，请检查「设置 → 数据保存目录」是否可写</span></div>';
+    const et = opts.emptyText || "暂无数据 · 后台每 60 秒自动记录一条历史，稍后自动出现";
+    const eh = (opts.emptyHint === undefined)
+      ? "若长时间为空，请检查「设置 → 数据保存目录」是否可写"
+      : opts.emptyHint;
+    el.innerHTML = '<div class="empty" style="text-align:center;padding:56px 0">' + esc(et) +
+      (eh ? "<br><span style=\"font-size:11px\">" + esc(eh) + "</span>" : "") + "</div>";
     return;
   }
   const now = Date.now() / 1000;
@@ -1490,6 +1495,12 @@ function renderSysExtra(o){
       });
       h += "</div></div>";
     }
+  }
+  // 风扇转速：无任何数据源时明确告知（区别于静默空白；首个采集周期未判定前不显示）
+  const rpmFans = sensors.fans || [];
+  if (!rpmFans.length && state.fansDetected === false){
+    h += '<div class="hw-line" style="margin-top:14px"><span>🌀 风扇转速</span><b>未检测到可读取的风扇传感器</b></div>' +
+         '<div class="d-sub" style="margin:4px 2px 0;line-height:1.6">若 BIOS 中可见转速，通常是该机型使用厂商私有 EC、Linux 无对应驱动所致；服务器 / 带 BMC 的主机可在终端执行 <code>sudo apt install ipmitool</code> 后自动识别</div>';
   }
   // 风扇控制
   if (fans.length){
@@ -2181,6 +2192,7 @@ function pushLiveTrend(o){
   if (o.temp && o.temp.cpu != null) temp = o.temp.cpu;
   if (o.temp && o.temp.system != null) tempMb = o.temp.system;
   const fans = (o.sensors && o.sensors.fans) || [];
+  state.fansDetected = fans.length > 0;
   const rpms = fans.filter(f => f.rpm).map(f => f.rpm);
   if (rpms.length) fan = Math.round(rpms.reduce((a, b) => a + b, 0) / rpms.length);
   const push = (arr, v) => { if (v == null) return; arr.push([now, v]); if (arr.length > 2500) arr.shift(); };
@@ -2224,9 +2236,12 @@ function renderTrends(range, spanSec){
     { name: "CPU", color: "#ef4444", points: mergeTrend(h.temp, state.liveTrend.temp) },
     { name: "主板", color: "#f59e0b", points: mergeTrend(h.tempMb, state.liveTrend.tempMb) },
   ], { area: true, spanSeconds: spanSec, unit: "°C" });
+  const fanNoSrc = state.fansDetected === false;
   drawChart($("chart-fan"), [
     { name: "风扇", color: "#38bdf8", points: mergeTrend(h.fan, state.liveTrend.fan) },
-  ], { area: true, spanSeconds: spanSec, unit: "RPM" });
+  ], { area: true, spanSeconds: spanSec, unit: "RPM",
+       emptyText: fanNoSrc ? "未检测到可读取的风扇转速传感器" : undefined,
+       emptyHint: fanNoSrc ? "若 BIOS 中可见转速，通常是厂商私有 EC 且 Linux 无驱动；服务器 / 带 BMC 主机安装 ipmitool 后可自动识别" : undefined });
   drawChart($("chart-diskio"), [
     { name: "读", color: "#34d399", points: mergeTrend(h.diskioR, state.liveTrend.diskioR) },
     { name: "写", color: "#a78bfa", points: mergeTrend(h.diskioW, state.liveTrend.diskioW) },
