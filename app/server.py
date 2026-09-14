@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.13.1"
+VERSION = "2.13.2"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -1231,8 +1231,8 @@ def collect_sensors():
     if len(merged_fans) > n_hw:
         fan_src.append("hwmon")
     # ---- 标准 hwmon / sensors 均无风扇时，启用只读补充数据源（自动识别）----
-    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI、NEC/LENOVO
-    # 商用机的 EC 硬件监控邮箱（厂商白名单+端口闸口，其他主机零影响）。全程只读。
+    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI、EC 硬件
+    # 监控邮箱（0xA20，机型无关：端口存在+PnP 占用+温度应答三重硬件闸口）。只读。
     if not merged_fans:
         for tag, getter in (("ipmi", _ipmi_fans),
                             ("ibm-acpi", _ibm_acpi_fans),
@@ -1370,37 +1370,75 @@ def _ibm_acpi_fans():
     return [{"name": "ThinkPad 风扇", "rpm": rpm, "chip": "ibm-acpi", "num": "0"}]
 
 
-def _ec_hwm_available():
-    """是否启用 0xA20 EC 硬件监控邮箱探测。
+# EC 硬件监控邮箱探测状态："valid" 已确认是同协议邮箱；"invalid" 已确认不是，
+# 本进程生命周期内不再访问该端口区（避免反复对未知硬件发 IO 序列）
+_EC_HWM_STATE = {"checked": False, "valid": False}
 
-    采用「厂商白名单 + 硬件端口双闸口」，保证无关主机零影响：
-    1) DMI 厂商在已知使用该邮箱的商用机系列内（NEC Mate、LENOVO ThinkCentre 等，
-       两者 EC 固件同源，DSDT 均有 HWMB(0xA20)/HWMG/GFAN）；
-    2) /proc/ioports 中确实存在 0a20 端口区，且 /dev/port 可用。
-    无此端口区的同厂笔记本/消费机直接排除，绝不误碰。
+
+def _ec_hwm_available():
+    """是否允许尝试 0xA20 硬件监控邮箱探测（纯硬件闸口，不限品牌）。
+
+    闸口：
+    1) Linux 且 /dev/port 可用；
+    2) /proc/ioports 中确实存在 0a20 端口区——端口不存在时芯片组直接丢弃
+       对该区的 IO 读写（读回 0xFF），物理上没有任何设备会受影响；
+    3) 该区由 PnP 固件设备占用（形如「pnp 00:01」）；若被已加载的内核驱动
+       按名占用，说明驱动在管理该硬件，跳过以免冲突（且这种情况通常 hwmon
+       里已经有风扇，也走不到这里）。
+    真正「是不是同协议监控邮箱」由 _ec_hwm_probe_valid() 的传感器应答判定。
     """
     if not is_linux() or not os.path.exists("/dev/port"):
         return False
-    vendor = ""
-    for fn in ("sys_vendor", "board_vendor", "chassis_vendor"):
-        vendor += " " + read_text("/sys/class/dmi/id/" + fn).upper()
-    if not any(k in vendor for k in ("NEC", "LENOVO")):
-        return False
-    ioports = read_text("/proc/ioports")
-    return bool(re.search(r"(?m)^\s*0a20-0a2[0-9a-f]\s*:", ioports))
+    for line in read_text("/proc/ioports").splitlines():
+        m = re.match(r"\s*(0a20-0a2[0-9a-f])\s*:\s*(.*)$", line, re.I)
+        if not m:
+            continue
+        owner = (m.group(2) or "").strip()
+        if owner == "" or re.match(r"pnp\s+[0-9a-f]{2}:[0-9a-f]{2}$", owner, re.I):
+            return True
+    return False
+
+
+def _ec_hwm_probe_valid(ec_read):
+    """行为验证：向邮箱读 bank1 的 4 个温度寄存器，应答像真实 HWM 芯片才认可。
+
+    协议机（NEC/LENOVO 及同 EC IP 的其他 ODM 机型）此处返回真实摄氏温度
+    （有符号字节，负温二补码）；无关设备/空总线一般恒返回 0x00 或 0xFF。
+    判据：至少 2 个寄存器落在 -20~120℃，且至少 1 个落在 20~95℃（运行中
+    的整机几乎必有一个传感器在该温区）。
+    """
+    plausible = 0
+    warm = False
+    for reg in (0x00, 0x02, 0x04, 0x06):
+        try:
+            v = ec_read(1, reg)
+        except Exception:
+            return False
+        if v >= 128:
+            v -= 256
+        if -20 <= v <= 120:
+            plausible += 1
+        if 20 <= v <= 95:
+            warm = True
+    return warm and plausible >= 2
 
 
 def _ec_hwm_fans():
-    """读取厂商 EC 硬件监控邮箱（0xA20/0xA21/0xA22）的风扇转速。
+    """读取 EC 硬件监控邮箱（0xA20/0xA21/0xA22）的风扇转速，机型无关自动识别。
 
-    NEC Mate、LENOVO ThinkCentre 等商用机使用这组三端口 IO 邮箱而非标准 ACPI EC，
-    Linux 无现成驱动（DSDT 中 PNP0C09 EC 多为返回 0 的桩）。协议取自各机型
-    DSDT 内固件自身使用的 GFAN/HWMG 方法：选 bank1 后，寄存器 0x40-0x47
-    为 4 个风扇的 16 位转速（RPM，高字节在前）。读序列与固件完全一致，
-    数据端口 0xA22 只做 IN 读、绝不写入；机型/端口闸口见 _ec_hwm_available()。
+    部分品牌商用机 / ODM 主机使用这组三端口 IO 邮箱而非标准 ACPI EC，Linux 无
+    现成驱动（DSDT 中 PNP0C09 EC 多为返回 0 的桩）。协议取自固件自身使用的
+    GFAN/HWMG 方法：选 bank1 后，寄存器 0x40-0x47 为 4 个风扇的 16 位转速
+    （RPM，高字节在前）。为保证对无关品牌主机零风险，启用需依次通过：
+    端口区存在 → PnP 固件占用 → 温度应答合法（见上述两个闸口函数），且
+    数据端口 0xA22 全程只做 IN 读、绝不写入；首末各写一次 0xFF 是固件自身
+    的邮箱选通复位，使邮箱回到空闲态。验证失败的主机结果缓存，不再访问。
     """
     fans = []
+    if _EC_HWM_STATE["checked"] and not _EC_HWM_STATE["valid"]:
+        return fans
     if not _ec_hwm_available():
+        _EC_HWM_STATE.update(checked=True, valid=False)
         return fans
     p_idx, p_dat, p_val = 0xA20, 0xA21, 0xA22
     try:
@@ -1420,6 +1458,12 @@ def _ec_hwm_fans():
             fh.seek(p_idx)
             fh.write(b"\xff")
             return b[0] if b else 0
+
+        if not _EC_HWM_STATE["checked"]:
+            valid = _ec_hwm_probe_valid(ec_read)
+            _EC_HWM_STATE.update(checked=True, valid=valid)
+            if not valid:
+                return fans
 
         n = 0
         for base in (0x40, 0x42, 0x44, 0x46):
