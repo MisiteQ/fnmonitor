@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.13.0/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.13.1/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.13.1": {
+          "changelog": "① 联想 ThinkCentre 等商用小主机风扇转速支持：实测 LENOVO ThinkCentre（3172 主板 / i5-10400）与 NEC Mate 的 EC 固件同源，风扇均接在 0xA20/0xA21/0xA22 三端口硬件监控邮箱（DSDT 的 HWMB/HWMG/GFAN 方法，bank1 0x40–0x47，与 BIOS 同源；实测空闲约 1640 RPM、满载约 1940 RPM 实时跟随）；v2.13.0 的该数据源仅对 NEC 放行导致联想机型仍无数值，现改为「NEC / LENOVO 白名单 + 0a20 端口存在」双闸口，无此硬件的同厂笔记本/消费机及其他主机零影响，数据源标识 ec-hwm<br>② 读法、全程只读（0xA22 仅 IN 不写）与 300–30000 RPM 合理性校验不变，NEC 已装主机行为零变化；无数据提示文案同步更新",
+          "updated_at": "2026-09-14T22:30:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.13.1/fnmonitor-2.13.1-x86.fpk",
+              "sha256": "dc948f612299426f9ef0bad61d64a8709996071e3920bec2f1e4a3d6aa962d4d",
+              "size": 341322
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.13.1/fnmonitor-2.13.1-arm.fpk",
+              "sha256": "426df2f551f98f61cb8304953da68c2ff66426baaa586e61eb271ef016e96770",
+              "size": 341330
+            }
+          }
+        },
         "2.13.0": {
           "changelog": "① 「风扇平均转速」新增三类只读数据源，自动识别、即插即用：IPMI/BMC（服务器及带管理控制器的主机，安装 ipmitool 后自动读取）、ThinkPad/ThinkCentre ACPI（thinkpad_acpi 的 /proc/acpi/ibm/fan 零依赖直读）、NEC 商用机私有 EC 邮箱（NEC Mate 等机型风扇接在 0xA20 三端口邮箱、不走标准 ACPI/hwmon，Linux 无驱动；按固件 GFAN 协议只读 bank1 转速寄存器，与 BIOS 显示同源；DMI 白名单保证非 NEC 主机零影响）<br>② 无风扇数据时界面给出明确提示：此前硬件面板与风扇趋势图在「BIOS 可见转速但系统读不到」时静默空白，现明确提示「未检测到可读取的风扇传感器」并说明原因及 BMC 主机安装 ipmitool 的解决方法<br>③ 数据源来源随 /api/sensors 的 fans_source 字段输出；所有新增采集路径异常隔离，不影响温度/电压等其它监控",
           "updated_at": "2026-09-13T23:40:00+08:00",

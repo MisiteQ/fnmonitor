@@ -36,6 +36,7 @@ bash build.sh
 
 | 版本 | 内容 |
 |---|---|
+| v2.13.1 | **联想 ThinkCentre 等商用小主机风扇转速支持**：实测发现 LENOVO ThinkCentre（3172 主板 / i5-10400 等）与 NEC Mate 的 EC 固件同源，均通过 0xA20/0xA21/0xA22 三端口硬件监控邮箱暴露风扇转速（DSDT 的 HWMB/HWMG/GFAN 方法，bank1 寄存器 0x40–0x47，与 BIOS 同源；实机空闲约 1640 RPM、CPU 满载升至约 1940 RPM，实时跟随）；原 v2.13.0 的该数据源仅对 NEC DMI 放行，导致联想机型仍读不到——现改为「NEC / LENOVO 厂商白名单 + /proc/ioports 存在 0a20 端口区」双闸口，无此硬件的同厂笔记本/消费机及其他主机完全不触碰该端口，数据源标识统一为 ec-hwm；读法、只读约束与 300–30000 RPM 合理性校验不变，NEC 已装主机行为零变化 |
 | v2.13.0 | **风扇转速数据源扩展（通用自动识别）**：标准 hwmon/sensors 之外新增三个只读数据源——① **IPMI/BMC**：服务器及带管理控制器主机，安装 `ipmitool` 后自动读取；② **ThinkPad/ThinkCentre ACPI**：`thinkpad_acpi` 的 `/proc/acpi/ibm/fan` 零依赖直读；③ **NEC 商用机私有 EC 邮箱**：NEC Mate 等机型风扇接在 0xA20 三端口邮箱、Linux 无驱动（BIOS 可见转速但 hwmon/ACPI 全为桩），按固件 GFAN 协议只读转速寄存器、与 BIOS 同源，DMI 白名单保证非 NEC 主机零影响；**无任何风扇数据源时界面明确提示**（原因与 ipmitool 解决建议），不再静默空白；数据源来源随 `fans_source` 字段输出，异常隔离不影响其它监控 |
 | v2.12.3 | **修复「风扇平均转速」在部分主机始终无数值**：该模块原先仅解析外部命令 `sensors -j`（lm-sensors 软件包），fnOS 等精简系统默认未安装该命令时，即使 BIOS 中可见风扇转速、内核已驱动风扇芯片，趋势图也读不到任何数据；现改为合并直接读取内核 `/sys/class/hwmon` 风扇通道（与 sensors 同源、零外部依赖），未装 lm-sensors 也能正常显示，两数据源按芯片+通道号自动去重；同时兼容部分 Nuvoton/ITE 芯片把属性挂在 `hwmonN/device/` 下的旧 sysfs 布局，风扇手动调速 / 恢复自动温控路径同步修正；sysfs 读取异常已隔离，不影响温度等其它传感器 |
 | v2.12.2 | **更新应用图标**：更换为新的应用图标，桌面 / 应用中心 / 包内图标统一更新；构建脚本 `make_icon.py` 已改为绝不覆盖已存在的用户自定义图标（已存在的图标文件生成与复制步骤均跳过） |

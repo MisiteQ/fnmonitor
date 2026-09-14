@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.13.0"
+VERSION = "2.13.1"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -1231,12 +1231,12 @@ def collect_sensors():
     if len(merged_fans) > n_hw:
         fan_src.append("hwmon")
     # ---- 标准 hwmon / sensors 均无风扇时，启用只读补充数据源（自动识别）----
-    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI、NEC
-    # 商用机私有 EC 邮箱（NEC 源带 DMI 白名单，其他主机零影响）。全程只读。
+    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI、NEC/LENOVO
+    # 商用机的 EC 硬件监控邮箱（厂商白名单+端口闸口，其他主机零影响）。全程只读。
     if not merged_fans:
         for tag, getter in (("ipmi", _ipmi_fans),
                             ("ibm-acpi", _ibm_acpi_fans),
-                            ("nec-ec", _nec_ec_fans)):
+                            ("ec-hwm", _ec_hwm_fans)):
             try:
                 extra = getter()
             except Exception:
@@ -1370,26 +1370,37 @@ def _ibm_acpi_fans():
     return [{"name": "ThinkPad 风扇", "rpm": rpm, "chip": "ibm-acpi", "num": "0"}]
 
 
-def _is_nec_machine():
-    """DMI 白名单：仅 NEC 主机（NEC Mate 等商用机）启用 0xA20 私有 EC 探测。"""
-    for fn in ("sys_vendor", "board_vendor", "chassis_vendor", "product_name"):
-        if "NEC" in read_text("/sys/class/dmi/id/" + fn).upper():
-            return True
-    return False
+def _ec_hwm_available():
+    """是否启用 0xA20 EC 硬件监控邮箱探测。
+
+    采用「厂商白名单 + 硬件端口双闸口」，保证无关主机零影响：
+    1) DMI 厂商在已知使用该邮箱的商用机系列内（NEC Mate、LENOVO ThinkCentre 等，
+       两者 EC 固件同源，DSDT 均有 HWMB(0xA20)/HWMG/GFAN）；
+    2) /proc/ioports 中确实存在 0a20 端口区，且 /dev/port 可用。
+    无此端口区的同厂笔记本/消费机直接排除，绝不误碰。
+    """
+    if not is_linux() or not os.path.exists("/dev/port"):
+        return False
+    vendor = ""
+    for fn in ("sys_vendor", "board_vendor", "chassis_vendor"):
+        vendor += " " + read_text("/sys/class/dmi/id/" + fn).upper()
+    if not any(k in vendor for k in ("NEC", "LENOVO")):
+        return False
+    ioports = read_text("/proc/ioports")
+    return bool(re.search(r"(?m)^\s*0a20-0a2[0-9a-f]\s*:", ioports))
 
 
-def _nec_ec_fans():
-    """读取 NEC 商用机私有 EC 邮箱的风扇转速（与 BIOS 设置界面同源）。
+def _ec_hwm_fans():
+    """读取厂商 EC 硬件监控邮箱（0xA20/0xA21/0xA22）的风扇转速。
 
-    NEC Mate 等机型使用 0xA20/0xA21/0xA22 三端口 IO 邮箱而非标准 ACPI EC，
-    Linux 无现成驱动（DSDT 中 PNP0C09 EC 为返回 0 的桩）。协议取自本机
-    DSDT 内固件自身使用的 GFAN/HWMG 方法：先选 bank1，寄存器 0x40-0x47
-    为 4 个风扇的 16 位小端转速（RPM）。读序列与固件完全一致，数据端口
-    0xA22 只做 IN 读、绝不写入；非 NEC 机器在 _is_nec_machine() 即返回，
-    不会触碰这组端口。
+    NEC Mate、LENOVO ThinkCentre 等商用机使用这组三端口 IO 邮箱而非标准 ACPI EC，
+    Linux 无现成驱动（DSDT 中 PNP0C09 EC 多为返回 0 的桩）。协议取自各机型
+    DSDT 内固件自身使用的 GFAN/HWMG 方法：选 bank1 后，寄存器 0x40-0x47
+    为 4 个风扇的 16 位转速（RPM，高字节在前）。读序列与固件完全一致，
+    数据端口 0xA22 只做 IN 读、绝不写入；机型/端口闸口见 _ec_hwm_available()。
     """
     fans = []
-    if not is_linux() or not os.path.exists("/dev/port") or not _is_nec_machine():
+    if not _ec_hwm_available():
         return fans
     p_idx, p_dat, p_val = 0xA20, 0xA21, 0xA22
     try:
@@ -1420,7 +1431,7 @@ def _nec_ec_fans():
             if 300 <= rpm <= 30000:
                 n += 1
                 fans.append({"name": "风扇 " + str(n), "rpm": rpm,
-                             "chip": "nec-ec", "num": str(base)})
+                             "chip": "ec-hwm", "num": str(base)})
     finally:
         try:
             fh.close()
