@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.13.2/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.14.0/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.14.0": {
+          "changelog": "① 休眠硬盘保护：监控不再周期性唤醒已停转的机械硬盘——电源状态只通过非唤醒命令检测（smartctl -n standby / hdparm -C，带缓存与工具缺失退避）；休眠盘的容量 / SMART / 温度采集、历史库写入与清理、内置应用目录扫描全部跳过并沿用上一次活跃数据，历史采样在硬盘唤醒后自动补写不丢点；面板轮询触发的历史库 SELECT 同样门控，杜绝「开着监控页面硬盘就无法休眠」；设置页新增「休眠硬盘保护」开关（默认开启，可单独关闭）<br>② 整机功耗口径修正：RAPL 仅测得 CPU 封装功耗（N5095 等 SoC 空闲仅 2-3W，远低于插座实测），现整机功耗 = CPU 封装 + 内存 + 主板/其他固定底座（默认 8W，可在设置中按插座实测补差）+ 活动硬盘功耗（休眠盘不计），实时面板分项展示并标注口径<br>③ 应用端口显示实际监听值：不再只信 manifest 安装默认端口，改为 ss 监听端口 + /proc 进程归属交叉校验（默认 8000 实际 8899 这类情况显示实际端口并灰字标注默认值），新增「运行中/未运行」状态",
+          "updated_at": "2026-09-15T20:00:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.14.0/fnmonitor-2.14.0-x86.fpk",
+              "sha256": "80f9f5083914eb20554ffc90a98e050f1efd2f8b81e32ed2af3fef59c1eac264",
+              "size": 235217
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.14.0/fnmonitor-2.14.0-arm.fpk",
+              "sha256": "72ef06f7663dbfb8f24e4198dd44fddb034c14724630149a9f284a08fd57d0ec",
+              "size": 235210
+            }
+          }
+        },
         "2.13.2": {
           "changelog": "① EC 硬件监控邮箱改为机型无关自动识别（通用补丁）：彻底移除 NEC/LENOVO 厂商白名单，任意品牌机器只要硬件上存在 0xA20 监控邮箱即可读出风扇；为保证对无关主机零风险，启用改为三道纯硬件闸口——/proc/ioports 存在 0a20 端口区且由 PnP 固件设备占用（端口不存在时芯片组直接丢弃 IO；被内核驱动按名占用则跳过避免冲突）、首次先读 bank1 温度寄存器做应答合法性验证（须回真实温区数据，空总线恒回 0xFF/0x00 一律拒绝）、风扇 300–30000 RPM 合理性校验；验证失败结果进程内缓存不再访问该端口，数据口全程只读，首末写 0xFF 为固件自身复位序列<br>② 已在联想机去掉白名单后实测读数不变（约 1640 RPM），NEC 及其他品牌同协议 ODM EC 即插即用；无数据提示文案同步更新",
           "updated_at": "2026-09-14T23:30:00+08:00",

@@ -611,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.13.2</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.14.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -905,6 +905,21 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" onclick="savePowerConfig()">保存</button>
         <button class="mod-hide" data-mod="m-set-nicw" title="隐藏此模块">✕</button>
       </div>
+      <div class="set-row" data-mod="m-set-basew">
+        <div class="s-label"><b>主板 / 其他固定功耗（瓦）</b><div class="s-sub">RAPL 只测得 CPU 封装功耗，不含主板、内存控制器、USB/外设等。整机估算时叠加此固定底座，默认 8W，可按插座实测补差</div></div>
+        <input id="set-basew" class="inp" type="number" min="0" max="100" step="0.5" placeholder="8" style="max-width:100px">
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-basew" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-standby">
+        <div class="s-label"><b>休眠硬盘保护</b><div class="s-sub">开启后不主动唤醒已停转（STANDBY）的机械硬盘：跳过容量 / SMART / 温度等访问，历史库延迟到盘唤醒后补写。默认开启；关闭即恢复为每周期完整采集</div></div>
+        <select id="set-standby-protect" class="inp" style="max-width:120px">
+          <option value="1">保护（不唤醒）</option>
+          <option value="0">关闭（完整采集）</option>
+        </select>
+        <button class="op-btn" onclick="savePowerConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-standby" title="隐藏此模块">✕</button>
+      </div>
       <div class="set-row" data-mod="m-set-bridge">
         <div class="s-label"><b>排除 Docker 网桥流量</b><div class="s-sub">开启后不计入 docker/veth/br-/virbr/tun/tap 等虚拟网卡的累计流量</div></div>
         <select id="set-bridge" class="inp" style="max-width:120px">
@@ -1020,7 +1035,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.13.2 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.14.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1299,7 +1314,7 @@ function renderDetail(o){
           if (ioMap[base]) io = ioMap[base];
         }
       }
-      h += "<tr><td class='mono'>" + esc(d.mount) + "</td>" +
+      h += "<tr><td class='mono'>" + esc(d.mount) + (d.standby ? ' <span class="tag" title="硬盘休眠中：容量为休眠前缓存读数，未唤醒该盘">💤</span>' : "") + "</td>" +
            "<td class='mono'>" + esc(d.device) + "</td>" +
            "<td class='mono'>" + (io ? fmtBytes(io.read_rate) + "/s" : "--") + "</td>" +
            "<td class='mono'>" + (io ? fmtBytes(io.write_rate) + "/s" : "--") + "</td>" +
@@ -1331,11 +1346,18 @@ function renderDisksDetail(o){
   list.forEach(d => {
     const pct = (d.percent != null && isFinite(d.percent)) ? d.percent : null;
     const health = (d.health || "").toLowerCase();
-    const healthBadge = d.health
-      ? (health.indexOf("passed") >= 0 || health.indexOf("ok") >= 0 || health === "ok"
-        ? '<span class="tag on">正常</span>'
-        : '<span class="tag off">' + esc(d.health) + '</span>')
-      : "--";
+    const sleeping = !!(d.standby || d.state === "standby");
+    const healthBadge = sleeping
+      ? '<span class="tag" title="硬盘已停转：为避免唤醒，本次跳过 SMART 检测">💤 休眠中</span>'
+      : (d.health
+        ? (health.indexOf("passed") >= 0 || health.indexOf("ok") >= 0 || health === "ok"
+          ? '<span class="tag on">正常</span>'
+          : '<span class="tag off">' + esc(d.health) + '</span>')
+        : "--");
+    const tempCell = sleeping
+      ? (d.temp != null ? '<span title="休眠前最后一次读数">' + d.temp.toFixed(2) + "°C 💤</span>" : "💤 休眠")
+      : (d.temp != null ? d.temp.toFixed(2) + "°C" : "--");
+    const nameCell = "<span class='mono'>" + esc(d.name) + "</span>" + (sleeping ? ' <span class="tag" title="STANDBY，监控不会主动唤醒该盘">休眠</span>' : "");
     // SATA 告警计数（硬盘健康指标）
     const attrs = [
       ["reallocated_sectors", "重映射"],
@@ -1349,14 +1371,14 @@ function renderDisksDetail(o){
       : (d.udma_crc !== undefined || d.reallocated_sectors !== undefined ? '<span class="tag on">无</span>' : "--");
     const io = ioM[d.name] || null;
     h += "<tr>" +
-      "<td class='mono'>" + esc(d.name) + "</td>" +
+      "<td>" + nameCell + "</td>" +
       "<td>" + esc((d.vendor ? d.vendor + " " : "") + d.model) + (d.serial ? '<div class="mono">' + esc(d.serial) + "</div>" : "") + "</td>" +
       "<td>" + fmtBytes(d.size || 0) + "</td>" +
       "<td>" + fmtBytes(d.used || 0) + "</td>" +
       "<td>" + (pct !== null
         ? '<span class="mini-bar"><i style="width:' + Math.min(100, pct) + '%;background:' + pctColor(pct) + '"></i></span>' + pct.toFixed(2) + "%"
         : "--") + "</td>" +
-      "<td>" + (d.temp != null ? d.temp.toFixed(2) + "°C" : "--") + "</td>" +
+      "<td>" + tempCell + "</td>" +
       "<td>" + healthBadge + "</td>" +
       "<td class='mono'>" + (io ? fmtBytes(io.read_rate) + "/s" : "--") + "</td>" +
       "<td class='mono'>" + (io ? fmtBytes(io.write_rate) + "/s" : "--") + "</td>" +
@@ -1398,9 +1420,19 @@ function renderPorts(p){
   let h = '<div class="port-box">';
   h += '<div class="port-sec" data-mod="m-ports-apps"><div class="ps-head">📦 已安装应用端口 <span class="cnt">' + apps.length + " 个</span><button class='mod-hide' data-mod='m-ports-apps' title='隐藏此模块'>✕</button></div>";
   if (apps.length){
-    h += '<div style="overflow-x:auto"><table><tr><th>应用</th><th>应用 ID</th><th>端口</th></tr>';
+    h += '<div style="overflow-x:auto"><table><tr><th>应用</th><th>应用 ID</th><th>实际端口</th><th>状态</th></tr>';
     apps.forEach(a => {
-      h += "<tr><td>" + esc(a.name) + "</td><td class='mono'>" + esc(a.appid) + "</td><td class='mono'>" + esc(a.port) + "</td></tr>";
+      let portCell;
+      if (a.port_source === "runtime" && a.default_port){
+        portCell = "<b class='mono'>" + esc(a.port) + "</b>" +
+          '<div style="opacity:.62;font-size:11px" title="manifest 中的安装默认端口，当前未监听">默认 ' + esc(a.default_port) + "</div>";
+      } else {
+        portCell = "<span class='mono'>" + esc(a.port) + "</span>";
+      }
+      const stateCell = a.running
+        ? '<span class="tag on" title="已通过进程监听端口交叉校验">运行中</span>'
+        : '<span class="tag" title="未发现该应用进程的监听端口（应用可能未启动）">未运行</span>';
+      h += "<tr><td>" + esc(a.name) + "</td><td class='mono'>" + esc(a.appid) + "</td><td>" + portCell + "</td><td>" + stateCell + "</td></tr>";
     });
     h += "</table></div>";
   } else h += '<div class="empty">未扫描到应用中心端口</div>';
@@ -1563,18 +1595,24 @@ function renderPowerGpu(power, gpuData){
   const ok = power && power.ok;
   const gpus = (gpuData && gpuData.gpu) || [];
   let h = '<div class="pg-grid">';
-  // 功耗卡
-  h += '<div class="pg-card" data-mod="m-power"><h4>⚡ CPU 实时功耗 (RAPL)<button class="mod-hide" data-mod="m-power" title="隐藏此模块">✕</button></h4>';
+  // 功耗卡（整机口径：RAPL 实测仅含 CPU 封装，面板在此基础上叠加内存 / 主板底座 / 活动硬盘）
+  h += '<div class="pg-card" data-mod="m-power"><h4>⚡ 整机实时功耗<button class="mod-hide" data-mod="m-power" title="隐藏此模块">✕</button></h4>';
   if (ok){
     const total = power.total || 0;
-    const pc = total > 40 ? "hot" : (total > 20 ? "warn" : "");
+    const pc = total > 50 ? "hot" : (total > 30 ? "warn" : "");
+    const srcText = power.source === "rapl" ? "RAPL 实测 + 底座/硬盘估算"
+      : power.source === "estimated" ? "模型估算（无 RAPL）" : "未知";
+    const w = v => (v != null ? Number(v).toFixed(2) + " W" : "--");
     h += '<div class="pg-big ' + pc + '">' + total.toFixed(2) + '<small> W</small></div>' +
-      '<div class="pg-line"><span>封装 Package</span><b>' + (power.package != null ? power.package.toFixed(2) + " W" : "--") + "</b></div>" +
-      '<div class="pg-line"><span>核心 Core</span><b>' + (power.core != null ? power.core.toFixed(2) + " W" : "--") + "</b></div>" +
-      '<div class="pg-line"><span>非核心 Uncore</span><b>' + (power.uncore != null ? power.uncore.toFixed(2) + " W" : "--") + "</b></div>" +
-      '<div class="pg-line"><span>内存 DRAM</span><b>' + (power.dram != null ? power.dram.toFixed(2) + " W" : "--") + "</b></div>";
+      '<div class="pg-line"><span>口径</span><b style="font-size:12px">' + srcText + "</b></div>" +
+      '<div class="pg-line"><span>CPU 封装 Package</span><b>' + w(power.package) + "</b></div>" +
+      '<div class="pg-line"><span>　核心 Core</span><b>' + w(power.core) + "</b></div>" +
+      '<div class="pg-line"><span>　非核心 Uncore</span><b>' + w(power.uncore) + "</b></div>" +
+      '<div class="pg-line"><span>内存 DRAM</span><b>' + w(power.dram) + "</b></div>" +
+      '<div class="pg-line"><span>主板 / 其他底座</span><b>' + w(power.base) + "</b></div>" +
+      '<div class="pg-line"><span>活动硬盘' + (power.disks_active != null ? "（" + power.disks_active + " 块）" : "") + '</span><b>' + w(power.disks_w) + "</b></div>";
   } else {
-    h += '<div class="pg-line"><span>功耗</span><b>不可用（需 Intel CPU / 内核支持 RAPL）</b></div>';
+    h += '<div class="pg-line"><span>功耗</span><b>不可用</b></div>';
   }
   h += "</div>";
   // 显卡卡
@@ -1671,18 +1709,34 @@ function renderPowerStats(d){
   h += trafficCard("今日电费", "¥" + (c.today_yuan || 0).toFixed(2), "");
   h += trafficCard("本月耗电", (e.month_kwh || 0).toFixed(3) + " kWh", "");
   h += trafficCard("本月电费", "¥" + (c.month_yuan || 0).toFixed(2), "");
-  h += trafficCard("当前功耗", (r.power_w || 0).toFixed(1) + " W", "");
+  h += trafficCard("当前功耗（整机）", (r.power_w || 0).toFixed(1) + " W",
+    r.source === "rapl" ? "实测+估算" : r.source === "estimated" ? "模型" : "");
   h += '</div>';
+  // 口径说明：RAPL package 只是 CPU 封装功耗，整机值已叠加主板底座与活动硬盘
+  const parts = [];
+  if (r.source === "rapl"){
+    if (r.base != null) parts.push("主板等底座 " + Number(r.base).toFixed(1) + "W");
+    if (r.disks_w != null) parts.push("活动硬盘 " + Number(r.disks_w).toFixed(1) +
+      "W（" + (r.disks_active != null ? r.disks_active : "?") + " 块）");
+    if (r.dram) parts.push("内存 " + Number(r.dram).toFixed(1) + "W");
+  }
+  if (parts.length){
+    h += '<div class="empty" style="padding:6px 10px;text-align:left;font-size:12px">整机口径 = CPU 封装（RAPL 实测）+ ' + parts.join(" + ") + '；可在设置中调整底座 / 单盘功耗，按插座实测补差</div>';
+  }
   h += '<div class="chart-grid adaptive">';
   h += '<div class="chart-box" data-mod="m-ch-power-kwh"><div class="c-title"><span>累计 kWh 趋势</span><button class="mod-hide" data-mod="m-ch-power-kwh" title="隐藏此模块">✕</button></div><div id="chart-power-kwh"></div></div>';
   // 硬盘休眠状态
   const disks = d.disks || [];
+  const protectTag = d.standby_protect === false
+    ? ' <span class="tag off" title="休眠保护已关闭，监控会正常访问硬盘">保护已关闭</span>'
+    : ' <span class="tag on" title="监控不会主动唤醒休眠硬盘">保护中</span>';
+  const stateText = s => s === "standby" ? "💤 休眠" : s === "active/idle" ? "活动" : "未知";
   if (disks.length){
-    h += '<div class="chart-box" data-mod="m-disk-standby"><div class="c-title"><span>硬盘休眠状态</span><button class="mod-hide" data-mod="m-disk-standby" title="隐藏此模块">✕</button></div><div style="overflow-x:auto">';
+    h += '<div class="chart-box" data-mod="m-disk-standby"><div class="c-title"><span>硬盘休眠状态</span>' + protectTag + '<button class="mod-hide" data-mod="m-disk-standby" title="隐藏此模块">✕</button></div><div style="overflow-x:auto">';
     h += '<table><tr><th>硬盘</th><th>状态</th></tr>';
     disks.forEach(dk => {
       const stateColor = dk.state === "standby" ? '#94a3b8' : dk.state === "active/idle" ? '#22c55e' : '#eab308';
-      h += "<tr><td><b>" + esc(dk.name) + "</b></td><td><span style='color:" + stateColor + "'>" + esc(dk.state) + "</span></td></tr>";
+      h += "<tr><td><b>" + esc(dk.name) + "</b></td><td><span style='color:" + stateColor + "'>" + stateText(dk.state) + "</span></td></tr>";
     });
     h += '</table></div></div>';
   } else {
@@ -1895,15 +1949,18 @@ async function savePowerConfig(){
   const rate = parseFloat($("set-rate") ? $("set-rate").value : "");
   const diskw = parseFloat($("set-diskw") ? $("set-diskw").value : "");
   const nicw = parseFloat($("set-nicw") ? $("set-nicw").value : "");
+  const basew = parseFloat($("set-basew") ? $("set-basew").value : "");
   if (!isNaN(tdp)) data.power_tdp_w = tdp;
   if (!isNaN(rate)) data.power_rate_yuan = rate;
   if (!isNaN(diskw)) data.power_disk_typical_w = diskw;
   if (!isNaN(nicw)) data.power_nic_fixed_w = nicw;
+  if (!isNaN(basew)) data.power_base_w = basew;
+  if ($("set-standby-protect")) data.disk_standby_protect = $("set-standby-protect").value;
   const msg = $("settings-msg");
   try {
     const r = await fetch("/api/config/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) });
     const j = await r.json();
-    if (msg){ msg.textContent = j.ok ? "功耗参数已保存" : "保存失败: " + (j.error || ""); setTimeout(() => msg.textContent = "", 5000); }
+    if (msg){ msg.textContent = j.ok ? "功耗 / 休眠保护设置已保存" : "保存失败: " + (j.error || ""); setTimeout(() => msg.textContent = "", 5000); }
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
 /* 保存流量配置 */
@@ -2072,6 +2129,8 @@ async function loadConfigForm(){
     if (c.power_rate_yuan != null && $("set-rate")) $("set-rate").value = c.power_rate_yuan;
     if (c.power_disk_typical_w != null && $("set-diskw")) $("set-diskw").value = c.power_disk_typical_w;
     if (c.power_nic_fixed_w != null && $("set-nicw")) $("set-nicw").value = c.power_nic_fixed_w;
+    if (c.power_base_w != null && $("set-basew")) $("set-basew").value = c.power_base_w;
+    if (c.disk_standby_protect != null && $("set-standby-protect")) $("set-standby-protect").value = String(c.disk_standby_protect);
     if (c.traffic_exclude_bridge != null && $("set-bridge")) $("set-bridge").value = c.traffic_exclude_bridge;
     if ((c.open_mode === "url" || c.open_mode === "iframe") && $("set-open-mode")) $("set-open-mode").value = c.open_mode;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
@@ -2519,7 +2578,7 @@ const MOD_LABELS = {
   "m-hw-cpu": "处理器", "m-hw-board": "主板/BIOS", "m-hw-gpu": "显卡信息", "m-hw-net": "网卡",
   "m-memslots": "内存插槽", "m-hw-raid": "阵列设定", "m-sens-temp": "温度传感器", "m-sens-volt": "电压", "m-fans": "风扇控制",
   "m-wall-hero": "温度概览", "m-wall-body": "温度测点墙",
-  "m-power": "CPU 实时功耗", "m-gpu": "显卡实时状态",
+  "m-power": "整机实时功耗", "m-gpu": "显卡实时状态",
   "m-ch-main": "CPU/内存趋势", "m-ch-disk": "存储趋势", "m-ch-net": "网络趋势",
   "m-ch-power": "功耗趋势", "m-ch-temp": "温度趋势", "m-ch-fan": "风扇趋势", "m-ch-diskio": "磁盘 IO 趋势",
   "m-ch-traffic": "累计流量趋势", "m-ctr-top": "容器流量 TOP",
@@ -2534,6 +2593,7 @@ const MOD_LABELS = {
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
   "m-set-tdp": "设置·CPU TDP", "m-set-rate": "设置·电价", "m-set-diskw": "设置·单盘功耗",
   "m-set-nicw": "设置·网卡功耗", "m-set-bridge": "设置·排除网桥流量", "m-set-openmode": "设置·桌面打开方式",
+  "m-set-basew": "设置·主板固定功耗", "m-set-standby": "设置·休眠硬盘保护",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
 /* 应用模块隐藏状态：只接管曾被本功能隐藏过的元素，避免与天气卡等数据驱动的 display 冲突 */

@@ -34,14 +34,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.13.2"
+VERSION = "2.14.0"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "open_mode": "url"}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url"}
 # 虚拟网卡前缀（Docker 网桥 / 容器 / VPN 等）：流量与功耗估算统一口径
 VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
+
+# 运行期开关（采集线程按 config 刷新）：standby_protect=休眠硬盘保护，
+# 开启后容量 statvfs / SMART / 温度 / 历史库写入 / 应用目录扫描等磁盘访问
+# 对已 STANDBY 的硬盘一律跳过或走缓存，避免周期性轮询把机械硬盘唤醒
+RUNTIME = {"standby_protect": True}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -336,6 +341,7 @@ def collect_disks():
     disks = []
     seen = {}   # key -> 条目
     order = []  # 保持首次出现顺序
+    states = disk_power_states()
     for m in read_mounts():
         mp, dev, fs = m["mount"], m["device"], m["fs"]
         if fs in _PSEUDO_FS:
@@ -347,15 +353,25 @@ def collect_disks():
             continue
         if "ro" in (m.get("opts") or []):
             continue
-        u = disk_usage(mp)
-        if not u["total"] or u["total"] < _MIN_FS_BYTES:
-            continue
+        # 休眠保护：statvfs 会向已 STANDBY 的硬盘下发文件系统查询而将其唤醒。
+        # 盘休眠时沿用上次活跃时缓存的容量数据，并在条目标记 standby；
+        # 服务刚启动且盘就处于休眠（尚无缓存）时跳过该挂载点，绝不主动唤醒。
+        sleeping = mount_on_standby(mp, states)
+        if sleeping:
+            u = _DISK_USAGE_CACHE.get(mp)
+            if not u or not u.get("total"):
+                continue
+        else:
+            u = disk_usage(mp)
+            if not u["total"] or u["total"] < _MIN_FS_BYTES:
+                continue
+            _DISK_USAGE_CACHE[mp] = dict(u)
         # fsid 为 0（个别文件系统不提供）时回退为设备真实路径，兼容 /dev/mapper 别名
         key = ("fsid", u["fsid"]) if u["fsid"] else ("dev", os.path.realpath(dev) or dev)
         entry = {
             "device": dev, "mount": mp, "fs": fs,
             "total": u["total"], "used": u["used"], "free": u["free"],
-            "percent": u["percent"],
+            "percent": u["percent"], "standby": bool(sleeping),
         }
         if key in seen:
             # 同一文件系统多挂载点：保留路径最浅（顶层）的一个
@@ -370,9 +386,17 @@ def collect_disks():
     return disks
 
 
-def collect_disks_detail():
-    """按物理硬盘返回详情：名称/品牌/型号/容量/已用/使用率/温度/挂载点。"""
+def collect_disks_detail(prev=None):
+    """按物理硬盘返回详情：名称/品牌/型号/容量/已用/使用率/温度/挂载点/休眠状态。
+
+    prev：上一轮详情缓存。已 STANDBY 的硬盘不再下发 smartctl（lsblk 本身只读
+    sysfs 不会唤醒硬盘），健康/转速/通电时长/温度沿用上一次活跃时的值，避免
+    详情采集每 60 秒把休眠硬盘唤醒一次。"""
     result = []
+    prev_by = {}
+    for old in (prev or []):
+        if old.get("name"):
+            prev_by[old["name"]] = old
 
     def _walk_mounts(blk, acc):
         """递归收集该设备树上的所有挂载点（兼容分区/LVM/device-mapper 多层结构）。"""
@@ -395,10 +419,11 @@ def collect_disks_detail():
     mounts = {}
     for d in collect_disks():
         mounts[d["mount"]] = d
-    # 温度
+    # 温度（read_temps 内部同样跳过休眠盘并返回缓存温度）
     temp_by = {}
     for t in read_temps().get("disks", []):
         temp_by[t["name"]] = t["temp"]
+    states = disk_power_states()
     for blk in data.get("blockdevices", []) or []:
         name = blk.get("name") or ""
         btype = (blk.get("type") or "").lower()
@@ -419,24 +444,41 @@ def collect_disks_detail():
                 used += m["used"]
                 total += m["total"]
         percent = round(used / total * 100, 1) if total else 0.0
+        state = states.get(name, "unknown")
+        old = prev_by.get(name) or {}
         entry = {
             "name": name,
-            "model": model or "未知型号",
-            "vendor": vendor,
-            "size": size,
+            "model": model or old.get("model") or "未知型号",
+            "vendor": vendor or old.get("vendor", ""),
+            "size": size or old.get("size", 0),
             "used": used,
             "total": total,
             "percent": percent,
-            "temp": temp_by.get(name),
+            "temp": temp_by.get(name) if temp_by.get(name) is not None else old.get("temp"),
             "mounts": mount_paths,
+            "state": state,
+            "standby": state == "standby",
+            "health": old.get("health", ""),
+            "rpm": old.get("rpm", ""),
+            "power_on_hours": old.get("power_on_hours", ""),
+            "serial": old.get("serial", ""),
         }
-        # SMART 健康 / 转速 / 通电时长（最多对前 8 块盘读取，避免拖慢循环）
-        if len(result) < 8:
+        # SMART 健康 / 转速 / 通电时长（最多对前 8 块盘读取；休眠盘跳过，
+        # smartctl -n standby 虽不唤醒盘，但此时直接复用上一次活跃值即可）
+        if state != "standby" and len(result) < 8:
             sd = smart_detail(name)
-            entry["health"] = sd.get("health", "未知")
-            entry["rpm"] = sd.get("rpm", "")
-            entry["power_on_hours"] = sd.get("power_on_hours", "")
-            entry["serial"] = sd.get("serial", "")
+            if sd.get("standby"):
+                entry["state"] = "standby"
+                entry["standby"] = True
+            else:
+                entry["health"] = sd.get("health", entry["health"])
+                entry["rpm"] = sd.get("rpm", entry["rpm"])
+                entry["power_on_hours"] = sd.get("power_on_hours", entry["power_on_hours"])
+                entry["serial"] = sd.get("serial", entry["serial"])
+                if sd.get("temp_c") is not None and entry["temp"] is None:
+                    entry["temp"] = sd["temp_c"]
+        if state == "standby" and not entry["health"]:
+            entry["health"] = "休眠"
         result.append(entry)
     return result
 
@@ -463,32 +505,24 @@ def _read_proc_tcp_listeners():
     return result
 
 
-def collect_ports(docker_result=None):
-    """端口占用：飞牛应用中心应用端口 + Docker 容器端口映射 + 系统监听端口。"""
-    result = {"apps": [], "docker": [], "listeners": [], "ts": time.time()}
-    # 1) 飞牛应用中心已安装应用的 service_port（多候选目录，见 _app_center_ports）
-    for appid, info in _app_center_ports().items():
-        port = str(info.get("port") or "").strip()
-        if port:
-            result["apps"].append({"name": info.get("name") or appid,
-                                   "appid": appid, "port": port})
-    # 2) Docker 容器端口映射（host / bridge 自动探测结果已含）
-    if docker_result and docker_result.get("available"):
-        for c in docker_result.get("containers", []):
-            ports = c.get("ports") or []
-            if isinstance(ports, str):  # 逗号分隔字符串 → 数组
-                ports = [p.strip() for p in ports.split(",") if p.strip()]
-            if ports:
-                result["docker"].append({
-                    "name": c.get("name"), "image": c.get("image"),
-                    "state": c.get("state"), "ports": ports,
-                })
-    # 3) 系统监听端口
-    out, rc = run_cmd(["ss", "-tlnp"], timeout=10)
+_SS_LISTEN_CACHE = {"ts": 0.0, "rows": None}
+_SS_LISTEN_TTL = 15.0
+
+
+def _ss_listeners():
+    """ss -tlnp 解析全部 TCP 监听端口（15 秒缓存，多模块共享，避免重复 spawn）。
+
+    返回 [{addr, port, process, pid}]；ss 不可用时回退 /proc/net/tcp（无进程信息）。"""
+    now = time.time()
+    cached = _SS_LISTEN_CACHE["rows"]
+    if cached is not None and now - _SS_LISTEN_CACHE["ts"] <= _SS_LISTEN_TTL:
+        return [dict(x) for x in cached]
+    rows = []
+    out, rc = run_cmd(["ss", "-tlnpH"], timeout=10)
     if rc == 0 and out.strip():
-        for line in out.splitlines()[1:]:
+        for line in out.splitlines():
             parts = line.split()
-            if len(parts) < 5 or parts[0] != "LISTEN":
+            if not parts or parts[0] != "LISTEN" or len(parts) < 5:
                 continue
             addr = parts[3]
             proc = parts[5] if len(parts) >= 6 else ""
@@ -504,19 +538,52 @@ def collect_ports(docker_result=None):
             m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', proc)
             if m:
                 pname, pid = m.group(1), m.group(2)
-            result["listeners"].append({"addr": host, "port": port, "proto": "tcp", "process": pname, "pid": pid})
+            rows.append({"addr": host, "port": port, "process": pname, "pid": pid})
         # 去重排序
         seen = set()
         dedup = []
-        for l in sorted(result["listeners"], key=lambda x: (x["port"], x["addr"])):
+        for l in sorted(rows, key=lambda x: (x["port"], x["addr"])):
             k = (l["addr"], l["port"], l["process"], l["pid"])
             if k in seen:
                 continue
             seen.add(k)
             dedup.append(l)
-        result["listeners"] = dedup
+        rows = dedup
     else:
-        result["listeners"] = _read_proc_tcp_listeners()
+        rows = _read_proc_tcp_listeners()
+    _SS_LISTEN_CACHE["rows"] = rows
+    _SS_LISTEN_CACHE["ts"] = now
+    return [dict(x) for x in rows]
+
+
+def collect_ports(docker_result=None):
+    """端口占用：飞牛应用中心应用端口 + Docker 容器端口映射 + 系统监听端口。"""
+    result = {"apps": [], "docker": [], "listeners": [], "ts": time.time()}
+    # 1) 飞牛应用中心已安装应用：manifest 配置端口为默认值，实际运行端口以
+    #    ss 进程监听交叉校验为准（部分应用安装后被用户改过端口，如默认 8000 实际 8899）
+    for appid, info in _app_center_ports().items():
+        port = str(info.get("port") or "").strip()
+        if port:
+            item = {"name": info.get("name") or appid,
+                    "appid": appid, "port": port,
+                    "running": bool(info.get("runtime_ports"))}
+            if info.get("default_port") and info.get("default_port") != port:
+                item["default_port"] = info["default_port"]
+                item["port_source"] = "runtime"
+            result["apps"].append(item)
+    # 2) Docker 容器端口映射（host / bridge 自动探测结果已含）
+    if docker_result and docker_result.get("available"):
+        for c in docker_result.get("containers", []):
+            ports = c.get("ports") or []
+            if isinstance(ports, str):  # 逗号分隔字符串 → 数组
+                ports = [p.strip() for p in ports.split(",") if p.strip()]
+            if ports:
+                result["docker"].append({
+                    "name": c.get("name"), "image": c.get("image"),
+                    "state": c.get("state"), "ports": ports,
+                })
+    # 3) 系统监听端口
+    result["listeners"] = _ss_listeners()
     return result
 
 
@@ -760,29 +827,167 @@ def estimate_power(cpu_percent, disks_active, nics, tdp_w, disk_w, nic_w):
         return round(tdp_w * 0.3, 2)
 
 
-# ===================== 硬盘休眠状态检测 =====================
-def read_disk_standby_states():
-    """读取各物理硬盘的休眠状态（hdparm -C）。返回 [{name, state}]。
-    state: active/idle | standby | unknown"""
-    out_list = []
+# ===================== 硬盘休眠状态检测（不唤醒 STANDBY 硬盘） =====================
+# 电源状态全局短缓存：同一次采集周期内多处复用，避免对每块盘反复 spawn smartctl
+_DISK_STATE_LOCK = threading.Lock()
+_DISK_STATE_CACHE = {"ts": 0.0, "states": {}}
+_DISK_STATE_TTL = 8.0
+_DISK_PROBE_UNAVAILABLE_TS = 0.0   # smartctl / hdparm 均不可用时长时间退避，不空跑进程
+# 挂载点 -> 物理盘名集合（lsblk 解析，含 LVM/dm 多层），60 秒缓存
+_MOUNT_DISK_LOCK = threading.Lock()
+_MOUNT_DISK_CACHE = {"ts": 0.0, "mounts": {}}
+# 挂载点 -> 上次活跃时的 statvfs 结果（盘休眠期间继续展示最后一次容量，不唤醒硬盘）
+_DISK_USAGE_CACHE = {}
+# 盘名 -> 上次活跃时读到的温度（休眠期间展示缓存温度）
+_DISK_TEMP_CACHE = {}
+
+# 整盘设备名（排除分区 sda1 / nvme0n1p1 与 loop/dm/md 等虚拟设备）
+_WHOLE_DISK_RE = re.compile(r"^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+|xvd[a-z]+)$")
+
+
+def _whole_disks():
+    names = []
     try:
         for name in os.listdir("/sys/block"):
-            # dm= device-mapper 虚拟设备（LVM/luks），与「硬盘信息」物理盘口径保持一致
-            if name.startswith(("loop", "ram", "sr", "md", "dm")):
-                continue
-            dev = "/dev/" + name
-            so, rc = run_cmd(["hdparm", "-C", dev], timeout=3)
-            state = "unknown"
-            if rc == 0:
-                for line in so.splitlines():
-                    line = line.strip()
-                    if line.startswith("drive state is:"):
-                        state = line.split(":", 1)[1].strip().strip('"')
-                        break
-            out_list.append({"name": name, "state": state})
+            if _WHOLE_DISK_RE.match(name):
+                names.append(name)
     except Exception:
         pass
-    return out_list
+    return names
+
+
+def _probe_disk_power_state(name):
+    """非唤醒式探测单盘电源状态。
+
+    smartctl -n standby 优先：-n standby 使 smartctl 在盘处于 STANDBY 时直接
+    退出（rc=2）而不下发任何会唤醒硬盘的 SMART 命令；hdparm -C（CHECK POWER
+    MODE，只查询状态不改变电源状态）作为兜底。
+    返回 "standby" | "active/idle" | "unknown"。
+    """
+    global _DISK_PROBE_UNAVAILABLE_TS
+    dev = "/dev/" + name
+    if shutil.which("smartctl"):
+        out, rc = run_cmd(["smartctl", "-n", "standby", "-i", dev], timeout=4)
+        up = (out or "").upper()
+        if "STANDBY" in up or "SLEEP" in up:
+            return "standby"
+        if rc == 0 and ("ACTIVE" in up or "IDLE" in up or "MODEL" in up or "SERIAL" in up):
+            return "active/idle"
+    if shutil.which("hdparm"):
+        out, rc = run_cmd(["hdparm", "-C", dev], timeout=3)
+        low = (out or "").lower()
+        if rc == 0 and ("standby" in low or "sleeping" in low):
+            return "standby"
+        if rc == 0 and ("active" in low or "idle" in low):
+            return "active/idle"
+    return "unknown"
+
+
+def disk_power_states(force=False):
+    """返回 {盘名: standby / active/idle / unknown}，8 秒缓存。
+
+    检测只使用 CHECK POWER MODE 类非唤醒命令；smartctl 与 hdparm 都不存在时
+    5 分钟退避（此时返回 unknown，调用方按“非休眠”处理，保持旧行为）。"""
+    global _DISK_PROBE_UNAVAILABLE_TS
+    now = time.time()
+    with _DISK_STATE_LOCK:
+        if not force and _DISK_STATE_CACHE["ts"] and now - _DISK_STATE_CACHE["ts"] <= _DISK_STATE_TTL:
+            return dict(_DISK_STATE_CACHE["states"])
+    states = {}
+    if is_linux() and now - _DISK_PROBE_UNAVAILABLE_TS > 300:
+        for name in _whole_disks():
+            states[name] = _probe_disk_power_state(name)
+        if states and all(v == "unknown" for v in states.values()) \
+                and not shutil.which("smartctl") and not shutil.which("hdparm"):
+            _DISK_PROBE_UNAVAILABLE_TS = now
+    with _DISK_STATE_LOCK:
+        _DISK_STATE_CACHE["states"] = states
+        _DISK_STATE_CACHE["ts"] = now
+    return dict(states)
+
+
+def _mount_disk_map():
+    """返回 {挂载点: set(物理盘名)}。
+
+    直挂分区（/dev/sdb1、/dev/nvme0n1p1）由设备名直接归并；LVM / device-mapper
+    等多层结构由 lsblk 设备树递归把挂载点归到顶层物理盘（lsblk 只读 sysfs，
+    不会唤醒休眠硬盘）。60 秒缓存。"""
+    now = time.time()
+    with _MOUNT_DISK_LOCK:
+        if _MOUNT_DISK_CACHE["ts"] and now - _MOUNT_DISK_CACHE["ts"] <= 60:
+            return {k: set(v) for k, v in _MOUNT_DISK_CACHE["mounts"].items()}
+    result = {}
+
+    def _add(mp, disk):
+        if mp and disk:
+            result.setdefault(mp, set()).add(disk)
+
+    # 1) /proc/mounts 直挂分区
+    for m in read_mounts():
+        dev = os.path.basename(m["device"] or "")
+        mm = re.match(r"^(sd[a-z]+)\d*$", dev) \
+            or re.match(r"^(nvme\d+n\d+)(p\d+)?$", dev) \
+            or re.match(r"^(vd[a-z]+|xvd[a-z]+)\d*$", dev)
+        if mm:
+            _add(m["mount"], mm.group(1))
+    # 2) lsblk 设备树（覆盖 LVM / dm-* / 多层分区挂载）
+    try:
+        out, rc = run_cmd(
+            ["lsblk", "-b", "-J", "-o", "NAME,MOUNTPOINT,TYPE"], timeout=10)
+        if rc == 0 and out.strip():
+            data = json.loads(out)
+
+            def _collect(blk, root, acc):
+                if blk.get("mountpoint"):
+                    acc.append(blk["mountpoint"])
+                for ch in blk.get("children", []) or []:
+                    _collect(ch, root, acc)
+
+            for blk in data.get("blockdevices", []) or []:
+                root = blk.get("name") or ""
+                if not _WHOLE_DISK_RE.match(root):
+                    continue
+                mps = []
+                _collect(blk, root, mps)
+                for mp in mps:
+                    _add(mp, root)
+    except Exception:
+        pass
+    with _MOUNT_DISK_LOCK:
+        _MOUNT_DISK_CACHE["mounts"] = {k: list(v) for k, v in result.items()}
+        _MOUNT_DISK_CACHE["ts"] = now
+    return result
+
+
+def mount_on_standby(mountpoint, states=None):
+    """该挂载点是否位于已休眠的物理硬盘上。保护开关关闭 / 状态未知时返回 False。"""
+    if not RUNTIME.get("standby_protect", True) or not is_linux():
+        return False
+    states = states if states is not None else disk_power_states()
+    disks = _mount_disk_map().get(mountpoint)
+    return bool(disks) and any(states.get(d) == "standby" for d in disks)
+
+
+def path_on_standby(path, states=None):
+    """某文件路径（如数据目录）是否落在休眠硬盘上：取最长挂载点前缀匹配。"""
+    if not RUNTIME.get("standby_protect", True) or not is_linux() or not path:
+        return False
+    states = states if states is not None else disk_power_states()
+    mp_map = _mount_disk_map()
+    best = ""
+    for mp in mp_map:
+        if (path == mp or path.startswith(mp.rstrip("/") + "/")) and len(mp) > len(best):
+            best = mp
+    return bool(best) and any(states.get(d) == "standby" for d in mp_map[best])
+
+
+def read_disk_standby_states():
+    """读取各物理硬盘的休眠状态。返回 [{name, state}]。
+    state: active/idle | standby | unknown（全程使用非唤醒命令）"""
+    if not is_linux():
+        return []
+    states = disk_power_states()
+    return [{"name": n, "state": states.get(n, "unknown")} for n in _whole_disks()]
 
 
 # ===================== Docker NetIO 解析 =====================
@@ -1543,9 +1748,14 @@ def smart_detail(dev):
     """smartctl 读取指定盘健康/型号/转速/通电时长/告警计数。失败返回 {}。"""
     if not is_linux():
         return {}
-    # -n standby：跳过待机盘，避免每次采集唤醒休眠硬盘
+    # -n standby：盘处于 STANDBY 时 smartctl 直接 exit(2)、不执行任何命令，
+    # 从而不会唤醒休眠硬盘；此处明确返回 standby 标记供调用方复用上一次结果
     out, rc = run_cmd(["smartctl", "-n", "standby", "-i", "-H", "-A", "/dev/" + dev], timeout=8)
-    if rc != 0 or not out.strip():
+    if not out.strip():
+        return {}
+    if rc == 2 or "STANDBY" in out.upper() or "SLEEP" in out.upper():
+        return {"standby": True}
+    if rc != 0:
         return {}
     d = {"health": "未知"}
     for line in out.splitlines():
@@ -1726,8 +1936,12 @@ def collect_disk_io(prev, prev_ts, now):
 
 
 def smartctl_temp(dev):
-    """通过 smartctl 读取硬盘温度（sysfs 无 hwmon 时的兜底）。"""
-    out, rc = run_cmd(["smartctl", "-A", "/dev/" + dev], timeout=8)
+    """通过 smartctl 读取硬盘温度（sysfs 无 hwmon 时的兜底）。
+
+    -n standby：盘休眠时直接退出（exit 2），绝不为读温度把盘唤醒。"""
+    out, rc = run_cmd(["smartctl", "-n", "standby", "-A", "/dev/" + dev], timeout=8)
+    if rc == 2:
+        return None
     if rc != 0 or not out:
         return None
     for line in out.splitlines():
@@ -1782,10 +1996,18 @@ def read_temps():
                         temps["cpu"] = round(t / 1000.0, 1)
                         break
     # ---- 硬盘温度 ----
+    # 休眠保护：已 STANDBY 的硬盘跳过 hwmon drivetemp 读取（旧内核该读取会
+    # 唤醒硬盘）与 smartctl 兜底，沿用上次活跃时缓存的温度；休眠中的盘温度
+    # 不变，展示缓存值不影响面板。
+    states = disk_power_states()
     try:
         for blk in sorted(os.listdir("/sys/block")):
-            if not (blk.startswith("sd") or blk.startswith("nvme")
-                    or blk.startswith("vd") or blk.startswith("mmcblk")):
+            if not _WHOLE_DISK_RE.match(blk):
+                continue
+            if states.get(blk) == "standby":
+                cached = _DISK_TEMP_CACHE.get(blk)
+                if cached is not None:
+                    temps["disks"].append({"name": blk, "temp": cached})
                 continue
             temp = None
             hwdir = os.path.join("/sys/block", blk, "device", "hwmon")
@@ -1800,6 +2022,7 @@ def read_temps():
             if temp is None:
                 temp = smartctl_temp(blk)
             if temp:
+                _DISK_TEMP_CACHE[blk] = temp
                 temps["disks"].append({"name": blk, "temp": temp})
     except Exception:
         pass
@@ -2022,6 +2245,24 @@ def _app_dirs(appid):
         if os.path.isdir(p):
             found.append(p)
     return found
+
+
+def _builtin_appdirs_sleeping():
+    """内置应用（相册/影视/音乐）数据目录是否位于休眠硬盘上。
+
+    周期性目录遍历 / DB COUNT 会唤醒已 STANDBY 的机械硬盘，休眠期间跳过本轮
+    统计（用户手动点「更新」按钮时不受此限制）。先按挂载点判定休眠，避免
+    isdir 元数据访问本身唤醒硬盘。"""
+    roots = ("/usr/local/apps/@appdata", "/vol1/@appdata", "/vol2/@appdata",
+             "/vol3/@appdata", "/vol4/@appdata")
+    for a in BUILTIN_APPS:
+        for c in roots:
+            try:
+                if path_on_standby(c + "/" + a["appid"]):
+                    return True
+            except Exception:
+                pass
+    return False
 
 
 def _dir_size_fast(root, secs=4):
@@ -2372,17 +2613,22 @@ def _real_display_name(appdir, appid, mf_name):
     return appid
 
 
-def _app_center_ports():
-    """扫描应用中心每个已安装应用的 service_port 与显示名。返回 {appid: {name, port}}。
+_APP_PORTS_CACHE = {"ts": 0.0, "data": None}
+_APP_PORTS_TTL = 20.0
+# 应用中心安装根目录（与 _app_center_ports 内保持一致，进程归属匹配复用）
+_APPCENTER_ROOTS = ("/vol1/@appcenter", "/usr/local/apps/@appcenter",
+                    "/usr/trim/apps", "/var/apps", "/var/lib/fnos/apps")
+
+
+def _scan_app_center_ports():
+    """扫描应用中心每个已安装应用 manifest 中的配置端口与显示名。返回 {appid: {name, port}}。
 
     飞牛应用中心（含应用商店安装的第三方应用）实际安装在 /vol1/@appcenter/{appid}/，
     部分系统 FPK 应用在 /usr/local/apps/@appcenter，兼容多候选目录；端口字段兼容
     service_port / web_port / http_port / port。
     """
     m = {}
-    roots = ("/vol1/@appcenter", "/usr/local/apps/@appcenter",
-             "/usr/trim/apps", "/var/apps", "/var/lib/fnos/apps")
-    for apps_dir in roots:
+    for apps_dir in _APPCENTER_ROOTS:
         if not os.path.isdir(apps_dir):
             continue
         try:
@@ -2390,9 +2636,7 @@ def _app_center_ports():
         except Exception:
             continue
         for name in names:
-            if name.startswith("."):
-                continue
-            if name in m:
+            if name.startswith(".") or name in m:
                 continue
             mf = os.path.join(apps_dir, name, "manifest")
             if not os.path.isfile(mf):
@@ -2419,35 +2663,116 @@ def _app_center_ports():
                         if um:
                             port = um.group(1)
                             break
-            m[name] = {"name": _real_display_name(os.path.join(apps_dir, name), name, dname), "port": port}
+            m[name] = {"name": _real_display_name(os.path.join(apps_dir, name), name, dname),
+                       "port": port, "configured_port": port}
     return m
 
 
-def _ss_process_ports():
-    """ss -tlnp 解析进程名 -> 监听端口列表（用于功能模块端口标注）。"""
-    pmap = {}
-    out, rc = run_cmd(["ss", "-tlnp"], timeout=8)
-    if rc != 0 or not out.strip():
-        return pmap
-    for line in out.splitlines()[1:]:
-        parts = line.split()
-        if len(parts) < 5 or parts[0] != "LISTEN":
-            continue
-        addr = parts[3]
-        proc = parts[5] if len(parts) >= 6 else ""
-        m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', proc)
-        if not m:
-            continue
-        pname = m.group(1).lower()
-        pid = m.group(2)
-        if ":" not in addr:
-            continue
-        port = addr.rsplit(":", 1)[1]
+def _proc_text(pid):
+    """读取进程归属判定用文本（cmdline / cgroup / exe / cwd）。纯 /proc 读取，
+    不触碰数据盘内容，不会唤醒休眠硬盘。失败返回空串。"""
+    parts = []
+    base = "/proc/" + str(pid)
+    try:
+        raw = read_text(base + "/cmdline").replace("\x00", " ")
+        parts.append(raw)
+    except Exception:
+        pass
+    try:
+        parts.append(read_text(base + "/cgroup"))
+    except Exception:
+        pass
+    for link in ("exe", "cwd"):
         try:
-            port = int(port)
+            parts.append(os.readlink(base + "/" + link))
         except Exception:
+            pass
+    return " ".join(parts)
+
+
+def _app_runtime_ports(appids):
+    """通过 ss 监听端口 + /proc 进程归属，确定各应用当前真实监听的端口。
+
+    manifest 里的 service_port 只是安装默认值，应用允许用户改端口（如下载应用
+    Aellus 默认 8000、实际运行在 8899）；按进程 cmdline / exe / cwd / cgroup
+    中是否引用 @appcenter/@appdata/{appid} 判定归属，再用 PID 反查 ss 监听端口。
+    返回 {appid: [port, ...]}。只读 /proc，不访问应用数据，不唤醒休眠硬盘。"""
+    if not is_linux() or not appids:
+        return {}
+    listeners = _ss_listeners()
+    pid_ports = {}
+    for l in listeners:
+        if l.get("pid"):
+            pid_ports.setdefault(str(l["pid"]), set()).add(int(l["port"]))
+    if not pid_ports:
+        return {}
+    result = {}
+    pats = {}
+    for appid in appids:
+        esc = re.escape(appid)
+        # 形如 /vol1/@appcenter/aellus/…、/vol1/@appdata/aellus/…、@appcenter/aellus 结尾
+        pats[appid] = re.compile(
+            r"(?:@appcenter|@appdata|/apps|appcenter|appdata)[/\\]" + esc + r"(?:[/\\]|[\s\x00]|$)",
+            re.IGNORECASE)
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except Exception:
+        return result
+    for pid in pids:
+        if pid not in pid_ports:
             continue
-        pmap.setdefault(pname, []).append({"port": port, "pid": pid})
+        blob = _proc_text(pid)
+        if not blob:
+            continue
+        for appid, pat in pats.items():
+            if pat.search(blob):
+                result.setdefault(appid, set()).update(pid_ports[pid])
+    return {k: sorted(v) for k, v in result.items()}
+
+
+def _app_center_ports(force=False):
+    """应用中心端口（manifest 默认端口 + 运行时实际监听端口交叉校验），20 秒缓存。
+
+    优先采用应用进程当前真实监听的端口；manifest 配置端口确实在监听时沿用之；
+    两者不一致时把配置端口留在 default_port 字段，由前端标注「实际/默认」。"""
+    now = time.time()
+    if not force and _APP_PORTS_CACHE["data"] is not None \
+            and now - _APP_PORTS_CACHE["ts"] <= _APP_PORTS_TTL:
+        return {k: dict(v) for k, v in _APP_PORTS_CACHE["data"].items()}
+    m = _scan_app_center_ports()
+    try:
+        runtime = _app_runtime_ports(set(m.keys()))
+    except Exception:
+        runtime = {}
+    for appid, info in m.items():
+        actual = runtime.get(appid) or []
+        cfg = str(info.get("configured_port") or "").strip()
+        cfg_ports = []
+        for part in re.split(r"[,\s]+", cfg):
+            try:
+                cfg_ports.append(int(part))
+            except Exception:
+                pass
+        if actual:
+            info["runtime_ports"] = ",".join(str(p) for p in actual)
+            if cfg_ports and all(p in actual for p in cfg_ports):
+                info["port"] = ",".join(str(p) for p in cfg_ports)
+            else:
+                info["default_port"] = cfg
+                info["port"] = ",".join(str(p) for p in actual)
+    _APP_PORTS_CACHE["data"] = m
+    _APP_PORTS_CACHE["ts"] = now
+    return {k: dict(v) for k, v in m.items()}
+
+
+def _ss_process_ports():
+    """ss 监听端口解析为 进程名 -> 监听端口列表（用于功能模块端口标注，复用共享缓存）。"""
+    pmap = {}
+    for l in _ss_listeners():
+        if not l.get("process"):
+            continue
+        pmap.setdefault(l["process"].lower(), []).append(
+            {"port": int(l["port"]), "pid": str(l["pid"])})
     return pmap
 
 
@@ -2537,7 +2862,28 @@ def collect_modules(docker_result=None):
 class History:
     def __init__(self, db_path):
         self.db_path = db_path
+        # 数据盘休眠期间读记忆（key -> 上次活跃时读到的行），避免前端面板轮询
+        # 触发的 SELECT 把已 STANDBY 的机械硬盘唤醒
+        self._read_memo = {}
         self._init()
+
+    def _asleep(self):
+        """monitor.db 所在硬盘是否处于休眠（任何 sqlite 读都可能唤醒它）。"""
+        try:
+            return RUNTIME.get("standby_protect", True) and is_linux() \
+                and path_on_standby(os.path.dirname(self.db_path) or "/")
+        except Exception:
+            return False
+
+    def _memo(self, key, rows):
+        """记录 / 取用休眠期间的读缓存（条目过多时丢弃最旧的一批）。"""
+        if rows is None:
+            return self._read_memo.get(key, [])
+        self._read_memo[key] = rows
+        if len(self._read_memo) > 128:
+            for k in list(self._read_memo)[:32]:
+                self._read_memo.pop(k, None)
+        return rows
 
     def _init(self):
         try:
@@ -2572,6 +2918,9 @@ class History:
         # seconds=0 表示查询全部保留期内的历史（「全部」范围），上限放大到 43200 行（30 天 × 每分钟 1 条）
         if not seconds:
             limit = 43200
+        key = ("q", metric, seconds, limit)
+        if self._asleep():
+            return self._memo(key, None)
         cutoff = (time.time() - seconds) if seconds else 0
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
@@ -2586,10 +2935,13 @@ class History:
                 conn.close()
         except Exception:
             return []
-        return rows
+        return self._memo(key, rows)
 
     def export_net(self, seconds):
         """导出网卡上下行历史 (ts, metric, value)。seconds=0 表示全部。"""
+        key = ("enet", seconds)
+        if self._asleep():
+            return self._memo(key, None)
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
@@ -2609,10 +2961,13 @@ class History:
                 conn.close()
         except Exception:
             return []
-        return rows
+        return self._memo(key, rows)
 
     def export_rows(self, seconds):
         """导出全部历史记录 (ts, metric, value)；seconds=0 表示全部。"""
+        key = ("erows", seconds)
+        if self._asleep():
+            return self._memo(key, None)
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
@@ -2630,11 +2985,14 @@ class History:
                 conn.close()
         except Exception:
             return []
-        return rows
+        return self._memo(key, rows)
 
     def query_prefix(self, prefix, seconds):
         """按前缀批量查询历史指标（如 'net_rx_bytes:' 返回所有网卡的累计字节历史）。
         seconds=0 表示全部保留期。返回 [(ts, metric, value)] 列表。"""
+        key = ("qp", prefix, seconds)
+        if self._asleep():
+            return self._memo(key, None)
         cutoff = (time.time() - seconds) if seconds else 0
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
@@ -2643,11 +3001,12 @@ class History:
                     "SELECT ts, metric, value FROM metrics WHERE metric LIKE ? AND ts>=? ORDER BY ts",
                     (prefix + "%", cutoff),
                 )
-                return cur.fetchall()
+                rows = cur.fetchall()
             finally:
                 conn.close()
         except Exception:
             return []
+        return self._memo(key, rows)
 
     def cleanup(self, retention_days):
         cutoff = time.time() - retention_days * 86400
@@ -2717,6 +3076,8 @@ class Collector(threading.Thread):
         self._last_memory_ts = 0.0
         self._last_hist_ts = 0.0
         self._last_cleanup_ts = 0.0
+        # 数据盘休眠期间暂存未落盘的历史采样行（见 _tick 休眠保护）
+        self._pending_rows = []
         self._cfg_mtime = 0.0
 
     def stop(self):
@@ -2759,6 +3120,8 @@ class Collector(threading.Thread):
 
     def _tick(self):
         self._reload_config()
+        # 同步休眠保护开关（配置保存后立即生效，无需重启）
+        RUNTIME["standby_protect"] = bool(int(self.config.get("disk_standby_protect", 1) or 0))
         now = time.time()
         interval = self.config.get("interval", 10)
 
@@ -2807,9 +3170,9 @@ class Collector(threading.Thread):
         snapshot["disk_used"] = used_all
         snapshot["disk_size"] = total_all
         snapshot["disk_pools"] = len(pools)
-        # ---- 磁盘详情（物理硬盘，每 60 秒） ----
+        # ---- 磁盘详情（物理硬盘，每 60 秒；休眠盘复用上一次结果） ----
         if now - self._last_disks_detail_ts >= 60:
-            self._last_disks_detail = collect_disks_detail()
+            self._last_disks_detail = collect_disks_detail(self._last_disks_detail)
             self._last_disks_detail_ts = now
         snapshot["disks_detail"] = self._last_disks_detail
         # ---- 网络 ----
@@ -2829,26 +3192,43 @@ class Collector(threading.Thread):
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
         # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
         # 而趋势图却有估算数据的自相矛盾。
+        # 注意口径：RAPL package 只是 CPU 封装功耗（Jasper Lake N5095 等 SoC 空闲
+        # 仅 2-3W，且通常没有 DRAM 域），不等于整机插座功耗——主板/内存/网卡/
+        # 电源转换损耗与活动硬盘都在封装之外。整机 total = package + dram
+        # + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
             if now - self._last_power_ts >= 10:
+                # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
+                # 与旧行为一致，明确 standby 的盘才剔除
+                disks_active = sum(1 for d in (self._last_disks_detail or [])
+                                   if d.get("state") != "standby")
+                disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
+                disks_w = round(disks_active * disk_w_unit, 2)
                 rp = get_rapl_power()
                 if rp.get("ok"):
+                    base_w = float(self.config.get("power_base_w", 8) or 0)
+                    pkg = float(rp.get("package") or 0)
+                    dram = float(rp.get("dram") or 0)
                     rp["source"] = "rapl"
+                    rp["base"] = round(base_w, 2)
+                    rp["disks_w"] = disks_w
+                    rp["disks_active"] = disks_active
+                    rp["total"] = round(pkg + dram + base_w + disks_w, 2)
                     self._last_power = rp
                 else:
                     try:
-                        disks_active = sum(1 for d in (self._last_disks_detail or [])
-                                           if d.get("state") != "standby") or len(self._last_disks_detail or [])
                         nics_active = len([i for i in ifaces
                                            if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
                         est_w = estimate_power(
                             cpu_percent, disks_active, nics_active,
                             float(self.config.get("power_tdp_w", 65)),
-                            float(self.config.get("power_disk_typical_w", 8)),
+                            disk_w_unit,
                             float(self.config.get("power_nic_fixed_w", 5)),
                         )
                         self._last_power = {"ok": True, "total": est_w, "source": "estimated",
-                                            "package": None, "core": None, "uncore": None, "dram": None}
+                                            "package": None, "core": None, "uncore": None,
+                                            "dram": None, "base": None,
+                                            "disks_w": disks_w, "disks_active": disks_active}
                     except Exception:
                         self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
@@ -2946,9 +3326,22 @@ class Collector(threading.Thread):
                     rows.append((now, "ctr_out:" + cname, float(c.get("net_out_bytes", 0))))
             except Exception:
                 pass
-            self.db.write(rows)
+            # ---- 休眠保护：monitor.db 通常位于存储池 @appdata（机械硬盘）上，
+            # INSERT/commit 会把已休眠的硬盘唤醒。数据盘休眠时把采样行暂存内存，
+            # 等硬盘下次被唤醒（正常访问）时连同时间戳一次性补写，历史不丢点 ----
+            if path_on_standby(self.data_dir):
+                self._pending_rows.extend(rows)
+                # 上限保护：硬盘连续休眠多日时避免内存无限增长
+                if len(self._pending_rows) > 100000:
+                    del self._pending_rows[:-100000]
+            else:
+                if self._pending_rows:
+                    rows = self._pending_rows + rows
+                    self._pending_rows = []
+                self.db.write(rows)
         # ---- 清理过期历史（每小时一次即可；原先每 10 秒一次 DELETE，大表时白耗 CPU/IO 并放大 WAL 写入） ----
-        if now - self._last_cleanup_ts >= 3600:
+        # 数据盘休眠时同样跳过（DELETE 会唤醒硬盘），且不更新时间戳，醒来后尽快补清理
+        if now - self._last_cleanup_ts >= 3600 and not path_on_standby(self.data_dir):
             self._last_cleanup_ts = now
             try:
                 self.db.cleanup(self.config.get("retention_days", 7))
@@ -3010,9 +3403,17 @@ class Collector(threading.Thread):
         snapshot["fans"] = self._last_fans
 
         # ---- 内置应用统计（相册/影视/音乐，每 10 分钟；目录遍历 + 数据库 COUNT 为重操作，手动刷新按钮可即时更新） ----
+        # 数据盘休眠时跳过本轮（不更新时间戳，醒来后尽快补采），避免目录扫描唤醒机械硬盘
         if now - self._last_apps_ts >= 600:
-            self._last_apps = collect_app_stats()
-            self._last_apps_ts = now
+            try:
+                if RUNTIME.get("standby_protect", True) and _builtin_appdirs_sleeping():
+                    pass
+                else:
+                    self._last_apps = collect_app_stats()
+                    self._last_apps_ts = now
+            except Exception:
+                self._last_apps = collect_app_stats()
+                self._last_apps_ts = now
         snapshot["apps"] = self._last_apps
 
         # ---- 在线更新自动检查（每 6 小时）----
@@ -3952,12 +4353,16 @@ class MonitorApp:
         for k in ("traffic_exclude_bridge",):
             if k in data:
                 cur[k] = 1 if str(data[k]) in ("1", "true", "on") else 0
-        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
+                  "power_rate_yuan", "power_base_w"):
             if k in data:
                 try:
-                    cur[k] = float(data[k])
+                    cur[k] = max(0.0, min(500.0, float(data[k])))
                 except Exception:
                     pass
+        # 硬盘休眠保护开关
+        if "disk_standby_protect" in data:
+            cur["disk_standby_protect"] = 1 if str(data["disk_standby_protect"]) in ("1", "true", "on") else 0
         if "data_dir" in data:
             nd = str(data["data_dir"]).strip()
             if nd and os.path.isabs(nd):
@@ -3985,10 +4390,11 @@ class MonitorApp:
                 if k in cur:
                     self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
             # 流量与功耗配置同步到内存
-            for k in ("traffic_exclude_bridge",):
+            for k in ("traffic_exclude_bridge", "disk_standby_protect"):
                 if k in cur:
                     self.config[k] = 1 if str(cur[k]) in ("1", "true", "on") else 0
-            for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+            for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
+                      "power_rate_yuan", "power_base_w"):
                 if k in cur:
                     try:
                         self.config[k] = float(cur[k])
@@ -4150,14 +4556,22 @@ class MonitorApp:
         if phy_names:
             standby = [d for d in standby if d.get("name") in phy_names]
         result = {
-            "realtime": {"power_w": power_w, "source": source, "package": power.get("package", 0), "core": power.get("core", 0), "dram": power.get("dram", 0)},
+            # 整机口径：RAPL 模式下 power_w = CPU 封装 + DRAM + 主板等固定底座 + 活动硬盘
+            "realtime": {"power_w": power_w, "source": source,
+                         "package": power.get("package", 0), "core": power.get("core", 0),
+                         "dram": power.get("dram", 0),
+                         "base": power.get("base"),
+                         "disks_w": power.get("disks_w", 0),
+                         "disks_active": power.get("disks_active")},
             "energy": {"today_kwh": today_kwh, "month_kwh": month_kwh, "boot_kwh": boot_kwh},
             "cost": {"today_yuan": round(today_kwh * rate, 2), "month_yuan": round(month_kwh * rate, 2), "rate_yuan_per_kwh": rate},
             "disks": standby,
+            "standby_protect": bool(int(self.config.get("disk_standby_protect", 1) or 0)),
             "estimation_params": {
                 "tdp_w": float(self.config.get("power_tdp_w", 65)),
                 "disk_typical_w": float(self.config.get("power_disk_typical_w", 8)),
                 "nic_fixed_w": float(self.config.get("power_nic_fixed_w", 5)),
+                "base_w": float(self.config.get("power_base_w", 8)),
             },
         }
         self._power_stats_cache = result
@@ -4558,12 +4972,16 @@ def load_config(data_dir):
         for k in ("traffic_exclude_bridge",):
             if k in user:
                 cfg[k] = 1 if str(user[k]) in ("1", "true", "on") else 0
-        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w", "power_rate_yuan"):
+        for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
+                  "power_rate_yuan", "power_base_w"):
             if k in user:
                 try:
                     cfg[k] = float(user[k])
                 except Exception:
                     pass
+        # 硬盘休眠保护开关（默认开启：监控不主动唤醒已停转的机械硬盘）
+        if "disk_standby_protect" in user:
+            cfg["disk_standby_protect"] = 1 if str(user["disk_standby_protect"]) in ("1", "true", "on") else 0
         if "weather_city" in user:
             cfg["weather_city"] = str(user["weather_city"])
         if "data_dir" in user:
