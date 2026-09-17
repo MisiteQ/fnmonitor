@@ -1,9 +1,18 @@
-# 飞牛监控 (fnMonitor)
+# 飞牛监控 fnMonitor
 
-[![Release](https://img.shields.io/github/v/release/MisiteQ/fnmonitor)](https://github.com/MisiteQ/fnmonitor/releases)
-[![Platform](https://img.shields.io/badge/platform-fnOS%20x86%20%7C%20ARM-blue)](https://github.com/MisiteQ/fnmonitor/releases)
+<p>
+  <img alt="Version" src="https://img.shields.io/badge/version-2.14.0-blue">
+  <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
+</p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与七套主题。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
+
+- 当前版本：**v2.14.0**
+- 作者：**Misite齊**
+- 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
+- 默认端口：**8777**（安装向导可改）
+- 运行身份：**root**（需访问 sysfs 风扇控制、docker.sock、smartctl 与 /proc 跨用户进程信息）
 
 ## ✨ 功能
 
@@ -14,25 +23,63 @@
 
 ## 📦 安装
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 下载对应架构的 `.fpk`（x86 / arm）
+### 方式一：FnDepot 应用源（推荐）
+
+在飞牛 fnOS 上安装 [FnDepot](https://github.com/EWEDLCM/FnDepot) 客户端后，添加作者的应用源即可搜索「飞牛监控」一键安装 / 升级：
+
+```
+https://github.com/MisiteQ/FnDepot
+```
+
+### 方式二：手动安装 FPK
+
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.14.0-x86.fpk`（x86 机型）或 `fnmonitor-2.14.0-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
-3. 安装后桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
+3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
 > 若「手动安装」入口被关闭，SSH 执行：`appcenter-cli manual-install enable`
 
 ## 🛠 从源码打包
 
+需要安装 [fnpack](https://developer.fnnas.com/docs/cli/fnpack/) 命令行工具。
+
+### Windows（PowerShell 5+）
+
 ```powershell
-# Windows（需 Python 3 + fnpack，见 https://developer.fnnas.com/docs/cli/fnpack/）
+# 需 Python 3
 .\build.ps1
 ```
 
+### Linux / fnOS
+
 ```bash
-# 飞牛 OS 上
 bash build.sh
 ```
 
-## 📋 近期更新
+## 📁 项目结构
+
+```
+manifest                飞牛应用清单（版本、显示名、端口、权限、更新日志）
+wizard/                 安装向导（端口 / 数据目录 / 采集间隔等）
+cmd/                    飞牛生命周期脚本（安装回调、启动、卸载清理、升级等）
+config/                 飞牛权限与资源声明（以 root 运行）
+app/server.py           后端：采集 + SQLite 历史 + HTTP API（零依赖）
+app/www/index.html      前端：单文件面板（原生 JS + SVG 图表）
+build.ps1 / build.sh    Windows / Linux 双架构打包脚本
+make_icon.py            应用图标生成（不覆盖已有图标）
+```
+
+## 🔒 隐私与安全
+
+- 所有监控数据（实时指标、历史趋势、流量与功耗统计）均保存在 NAS 本机 SQLite 数据库，不上传任何第三方服务器
+- 纯 Python 标准库实现，**零第三方依赖、完全离线可用**，不与任何外部服务通信
+- 天气数据通过公开 API 按需获取（可在设置中关闭），不涉及个人位置信息上传
+
+## 🙏 致谢
+
+- 飞牛 fnOS 与 [FnDepot](https://github.com/EWEDLCM/FnDepot)
+
+## 📋 版本历史
 
 | 版本 | 内容 |
 |---|---|
@@ -65,14 +112,6 @@ bash build.sh
 
 完整日志见 [Releases](https://github.com/MisiteQ/fnmonitor/releases)。
 
-## 结构
+## 📄 许可证
 
-```
-app/server.py       后端：采集 + SQLite 历史 + HTTP API（零依赖）
-app/www/index.html  前端：单文件面板（原生 JS + SVG 图表）
-cmd/ wizard/ config/  飞牛 FPK 生命周期脚本与向导
-```
-
----
-
-MIT © [MisiteQ](https://github.com/MisiteQ)
+[MIT License](LICENSE) © 2026 Misite齊
