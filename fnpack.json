@@ -12,7 +12,7 @@
       "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
       "platform": ["x86", "arm"],
       "categories": ["系统工具"],
-      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.14.0/ICON_256.PNG",
+      "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.15.0/ICON_256.PNG",
       "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
       "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
       "maintainer": "Misite齊",
@@ -22,6 +22,23 @@
       "is_docker": false,
       "service_port": "8777",
       "releases": {
+        "2.15.0": {
+          "changelog": "① 新增硬 RAID 物理盘温度与健康监控（LSI/Broadcom storcli 通用）：MegaRAID（含 Dell PERC 贴牌）RAID 模式下物理盘不作为 /dev/sdX 暴露、smartctl 不可见，现经 storcli/perccli 的 JSON 输出结构化解析——阵列设定面板展示控制器型号与 ROC 芯片温度、虚拟阵列（VD）状态、每块物理盘的盘位/型号/介质/容量/状态/温度/健康/介质错误表格；健康自动分级（SMART 告警与离线/丢失 → 故障，介质或预测失败计数 > 0 → 警告，重建中 → 重建，其余正常）；键名大小写/空格/点号容错，兼容各 storcli 版本<br>② storcli64/storcli/perccli64/perccli 全自动查找（含 /opt/MegaRAID、/usr/local/bin 等常见路径），检测到阵列卡但未装工具时面板给出安装指引，装好即自动识别；HBA 直通卡（IT 模式）物理盘仍由内核直接接管、走标准 SMART 路径<br>③ 阵列卡识别按优先级修正（RAID > HBA/SAS > 存储控制器 > SATA 控制器），纯 SATA 主板不再误报为阵列卡；RAID 物理盘温度并入总览温度卡（名称形如「阵列 32:0」）；温度与 SMART 由阵列卡读取传感器数据、不需要盘片寻道，不会唤醒 STANDBY 休眠硬盘",
+          "updated_at": "2026-09-19T18:00:00+08:00",
+          "os_min_version": "0.9.0",
+          "packages": {
+            "x86": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.15.0/fnmonitor-2.15.0-x86.fpk",
+              "sha256": "7f2593e37e6ff794138dbeb6e9c74978f21cbf877fb24e1705f6aa95fa756784",
+              "size": 375264
+            },
+            "arm": {
+              "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.15.0/fnmonitor-2.15.0-arm.fpk",
+              "sha256": "ecfdcd1c563e5ea2e5112ab68ced5d6e8b399c3b5f6428041357c3e6c3a190ef",
+              "size": 375273
+            }
+          }
+        },
         "2.14.0": {
           "changelog": "① 休眠硬盘保护：监控不再周期性唤醒已停转的机械硬盘——电源状态只通过非唤醒命令检测（smartctl -n standby / hdparm -C，带缓存与工具缺失退避）；休眠盘的容量 / SMART / 温度采集、历史库写入与清理、内置应用目录扫描全部跳过并沿用上一次活跃数据，历史采样在硬盘唤醒后自动补写不丢点；面板轮询触发的历史库 SELECT 同样门控，杜绝「开着监控页面硬盘就无法休眠」；设置页新增「休眠硬盘保护」开关（默认开启，可单独关闭）<br>② 整机功耗口径修正：RAPL 仅测得 CPU 封装功耗（N5095 等 SoC 空闲仅 2-3W，远低于插座实测），现整机功耗 = CPU 封装 + 内存 + 主板/其他固定底座（默认 8W，可在设置中按插座实测补差）+ 活动硬盘功耗（休眠盘不计），实时面板分项展示并标注口径<br>③ 应用端口显示实际监听值：不再只信 manifest 安装默认端口，改为 ss 监听端口 + /proc 进程归属交叉校验（默认 8000 实际 8899 这类情况显示实际端口并灰字标注默认值），新增「运行中/未运行」状态",
           "updated_at": "2026-09-15T20:00:00+08:00",

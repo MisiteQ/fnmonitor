@@ -611,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.14.0</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span>v2.15.0</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -1035,7 +1035,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.14.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 v2.15.0 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -1388,7 +1388,7 @@ function renderDisksDetail(o){
   h += "</table></div>";
   body.innerHTML = h;
 
-  // 阵列设定（RAID 阵列 + 阵列卡）— 与磁盘信息放一块
+  // 阵列设定（mdadm 软阵列 + 阵列卡结构化信息：控制器/虚拟阵列/物理盘温度健康）
   const raidEl = $("raid-section");
   if (raidEl){
     const rc = (o && o.raidcard) || {};
@@ -1400,11 +1400,52 @@ function renderDisksDetail(o){
         raid.forEach(r => {
           rh += '<div class="hw-line"><span>' + esc(r.device) + ' <span class="tag on">' + esc(r.status) + '</span></span><b>' + esc((r.members || []).join(", ")) + "</b></div>";
         });
-      } else rh += '<div class="hw-line"><span>RAID</span><b>无 mdadm RAID 阵列</b></div>';
+      } else rh += '<div class="hw-line"><span>RAID</span><b>无 mdadm 软阵列</b></div>';
       if (rc.type && rc.type !== "none"){
-        rh += '<div class="hw-line"><span>阵列卡</span><b>' + esc(rc.label || "--") + "</b></div>" +
-          '<div class="hw-line"><span>说明</span><b>' + esc(rc.detail || "") + "</b></div>" +
-          (rc.storcli ? '<div class="hw-line"><span>storcli</span><b class="mono">' + esc(rc.storcli.slice(0, 600)) + "</b></div>" : "");
+        rh += '<div class="hw-line"><span>阵列卡</span><b>' + esc(rc.label || "--") + "</b></div>";
+        if (rc.type === "megaraid" && (rc.controllers || []).length){
+          rc.controllers.forEach(c => {
+            const meta = [];
+            if (c.status) meta.push("状态 " + c.status);
+            if (c.roc_temp != null) meta.push("芯片 " + c.roc_temp + "°C");
+            if (c.memory) meta.push(c.memory);
+            rh += '<div class="hw-line"><span>' + esc(c.model || ("Controller " + c.id)) + "</span><b>" + esc(meta.join(" · ") || "--") + "</b></div>";
+            (c.vd || []).forEach(v => {
+              rh += '<div class="hw-line"><span>VD' + esc(v.vd) + (v.name ? " " + esc(v.name) : "") +
+                ' <span class="tag ' + (v.badge || "") + '">' + esc(v.state_label || v.state || "--") + "</span></span><b>" +
+                esc((v.type || "--") + " · " + (v.size || "--")) + "</b></div>";
+            });
+            if ((c.pds || []).length){
+              rh += '<div style="overflow-x:auto"><table><tr><th>盘位</th><th>型号</th><th>介质</th><th>容量</th><th>状态</th><th>温度</th><th>健康</th><th>介质错误</th></tr>';
+              c.pds.forEach(p => {
+                const hb = p.health === "ok"
+                  ? '<span class="tag on">' + esc(p.health_label || "正常") + "</span>"
+                  : (p.health === "warn"
+                    ? '<span class="tag" style="color:#b45309;border-color:#b45309">' + esc(p.health_label || "警告") + "</span>"
+                    : '<span class="tag off">' + esc(p.health_label || "故障") + "</span>");
+                rh += "<tr>" +
+                  "<td class='mono'>" + esc(p.loc) + "</td>" +
+                  "<td>" + esc(p.model || "--") + (p.serial ? '<div class="mono">' + esc(p.serial) + "</div>" : "") + "</td>" +
+                  "<td>" + esc(((p.intf || "--") + " " + (p.media || "")).trim()) + "</td>" +
+                  "<td>" + esc(p.size || "--") + "</td>" +
+                  "<td>" + esc(p.state || "--") + "</td>" +
+                  "<td>" + (p.temp != null ? p.temp + "°C" : "--") + "</td>" +
+                  "<td>" + hb + "</td>" +
+                  "<td>" + (p.media_errors > 0 ? '<span class="tag off">' + p.media_errors + "</span>" : "0") + "</td>" +
+                  "</tr>";
+              });
+              rh += "</table></div>";
+            } else {
+              rh += '<div class="hw-line"><span>物理盘</span><b>未读取到（storcli 需 root 权限，或版本过旧）</b></div>';
+            }
+          });
+        } else if (rc.type === "megaraid"){
+          rh += '<div class="hw-line"><span>物理盘</span><b>' + esc(rc.error === "storcli not found"
+            ? "未找到 storcli/perccli 工具：下载 storcli 解压后把 storcli64 放入 /usr/local/bin/，稍候自动识别"
+            : "storcli 读取失败（需 root 权限，或 storcli 版本过旧）") + "</b></div>";
+        } else {
+          rh += '<div class="hw-line"><span>说明</span><b>' + esc(rc.detail || "") + "</b></div>";
+        }
       }
       rh += "</div>";
     }

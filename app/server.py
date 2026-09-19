@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.14.0"
+VERSION = "2.15.0"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -658,35 +658,328 @@ def collect_hardware():
     return info
 
 
+# ===================== 阵列卡（MegaRAID / storcli 结构化采集） =====================
+# LSI/Broadcom MegaRAID（及 Dell PERC 等贴牌）RAID 模式下的物理盘不作为
+# /dev/sdX 暴露给系统，hwmon 与 smartctl 均不可见，只能经厂商 CLI 读取。
+# storcli 与 perccli（Dell 贴牌）命令语法与 JSON 输出完全一致，一并支持。
+# 温度/SMART 由阵列卡读取盘上传感器数据，不需要盘片寻道，因此不会唤醒
+# STANDBY 中的硬盘；每 300 秒采集一次，开销可忽略。
+_STORCLI_CANDIDATES = (
+    "storcli64", "storcli", "perccli64", "perccli",
+    "/opt/MegaRAID/storcli/storcli64", "/opt/MegaRAID/storcli/storcli",
+    "/opt/MegaRAID/perccli/perccli64", "/opt/lsi/storcli/storcli64",
+    "/usr/local/bin/storcli64", "/usr/local/bin/storcli",
+    "/usr/bin/storcli64", "/usr/bin/perccli64",
+)
+
+
+def _find_storcli():
+    """按候选顺序查找 storcli/perccli 可执行文件，找不到返回空串。"""
+    for name in _STORCLI_CANDIDATES:
+        if "/" in name:
+            if os.path.isfile(name) and os.access(name, os.X_OK):
+                return name
+        else:
+            try:
+                p = shutil.which(name)
+            except Exception:
+                p = None
+            if p:
+                return p
+    return ""
+
+
+def _storcli_ci(d, *names):
+    """storcli JSON 键容错查找：大小写/空格/点号不敏感（各版本键名写法有差异）。"""
+    if not isinstance(d, dict):
+        return None
+    norm = {}
+    for k, v in d.items():
+        norm[str(k).lower().replace(".", "").replace(" ", "")] = v
+    for n in names:
+        v = norm.get(n.lower().replace(".", "").replace(" ", ""))
+        if v is not None:
+            return v
+    return None
+
+
+def _storcli_num(v):
+    """解析 storcli 数值字段：27 / "27" / "27C (80.60 F)" → int，失败返回 None。"""
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, str):
+        m = re.search(r"-?\d+", v)
+        if m:
+            return int(m.group())
+    return None
+
+
+def _storcli_txt(v):
+    """值转去除首尾空白的字符串（None → 空串）。"""
+    if v is None:
+        return ""
+    if isinstance(v, (int, float)):
+        return str(v)
+    return str(v).strip()
+
+
+_STORCLI_PD_STATE = {
+    "onln": ("ok", "在线"),
+    "jbod": ("ok", "JBOD 直通"),
+    "ugood": ("ok", "未配置(好)"),
+    "rbld": ("warn", "重建中"),
+    "copybk": ("warn", "拷贝中"),
+    "cvd": ("warn", "创建中"),
+    "cs": ("warn", "一致性检查"),
+    "offln": ("fail", "离线"),
+    "msng": ("fail", "丢失"),
+    "ubad": ("fail", "未配置(坏)"),
+    "bad": ("fail", "故障"),
+    "fld": ("fail", "故障"),
+}
+
+_STORCLI_VD_STATE = {
+    "optl": ("on", "正常"),
+    "optimal": ("on", "正常"),
+    "onln": ("on", "正常"),
+    "dgrd": ("off", "降级"),
+    "degraded": ("off", "降级"),
+    "ofln": ("off", "离线"),
+    "offln": ("off", "离线"),
+    "rbld": ("", "重建中"),
+}
+
+
+def _storcli_pd_health(pd):
+    """物理盘状态 → (health, label)。
+
+    优先级：SMART 告警 / 离线丢失类 > 介质或预测失败计数 > 过渡态 > 正常。"""
+    state = _storcli_txt(_storcli_ci(pd, "state")).lower()
+    smart_alert = _storcli_txt(_storcli_ci(
+        pd, "smart alert flagged by drive",
+        "drive has flagged a smart alert", "smart alert")).lower()
+    media_err = _storcli_num(_storcli_ci(pd, "media error count")) or 0
+    other_err = _storcli_num(_storcli_ci(pd, "other error count")) or 0
+    pf = _storcli_num(_storcli_ci(pd, "predictive failure count")) or 0
+    if smart_alert in ("yes", "true"):
+        return "fail", "SMART 告警"
+    if state in ("offln", "msng", "ubad", "bad", "fld", "failed"):
+        return _STORCLI_PD_STATE[state]
+    if media_err > 0 or other_err > 0 or pf > 0:
+        return "warn", "介质错误"
+    if state in _STORCLI_PD_STATE:
+        return _STORCLI_PD_STATE[state]
+    if state:
+        return "warn", state
+    return "ok", "正常"
+
+
+def _storcli_controllers(out):
+    """解析 storcli /call show all J → {控制器ID: 信息字典}。"""
+    res = {}
+    try:
+        data = json.loads(out)
+    except Exception:
+        return res
+    for c in (data.get("Controllers") or []):
+        if not isinstance(c, dict):
+            continue
+        cs = c.get("Command Status") or {}
+        st = _storcli_txt(_storcli_ci(cs, "status")).lower()
+        if st and st != "success":
+            continue
+        cid = _storcli_num(_storcli_ci(cs, "controller"))
+        rows = c.get("Response Data") or {}
+        if not isinstance(rows, dict):
+            continue
+        res[cid if cid is not None else 0] = {
+            "model": _storcli_txt(_storcli_ci(rows, "model", "product name")),
+            "serial": _storcli_txt(_storcli_ci(rows, "serial number")),
+            "roc_temp": _storcli_num(_storcli_ci(
+                rows, "roc temperature", "controller temperature")),
+            "memory": _storcli_txt(_storcli_ci(
+                rows, "memory size", "cache memory size", "memory")),
+            "status": _storcli_txt(_storcli_ci(rows, "controller status", "status")),
+        }
+    return res
+
+
+def _storcli_vds(out):
+    """解析 storcli /call/vall show J → {控制器ID: [虚拟阵列, ...]}。"""
+    res = {}
+    try:
+        data = json.loads(out)
+    except Exception:
+        return res
+    for c in (data.get("Controllers") or []):
+        if not isinstance(c, dict):
+            continue
+        cs = c.get("Command Status") or {}
+        st = _storcli_txt(_storcli_ci(cs, "status")).lower()
+        if st and st != "success":
+            continue
+        cid = _storcli_num(_storcli_ci(cs, "controller"))
+        rows = c.get("Response Data") or []
+        if isinstance(rows, dict):
+            rows = list(rows.values())
+        vds = []
+        for vd in rows:
+            if not isinstance(vd, dict):
+                continue
+            num = _storcli_ci(vd, "vd")
+            dgv = _storcli_txt(_storcli_ci(vd, "dg/vd"))
+            if num is None and dgv:
+                num = dgv.split("/")[-1]   # "0/2" → VD 2
+            if num is None:
+                continue
+            raw_state = _storcli_txt(_storcli_ci(vd, "state"))
+            badge = _STORCLI_VD_STATE.get(raw_state.lower(), ("", raw_state or "--"))
+            vds.append({
+                "vd": _storcli_txt(num),
+                "name": _storcli_txt(_storcli_ci(vd, "name")),
+                "type": _storcli_txt(_storcli_ci(vd, "type")),
+                "state": raw_state,
+                "state_label": badge[1],
+                "badge": badge[0],
+                "size": _storcli_txt(_storcli_ci(vd, "size")),
+            })
+        res[cid if cid is not None else 0] = vds
+    return res
+
+
+def _storcli_pds(out):
+    """解析 storcli /call/eall/sall show all J → {控制器ID: [物理盘, ...]}。"""
+    res = {}
+    try:
+        data = json.loads(out)
+    except Exception:
+        return res
+    for c in (data.get("Controllers") or []):
+        if not isinstance(c, dict):
+            continue
+        cs = c.get("Command Status") or {}
+        st = _storcli_txt(_storcli_ci(cs, "status")).lower()
+        if st and st != "success":
+            continue
+        cid = _storcli_num(_storcli_ci(cs, "controller"))
+        rows = c.get("Response Data") or []
+        if isinstance(rows, dict):
+            rows = list(rows.values())
+        pds = []
+        for pd in rows:
+            if not isinstance(pd, dict):
+                continue
+            if _storcli_ci(pd, "slt") is None and _storcli_ci(pd, "eid") is None:
+                continue
+            health, label = _storcli_pd_health(pd)
+            eid = _storcli_txt(_storcli_ci(pd, "eid")) or "?"
+            slt = _storcli_txt(_storcli_ci(pd, "slt")) or "?"
+            pds.append({
+                "loc": eid + ":" + slt,
+                "did": _storcli_num(_storcli_ci(pd, "did")),
+                "model": _storcli_txt(_storcli_ci(pd, "model", "model number")),
+                "serial": _storcli_txt(_storcli_ci(pd, "serial number", "serial")),
+                "intf": _storcli_txt(_storcli_ci(pd, "intf", "protocol")),
+                "media": _storcli_txt(_storcli_ci(pd, "med", "media type", "drive type")),
+                "size": _storcli_txt(_storcli_ci(pd, "size", "capacity")),
+                "state": _storcli_txt(_storcli_ci(pd, "state")),
+                "temp": _storcli_num(_storcli_ci(pd, "drive temperature", "temperature")),
+                "health": health,
+                "health_label": label,
+                "smart_alert": _storcli_txt(_storcli_ci(
+                    pd, "smart alert flagged by drive",
+                    "drive has flagged a smart alert", "smart alert")).lower() in ("yes", "true"),
+                "media_errors": _storcli_num(_storcli_ci(pd, "media error count")) or 0,
+                "other_errors": _storcli_num(_storcli_ci(pd, "other error count")) or 0,
+                "pf_count": _storcli_num(_storcli_ci(pd, "predictive failure count")) or 0,
+            })
+        res[cid if cid is not None else 0] = pds
+    return res
+
+
 def collect_raid_card():
-    """阵列卡检测：lspci 识别 MegaRAID / HBA / 纯 SATA，MegaRAID 走 storcli（参照网络主流硬件监控面板阵列卡页）。"""
-    info = {"type": "none", "label": "纯 SATA 主板（未检测到独立阵列卡）", "detail": ""}
+    """阵列卡检测与硬 RAID 物理盘温度/健康采集（LSI/Broadcom storcli 通用）。
+
+    lspci 按优先级识别控制器（RAID > HBA/SAS > 存储控制器 > SATA 控制器，
+    纯 SATA 主板不再误报为阵列卡）；MegaRAID（含 Dell PERC 贴牌）经 storcli
+    的 JSON 输出解析：控制器型号/ROC 芯片温度、虚拟阵列状态、每块物理盘的
+    盘位/型号/温度/健康/介质错误。温度与 SMART 由阵列卡读传感器，不寻道、
+    不唤醒 STANDBY 硬盘。HBA 直通卡（IT 模式）物理盘由内核直接接管，
+    走标准 hwmon/smartctl 路径，无需 storcli。"""
+    info = {"type": "none", "label": "", "detail": "",
+            "tool": "", "controllers": [], "error": ""}
     if not is_linux():
         return info
     out, rc = run_cmd(["lspci"], timeout=10)
     if rc != 0:
         return info
-    card_line = ""
+    pri_line = ""
+    pri = 99
     for line in out.splitlines():
         low = line.lower()
-        if any(k in low for k in ("raid", "megaraid", "hba", "sas", "storage controller", "sata controller")):
-            card_line = line
+        lvl = None
+        if "megaraid" in low or ("raid" in low and "sata" not in low):
+            lvl = 0
+        elif "hba" in low or "sas" in low:
+            lvl = 1
+        elif "storage controller" in low:
+            lvl = 2
+        elif "sata controller" in low:
+            lvl = 3
+        if lvl is not None and lvl < pri:
+            pri, pri_line = lvl, line
+        if pri == 0:
             break
-    if not card_line:
+    if not pri_line:
         return info
-    low = card_line.lower()
-    label = card_line.split(" ", 1)[1] if " " in card_line else card_line
-    if "megaraid" in low or "raid" in low:
+    label = pri_line.split(" ", 1)[1] if " " in pri_line else pri_line
+    info["label"] = label
+    if pri == 0:
         info["type"] = "megaraid"
-        info["label"] = label
-        so, src = run_cmd(["storcli", "/c0", "show"], timeout=15)
-        if src == 0:
-            info["storcli"] = so
-        info["detail"] = "MegaRAID 阵列卡（IR/RAID 模式），storcli 可查看完整信息"
-    else:
+        tool = _find_storcli()
+        info["tool"] = tool
+        if not tool:
+            info["detail"] = ("MegaRAID 阵列卡：未找到 storcli/perccli 工具，无法读取物理盘温度与健康。"
+                              "从 Broadcom 官网下载 storcli 解压后，把 storcli64 放入 /usr/local/bin/"
+                              " 或 /opt/MegaRAID/storcli/，稍候面板自动识别")
+            info["error"] = "storcli not found"
+            return info
+        cout, crc = run_cmd([tool, "/call", "show", "all", "J"], timeout=30)
+        vout, _ = run_cmd([tool, "/call", "vall", "show", "J"], timeout=30)
+        pout, prc = run_cmd([tool, "/call", "eall", "sall", "show", "all", "J"], timeout=30)
+        ctrls = _storcli_controllers(cout)
+        vds = _storcli_vds(vout)
+        pds = _storcli_pds(pout)
+        if not ctrls and not pds and not vds:
+            info["detail"] = ("MegaRAID 阵列卡：storcli 输出解析失败"
+                              "（需 root 权限，或 storcli 版本过旧不支持 J JSON 输出）")
+            info["error"] = "storcli parse failed"
+            return info
+        ids = sorted(set(ctrls) | set(vds) | set(pds))
+        for cid in ids:
+            ci = ctrls.get(cid) or {}
+            info["controllers"].append({
+                "id": cid,
+                "model": ci.get("model") or label,
+                "serial": ci.get("serial", ""),
+                "roc_temp": ci.get("roc_temp"),
+                "memory": ci.get("memory", ""),
+                "status": ci.get("status", ""),
+                "vd": vds.get(cid) or [],
+                "pds": pds.get(cid) or [],
+            })
+        n = sum(len(c["pds"]) for c in info["controllers"])
+        info["detail"] = "MegaRAID 阵列卡（RAID 模式），经 %s 读取 %d 块物理盘温度与健康" % (
+            os.path.basename(tool), n)
+        return info
+    elif pri == 1:
         info["type"] = "hba"
-        info["label"] = label
         info["detail"] = "HBA 直通卡（IT 模式），物理盘由系统直接识别为 /dev/sdX，SMART 见硬盘面板"
+    else:
+        # 纯 SATA 主板（AHCI）：不算阵列卡，恢复为不显示
+        info["type"] = "none"
+        info["label"] = ""
+        info["detail"] = ""
     return info
 
 
@@ -3187,6 +3480,13 @@ class Collector(threading.Thread):
         snapshot["diskio"] = diskio
         # ---- 温度 ----
         temps = read_temps()
+        # 硬 RAID 物理盘温度并入总览温度卡（读自阵列卡缓存，300 秒刷新；
+        # 名称形如「阵列 32:0」，经阵列卡传感器读取、不唤醒硬盘）
+        for _c in ((self._last_raidcard or {}).get("controllers") or []):
+            for _p in (_c.get("pds") or []):
+                if _p.get("temp") is not None:
+                    temps["disks"].append({"name": "阵列 " + str(_p.get("loc")),
+                                           "temp": _p.get("temp")})
         snapshot["temp"] = temps
         # ---- 实时功耗（每 10 秒）：RAPL 硬件传感器优先，不可用时即时回退估算模型 ----
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
