@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.15.0"
+VERSION = "2.15.1"
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -2666,9 +2666,40 @@ def _wmo_text(code):
     return "🌡 " + str(code)
 
 
+# 内置中国行政区划坐标库（省/市/县三级 3200+，来源阿里 DataV GeoAtlas，与 QWeather 同源）。
+# Open-Meteo 地理编码基于 GeoNames，中国城市中文覆盖差（搜不到/错配同名地点），国内名称一律本地检索。
+_CN_CITIES = None
+
+
+def _cn_city_lookup(name):
+    """本地检索中国城市坐标库，条目 [名称, 省份, 纬度, 经度]。
+    匹配优先级：名称精确 > 名称前缀 > 名称包含（与 QWeather 一致，数据按省→市→县排序）。
+    命中返回 (纬度, 经度, 显示名)，未命中返回 None。"""
+    global _CN_CITIES
+    if _CN_CITIES is None:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cities_cn.json"),
+                      "r", encoding="utf-8") as f:
+                _CN_CITIES = json.load(f)
+        except Exception:
+            _CN_CITIES = []
+    q = (name or "").strip()
+    if not q or not _CN_CITIES:
+        return None
+    for stage in (0, 1, 2):  # 0=精确 1=前缀 2=包含
+        for it in _CN_CITIES:
+            nm, prov = it[0], it[1]
+            if (stage == 0 and nm == q) or (stage == 1 and nm.startswith(q)) or \
+               (stage == 2 and q in nm):
+                disp = nm if (not prov or prov == nm) else "%s（%s）" % (nm, prov)
+                return (float(it[2]), float(it[3]), disp)
+    return None
+
+
 def fetch_weather(city_override=None):
     """获取实时天气（免费无需 key）。city_override 支持：空=公网IP自动定位；
-    "城市名"（如 徐州 / Beijing）= Open-Meteo 地理编码解析；"lat,lon"（如 34.26,117.18）= 直接指定坐标。
+    "城市名"（如 徐州 / Beijing）= 先查内置中国城市库，未命中走 Open-Meteo 地理编码；
+    "lat,lon"（如 34.26,117.18）= 直接指定坐标。
     返回 {"ok":True,...} 或 {"ok":False,"error":...}。需外网访问，失败自动降级。"""
     import urllib.request
     import urllib.parse
@@ -2692,16 +2723,20 @@ def fetch_weather(city_override=None):
                 except Exception:
                     return {"ok": False, "error": "坐标格式应为 纬度,经度（如 34.26,117.18）"}
             else:
-                # 城市名 → Open-Meteo 地理编码
-                try:
-                    geo = _get("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh"
-                               % urllib.parse.quote(override), timeout=8)
-                    rs = (geo or {}).get("results") or []
-                    if rs:
-                        lat, lon = float(rs[0]["latitude"]), float(rs[0]["longitude"])
-                        city = rs[0].get("name") or override
-                except Exception:
-                    pass
+                # 城市名 → 内置中国城市库本地检索（准确，秒出）；未命中再走 Open-Meteo（国际/拼音）
+                hit = _cn_city_lookup(override)
+                if hit:
+                    lat, lon, city = hit
+                else:
+                    try:
+                        geo = _get("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh"
+                                   % urllib.parse.quote(override), timeout=8)
+                        rs = (geo or {}).get("results") or []
+                        if rs:
+                            lat, lon = float(rs[0]["latitude"]), float(rs[0]["longitude"])
+                            city = rs[0].get("name") or override
+                    except Exception:
+                        pass
                 if lat is None:
                     return {"ok": False, "error": "未找到城市「%s」，可改用 纬度,经度 格式" % override}
         else:
