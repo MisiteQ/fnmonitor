@@ -611,7 +611,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
   </nav>
   <div class="side-foot">
     <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
-    <div class="side-ver"><span>v2.15.1</span><span>纯本地运行</span></div>
+    <div class="side-ver"><span id="side-ver">v…</span><span>纯本地运行</span></div>
   </div>
 </aside>
 <div class="content">
@@ -1035,7 +1035,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
 
 </main>
 
-<footer class="footer">飞牛监控 v2.15.1 · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
+<footer class="footer">飞牛监控 <span id="foot-ver">v…</span> · 纯本地运行 · 历史数据保存在本机 localdata（每 60 秒一条，打开即加载历史趋势，可选 10 分钟 ~ 全部范围）</footer>
 
 </div><!-- /content -->
 </div><!-- /layout -->
@@ -2054,7 +2054,8 @@ function setText(id, txt){ const el = $(id); if (el) el.textContent = txt; }
 function renderUpdateStatus(cfg){
   // 从 /api/config 的内建信息渲染：当前版本 / 架构 / 自动检查状态 / 上次自动检查结果
   const st = cfg.update_status || {};
-  if (cfg.version) { setText("upd-cur", "v" + cfg.version); setText("about-ver", cfg.version); }
+  if (cfg.version) { setText("upd-cur", "v" + cfg.version); setText("about-ver", cfg.version);
+    setText("side-ver", "v" + cfg.version); setText("foot-ver", "v" + cfg.version); }
   if (cfg.arch) setText("upd-arch", cfg.arch);
   const auto = $("set-upd-auto");
   if (auto) auto.checked = !!cfg.update_autoupdate;
