@@ -34,7 +34,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.request
 
-VERSION = "2.15.1"
+def _read_manifest_version():
+    """从 manifest 读取权威版本号（打包版本由 manifest 决定，避免与应用内常量双处维护不一致）。
+    依次尝试：TRIM_APPDEST（fnOS 应用目录）、仓库布局 app/ 上一级、fnOS 应用基础目录。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (os.environ.get("TRIM_APPDEST", ""), os.path.dirname(here),
+                 "/var/apps/fnmonitor"):
+        if not base:
+            continue
+        try:
+            with open(os.path.join(base, "manifest"), "r", encoding="utf-8",
+                      errors="ignore") as f:
+                for line in f:
+                    m = re.match(r'\s*version\s*=\s*"?([^"\r\n]+?)"?\s*$', line)
+                    if m:
+                        return m.group(1)
+        except Exception:
+            pass
+    return ""
+
+VERSION = _read_manifest_version() or "2.16.2"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
