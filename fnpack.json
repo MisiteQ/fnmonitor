@@ -27,6 +27,24 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+    "2.16.3": {
+     "changelog": "v2.16.3<br>① 修复已安装最新版仍提示「发现新版本」：版本号常量硬编码未随 2.16.x 升级，现改为启动时从 manifest 动态读取（唯一数据源）<br>② 修复「关于 / 软件更新」版本号与已安装版本对不上：侧边栏/页脚硬编码 v2.15.1 残留，现四处版本显示统一由接口实时下发",
+     "updated_at": "2026-09-27T23:30:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.3/fnmonitor-2.16.3-x86.fpk",
+       "sha256": "14ed4cd313a19441cec046827b17cf98354ebf2227cb2674368197e05f86e411",
+       "size": 435999
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.3/fnmonitor-2.16.3-arm.fpk",
+       "sha256": "1f6fbe438f8b72c96d66f7ae0941e1c4f33ab259273cd1cecd06e04dc4c0e5eb",
+       "size": 435999
+      }
+     },
+     "published_at": "2026-09-28"
+    },
     "2.16.2": {
      "changelog": "① 修复「独立网页」模式点击桌面图标无反应 / 仍弹内嵌窗口的根因：飞牛桌面入口的真实数据源是系统数据库（应用中心 appcenter 与桌面服务 trim_sac 的入口表），磁盘 ui/config 仅在安装、升级时物化，此前只改写配置文件不可靠；现保存打开方式 / 端口时直接把类型与端口幂等同步进数据库，保存后刷新飞牛桌面（F5）即按所选方式打开——「独立网页」新标签页直开、不再弹内嵌窗口，「飞牛窗口」在内嵌窗口打开<br>② 保存不再重启应用中心服务，切换即时完成<br>③ 应用每次启动自动校验数据库入口一致性并自愈，重启 / 升级后无需手动干预",
      "updated_at": "2026-09-27T23:30:00+08:00",
