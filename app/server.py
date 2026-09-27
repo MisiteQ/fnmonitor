@@ -4015,14 +4015,9 @@ class UpdateManager:
                         shutil.copy2(s, d)
                 except Exception:
                     pass
-        # 刚装完新包，fnOS 在安装/升级时会读取新 app/ui/config；
-        # 必须在这里把用户保存的 open_mode 写到新部署的 ui/config 上，
-        # 否则用户之前选的"独立网页模式"会被 fpk 里的默认值覆盖、下次点桌面图标还是老样子。
-        try:
-            saved_mode = str(self.config.get("open_mode") or "iframe").lower()
-            apply_launcher_open_mode(saved_mode)
-        except Exception as _e:
-            pass
+        # 升级包会覆盖 app/ui/config（type 固定为 iframe）；open_mode 不再回写
+        # ui/config，打开方式由前端在 iframe 内按 /api/config 的 open_mode 自动决定；
+        # 监听端口若被覆盖回默认值，进程重启后的启动逻辑会重新同步。
         # 延迟替换进程重启（先让 HTTP 响应送达前端）
         def _restart():
             try:
@@ -4704,12 +4699,13 @@ class MonitorApp:
                 cur["data_dir"] = nd
             else:
                 cur.pop("data_dir", None)
-        # 飞牛桌面打开方式：iframe=飞牛窗口内打开 / url=浏览器新标签页
+        # 飞牛桌面打开方式：iframe=点击图标在飞牛窗口内打开 / url=点击图标直接在
+        # 浏览器新标签页打开。保存到 config.json；同时写入桌面入口 ui/config 的
+        # type 并重启应用中心，使 fnOS 桌面按新模式打开（刷新桌面页后生效）
         if "open_mode" in data:
             m = str(data["open_mode"]).lower()
             if m in ("iframe", "url"):
                 cur["open_mode"] = m
-        launcher_note, launcher_error = "", ""
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(cur, f, ensure_ascii=False, indent=1)
@@ -4737,22 +4733,45 @@ class MonitorApp:
                         pass
             if "data_dir" in cur:
                 self.config["data_dir"] = str(cur["data_dir"]).strip()
-            if str(cur.get("open_mode", "")).lower() in ("iframe", "url"):
-                self.config["open_mode"] = str(cur["open_mode"]).lower()
-                # 立即改写桌面入口 ui/config，无需等重启
-                ok_l, msg_l = apply_launcher_open_mode(self.config["open_mode"])
-                if ok_l:
-                    launcher_note = "桌面打开方式已切换为：" + msg_l + "（重新点击桌面图标或重新登录飞牛后生效）"
-                else:
-                    launcher_error = msg_l
+            open_mode_changed = False
+            new_mode = str(cur.get("open_mode", "")).lower()
+            if new_mode in ("iframe", "url"):
+                open_mode_changed = (str(self.config.get("open_mode") or "") != new_mode)
+                self.config["open_mode"] = new_mode
+            # 桌面入口同步：端口变更同步 port；打开方式变更同步 type。除写 ui/config
+            # 文件外，apply_launcher_entry 内部还会同步 fnOS 应用中心数据库（真机
+            # 实证桌面点击行为由数据库决定）——刷新飞牛桌面页（F5）后点击桌面图标
+            # 即按新模式打开（url=直接开浏览器标签页，不再弹出内嵌窗口），无需重启
+            # 任何系统服务。结果记入日志并随保存提示返回，真机上可直接确认生效情况
+            launcher_ok, launcher_msg = True, ""
+            if changed_port:
+                try:
+                    ok_p, msg_p = apply_launcher_entry(port=int(cur.get("port") or 0))
+                    print("[fnmonitor] 桌面入口端口同步: %s" % msg_p)
+                except Exception as e:
+                    print("[fnmonitor] 桌面入口端口同步异常: %s" % e)
+            if new_mode in ("iframe", "url"):
+                try:
+                    launcher_ok, launcher_msg = apply_launcher_entry(mode=new_mode, port=int(cur.get("port") or 0))
+                except Exception as e:
+                    launcher_ok, launcher_msg = False, str(e)
+                print("[fnmonitor] 桌面入口配置: %s" % launcher_msg)
             self.collector._cfg_mtime = 0.0  # 强制采集线程下次重载
             note_parts = []
             if changed_port:
                 note_parts.append("端口修改需在应用中心重启「飞牛监控」后生效")
-            if launcher_note:
-                note_parts.append(launcher_note)
+            if open_mode_changed:
+                note_parts.append("打开方式已切换，刷新飞牛桌面页面（F5）或重新登录后，点击桌面图标将直接按「%s」打开"
+                                  % ("飞牛窗口" if new_mode == "iframe" else "浏览器新标签页"))
+                if launcher_ok:
+                    if launcher_msg:
+                        note_parts.append(launcher_msg)
+                else:
+                    note_parts.append("桌面入口同步失败: %s" % launcher_msg)
             return {"ok": True, "config": dict(self.config), "port_changed": changed_port,
-                    "note": "；".join(note_parts), "launcher_error": launcher_error}
+                    "open_mode_changed": open_mode_changed,
+                    "launcher_ok": launcher_ok, "launcher_msg": launcher_msg,
+                    "note": "；".join(note_parts)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -5262,31 +5281,230 @@ def top_processes(limit=20):
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
-def apply_launcher_open_mode(mode):
-    """把飞牛桌面入口的打开方式写入应用目录 ui/config（type: iframe=飞牛窗口内打开 /
-    url=浏览器新标签页独立打开）。升级安装包会覆盖 ui/config，故服务启动时也按用户
-    配置重新应用一次。返回 (是否成功, 说明)。"""
-    if mode not in ("iframe", "url"):
+def _launcher_cfg_candidates():
+    """桌面入口 ui/config 的全部候选位置。
+    关键：应用可执行目录（target，server.py 所在）下的 ui/config 与应用基础目录
+    /var/apps/{appname}/ui/config 是两个不同文件——fnOS 应用中心 / 桌面从基础目录
+    读取入口配置（同 v2.12.1 发现 manifest 从基础目录读取）。只写 target 下的文件
+    对桌面无效（v2.16.0 切换不生效的根因）。返回 [(路径, 是否允许新建), ...]，
+    允许新建仅限 /var/apps 基础目录（缺失时用应用内原始配置补建）。"""
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
+    cands = [(os.path.join(app_dir, "ui", "config"), True)]
+    seen = {os.path.abspath(os.path.normpath(c[0])) for c in cands}
+    bases = [os.path.dirname(app_dir),           # target 的父目录即基础目录的布局
+             "/var/apps/%s" % app_name,          # fnOS 应用基础目录（桌面实际读取）
+             "/usr/trim/apps/%s" % app_name,
+             "/var/lib/fnos/apps/%s" % app_name]
+    for base in bases:
+        if not base or not base.strip("/"):
+            continue
+        p = os.path.join(base, "ui", "config")
+        ap = os.path.abspath(os.path.normpath(p))
+        if ap in seen:
+            continue
+        seen.add(ap)
+        allow_new = ap.replace("\\", "/").startswith("/var/apps/")
+        cands.append((p, allow_new))
+    return cands
+
+
+def apply_launcher_entry(mode=None, port=None):
+    """把打开方式（type）与监听端口（port）写入桌面入口 ui/config（.url 条目），
+    同步写入全部候选位置（应用可执行目录 + /var/apps/{appname} 基础目录等），
+    基础目录缺失 ui/config 时用应用内原始配置补建；随后调用 sync_launcher_db
+    同步 fnOS 应用中心数据库——真机实证桌面点击行为由数据库决定（磁盘 ui/config
+    仅在安装/升级时被物化进库），只改文件无效。
+    mode: "iframe"=点击桌面图标在飞牛内嵌窗口打开；"url"=点击桌面图标直接在浏览器
+          新标签页打开（不再弹出内嵌窗口）；None=不修改 type。
+    port: 服务实际监听端口（桌面图标按该端口连接）；None=不修改 port。
+    用户切换打开方式时由保存接口调用本函数（改完刷新桌面页即生效）；升级包会覆盖
+    ui/config 并把数据库重置为包默认 iframe，故应用启动时也按用户配置重新应用一次
+    （不重启任何服务，由前端占位页兜底）。
+    返回 (是否成功, 说明)，说明含各位置写入与数据库同步结果，便于真机排查。"""
+    if mode is not None and mode not in ("iframe", "url"):
         return False, "不支持的打开方式: %s" % mode
     try:
-        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "config")
-        if not os.path.isfile(cfg_path):
-            return False, "未找到桌面入口配置 ui/config"
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        changed = False
-        for entry in (data.get(".url") or {}).values():
-            if isinstance(entry, dict) and entry.get("type") != mode:
-                entry["type"] = mode
-                changed = True
-        if changed:
-            tmp = cfg_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-            os.replace(tmp, cfg_path)
-        return True, ("飞牛窗口内打开" if mode == "iframe" else "浏览器新标签页打开")
+        port = None if port is None else int(port)
+    except Exception:
+        return False, "端口无效: %r" % (port,)
+    if port is not None and port <= 0:
+        port = None
+    if mode is None and port is None:
+        return True, "无变更"
+    default_raw = None
+    wrote, any_change, failed = [], False, []
+    for cfg_path, allow_new in _launcher_cfg_candidates():
+        try:
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            elif allow_new and default_raw:
+                # 基础目录缺少 ui/config：以应用可执行目录当前配置补建（桌面从此读取）
+                data = json.loads(default_raw)
+                os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+            else:
+                continue
+        except Exception as e:
+            failed.append("%s: %s" % (cfg_path, e))
+            continue
+        if default_raw is None and os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    default_raw = f.read()
+            except Exception:
+                pass
+        try:
+            changed = False
+            for entry in (data.get(".url") or {}).values():
+                if not isinstance(entry, dict):
+                    continue
+                if mode is not None and entry.get("type") != mode:
+                    entry["type"] = mode
+                    changed = True
+                if port is not None and str(entry.get("port") or "") != str(port):
+                    entry["port"] = str(port)
+                    changed = True
+            if changed:
+                any_change = True
+                tmp = cfg_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                os.replace(tmp, cfg_path)
+            wrote.append(cfg_path)
+        except Exception as e:
+            failed.append("%s: %s" % (cfg_path, e))
+    file_ok = not failed
+    if not wrote:
+        file_msg = ("桌面入口写入失败: %s" % "; ".join(failed)) if failed else \
+            "未找到任何可写的桌面入口配置 ui/config"
+    elif not any_change:
+        file_msg = "桌面入口已一致（%d 处，无需变更）" % len(wrote)
+    else:
+        file_msg = "桌面入口已更新 %d 处%s" % (len(wrote),
+              ("（含 %s）" % "、".join(wrote[1:])) if len(wrote) > 1 else "")
+        if failed:
+            file_msg += "；部分失败: %s" % "; ".join(failed)
+    db_ok, db_msg = sync_launcher_db(mode=mode, port=port)
+    return (file_ok and db_ok), file_msg + (("；" + db_msg) if db_msg else "")
+
+
+def _launcher_launchname():
+    """桌面入口标识（manifest 的 desktop_applaunchname，即 ui/config .url 下的 key）。
+    fnOS 数据库以该标识定位应用的入口记录（app_service.service_name 等）。从首个
+    存在的 ui/config 候选读取。"""
+    for cfg_path, _allow_new in _launcher_cfg_candidates():
+        try:
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                keys = [k for k in (data.get(".url") or {}) if k]
+                if keys:
+                    return keys[0]
+        except Exception:
+            continue
+    return None
+
+
+def sync_launcher_db(mode=None, port=None):
+    """把打开方式/端口同步进 fnOS 的 PostgreSQL 数据库。
+    真机实证的最终生效链路：磁盘 ui/config 仅在安装/升级时被物化进库，此后桌面
+    点击行为完全由数据库决定——appcenter.app_service.type 是终极数据源（应用中心
+    重启约 20 秒后系统据此全量重建 trim_sac.entry 表），appcenter.app_open.open_type
+    同期物化；trim_sac.entry 是桌面会话当前的入口数据，直接更新后刷新桌面页即生效，
+    无需重启任何系统服务。升级/重装会把库重置为包默认 iframe，故应用启动时也调用
+    本函数拉齐。应用以 root 运行，经 sudo -u postgres psql 执行（SQL 走 stdin 避开
+    shell 引号转义），逐表 SELECT 当前值、不一致才 UPDATE。非 fnOS 环境（Windows
+    开发机）或非 root 运行时跳过并视为成功。返回 (是否成功, 说明)。"""
+    if os.name == "nt":
+        return True, ""
+    try:
+        if os.geteuid() != 0:
+            return True, ""
+    except Exception:
+        pass
+    launch = _launcher_launchname()
+    if not launch:
+        return True, ""
+
+    def psql(db, sql):
+        r = subprocess.run(
+            ["sudo", "-u", "postgres", "psql", "-U", "postgres", "-d", db,
+             "-At", "-v", "ON_ERROR_STOP=1"],
+            input=sql.encode("utf-8"), capture_output=True, timeout=25)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.decode("utf-8", "ignore").strip()
+                               or "psql 退出码 %d" % r.returncode)
+        return r.stdout.decode("utf-8", "ignore").strip()
+
+    def lit(v):
+        # SQL 字符串字面量用 dollar-quoting，避开引号转义问题
+        return "$fn$%s$fn$" % v
+
+    changed = []
+    try:
+        if mode is not None:
+            # 应用中心库：type 为终极数据源，open_type 与之同期物化
+            cur = psql("appcenter",
+                       "SELECT COALESCE((SELECT type FROM app_service WHERE service_name = %s), '')"
+                       " || '|' || COALESCE((SELECT open_type FROM app_open WHERE content = %s), '');"
+                       % (lit(launch), lit(launch)))
+            svc_type, _, open_type = cur.partition("|")
+            if svc_type != mode:
+                psql("appcenter",
+                     "UPDATE app_service SET type = %s WHERE service_name = %s;"
+                     % (lit(mode), lit(launch)))
+                changed.append("app_service.type")
+            if open_type != mode:
+                psql("appcenter",
+                     "UPDATE app_open SET open_type = %s WHERE content = %s;"
+                     % (lit(mode), lit(launch)))
+                changed.append("app_open.open_type")
+            # 桌面入口表：直接改即可让当前桌面会话生效（应用中心重启后会被系统重建）
+            cur = psql("trim_sac",
+                       "SELECT COALESCE((SELECT open_type FROM entry WHERE service_name = %s), '');"
+                       % lit(launch))
+            if cur != mode:
+                psql("trim_sac",
+                     "UPDATE entry SET open_type = %s WHERE service_name = %s;"
+                     % (lit(mode), lit(launch)))
+                changed.append("entry.open_type")
+        if port is not None:
+            # 应用中心库 url/default_url 形如 http://${host}:<port>/（保留原协议；
+            # 反代等非端口型地址不匹配则不动）
+            cur = psql("appcenter",
+                       "SELECT COALESCE((SELECT url FROM app_service WHERE service_name = %s), '');"
+                       % lit(launch))
+            m = re.match(r"^([a-z]+)://\$\{host\}:(\d+)/$", cur or "")
+            if m and int(m.group(2)) != port:
+                new_url = "%s://${host}:%d/" % (m.group(1), port)
+                psql("appcenter",
+                     "UPDATE app_service SET url = %s, default_url = %s WHERE service_name = %s;"
+                     % (lit(new_url), lit(new_url), lit(launch)))
+                changed.append("app_service.url")
+            # 桌面入口表 url 为 JSON（protocol/port/path），桌面据此拼出完整地址
+            cur = psql("trim_sac",
+                       "SELECT COALESCE((SELECT url FROM entry WHERE service_name = %s), '');"
+                       % lit(launch))
+            try:
+                eurl = json.loads(cur) if cur else {}
+            except Exception:
+                eurl = {}
+            if isinstance(eurl, dict) and str(eurl.get("port") or "") != str(port):
+                new_eurl = json.dumps(
+                    {"protocol": eurl.get("protocol") or "http",
+                     "port": str(port),
+                     "path": eurl.get("path") or "/"},
+                    separators=(",", ":"), ensure_ascii=False)
+                psql("trim_sac",
+                     "UPDATE entry SET url = %s WHERE service_name = %s;"
+                     % (lit(new_eurl), lit(launch)))
+                changed.append("entry.url")
     except Exception as e:
-        return False, str(e)
+        return False, "桌面入口数据库同步失败: %s" % e
+    if changed:
+        return True, "桌面入口数据库已更新: %s" % "、".join(changed)
+    return True, "入口数据库已一致"
 
 
 def load_config(data_dir):
@@ -5381,13 +5599,17 @@ def main():
         args.data_dir = original_dir
     # 配置文件里指定了端口则优先（网页设置修改端口后重启生效）
     port = int(config.get("port") or 0) or args.port
-    # 按用户设置同步飞牛桌面入口打开方式（ui/config 会被升级包覆盖，每次启动重新应用）
+    # 按用户配置同步桌面入口（升级包会覆盖 ui/config 并把应用中心数据库重置为
+    # 包默认 iframe，type 与端口一并恢复；apply_launcher_entry 内部会同步 fnOS
+    # 应用中心数据库——桌面点击行为由数据库决定。此处不重启任何服务，刷新桌面页
+    # 即生效；未及时刷新时由前端占位页在内嵌窗口内兜底转跳）
     try:
-        ok_l, msg_l = apply_launcher_open_mode(str(config.get("open_mode") or "iframe").lower())
+        _m = str(config.get("open_mode") or "").lower()
+        ok_l, msg_l = apply_launcher_entry(mode=(_m or None), port=port)
         if not ok_l:
-            print("[fnmonitor] 桌面打开方式应用失败: %s" % msg_l)
+            print("[fnmonitor] 桌面入口配置同步失败: %s" % msg_l)
     except Exception as e:
-        print("[fnmonitor] 桌面打开方式应用异常: %s" % e)
+        print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
 
     app = MonitorApp(args.data_dir, config, args.host, port, cfg_dir=original_dir)
     handler = app.make_handler()

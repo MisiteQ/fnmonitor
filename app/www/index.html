@@ -871,7 +871,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="mod-hide" data-mod="m-set-weather" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-openmode">
-        <div class="s-label"><b>飞牛桌面打开方式</b><div class="s-sub">点击飞牛桌面「飞牛监控」图标时的打开方式：<b>飞牛窗口</b> = 在 fnOS 桌面内嵌窗口中打开；<b>独立网页</b> = 在浏览器新标签页打开（完整浏览器能力）。<span style="color:var(--amber);font-weight:600">保存后通过「软件更新」内置升级一次即可生效（fnOS 只在安装时读取入口配置）。若当前无新版本可更，可手动卸载 fnmonitor 后重新安装本 fpk 包</span>。当前已在飞牛窗口内打开，可先点下方链接立即在新标签页试用：<a href="/" target="_blank" rel="noopener">立即在新标签页打开 ↗</a></div></div>
+        <div class="s-label"><b>飞牛桌面打开方式</b><div class="s-sub">点击飞牛桌面「飞牛监控」图标时的打开方式：<b>飞牛窗口</b> = 在 fnOS 桌面内嵌窗口中打开；<b>独立网页</b> = 直接在浏览器新标签页打开（完整浏览器能力：全屏 / 下载 / 插件，不弹出内嵌窗口）。保存时自动写入桌面入口并刷新应用中心——<b>刷新飞牛桌面页面（F5）或重新登录后生效</b>，之后点击桌面图标即按新模式直接打开。若桌面尚未刷新仍弹出内嵌窗口，窗口内会显示引导页可一键转跳浏览器。当前已在飞牛窗口内打开，可先点下方链接立即在新标签页试用：<a href="/" target="_blank" rel="noopener">立即在新标签页打开 ↗</a></div></div>
         <select id="set-open-mode" class="inp" style="max-width:200px">
           <option value="url">浏览器新标签页（独立网页，默认）</option>
           <option value="iframe">飞牛窗口内打开（iframe）</option>
@@ -2023,9 +2023,12 @@ async function saveOpenMode(){
     const j = await r.json();
     if (msg){
       if (j.ok){
-        msg.textContent = (j.note || "打开方式已保存") + (j.launcher_error ? "；但入口配置写入失败: " + j.launcher_error : "");
+        /* 优先展示服务端 note：含桌面入口写入位置 / 应用中心重启结果等诊断信息 */
+        msg.textContent = j.note || (j.open_mode_changed
+          ? "打开方式已切换：刷新飞牛桌面页面（F5）或重新登录后，点击桌面图标将直接按新模式打开"
+          : "打开方式已保存，下次从飞牛桌面打开时生效");
       } else msg.textContent = "保存失败: " + (j.error || "");
-      setTimeout(() => msg.textContent = "", 6000);
+      setTimeout(() => msg.textContent = "", 12000);
     }
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
@@ -3181,41 +3184,71 @@ function autoHideEmptyPanels(){
   detectBottomInset();
 })();
 
-/* ---------- iframe 内独立网页模式横幅 ----------
-   用户设置 open_mode="url"（独立网页）后，如果仍在飞牛 iframe 内打开
-   （fnOS 入口缓存未刷新 / 服务未重启），则在页面顶部显示横幅，
-   一键跳到浏览器新标签页。只有同时满足两个条件才显示：
+/* ---------- 独立网页模式：iframe 内自动转跳 ----------
+   桌面入口固定以 iframe（飞牛内嵌窗口）方式打开；用户在设置里选择
+   open_mode="url"（独立网页）后，页面加载时若发现自己在 iframe 内，
+   则按保存的模式自动在浏览器新标签页打开：
+   1) 先尝试 window.open 自动转跳（部分环境允许）；
+   2) 被弹窗拦截时显示占位页，大按钮点击跳转（用户手势下不会被拦截）；
+   3) 可选择「仍在此窗口查看」，本次会话不再打扰。
+   open_mode="iframe"（飞牛窗口）时本逻辑不触发，页面直接在内嵌窗口正常渲染。
+   触发条件（需同时满足）：
    1) window.self !== window.top —— 当前确实在 iframe 内
-   2) /api/config 返回 open_mode === "url" */
+   2) /api/config 返回 open_mode === "url"
+   3) 本次会话未选择「仍在此窗口查看」（sessionStorage） */
 (function(){
-  try {
-    if (window.self === window.top) return; // 顶层窗口不需要
-  } catch(e){ return; }
+  let inFrame = false;
+  try { inFrame = (window.self !== window.top); } catch(e){ inFrame = true; }
+  if (!inFrame) return; // 顶层窗口（独立网页模式）正常渲染
   fetch("/api/config", { cache: "no-store" })
     .then(r => r.json())
     .then(cfg => {
-      if ((cfg && cfg.open_mode) !== "url") return;
-      // 构建横幅
-      let bar = document.createElement("div");
-      bar.id = "__openmode_bar";
-      bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99998;" +
-        "background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;" +
-        "font-size:13px;padding:8px 16px;display:flex;align-items:center;justify-content:center;gap:10px;" +
-        "box-shadow:0 2px 12px rgba(59,130,246,.35);cursor:pointer;" +
-        "font-weight:500;transition:transform .25s,opacity .25s";
-      bar.innerHTML = '✨ 已开启独立网页模式，点击在浏览器新标签页打开 ↗';
-      bar.title = "在新标签页独立打开 fnmonitor（完整浏览器能力）";
-      bar.addEventListener("click", function(){
-        try { window.open(location.href, "_blank", "noopener"); } catch(e){}
-        bar.style.transform = "translateY(-100%)";
-        bar.style.opacity = "0";
-      });
-      document.body.appendChild(bar);
-      // 顶部 bar 出现后给 header 加点 padding，避免被遮住
-      const hdr = document.querySelector("header");
-      if (hdr) hdr.style.paddingTop = "38px";
+      const c = cfg && (cfg.config || cfg); // /api/config 返回 {config:{...}}，兼容扁平结构
+      if (!c || c.open_mode !== "url") return;
+      try { if (sessionStorage.getItem("__fnm_stay_iframe") === "1") return; } catch(e){}
+      // 先尝试自动在新标签页打开；被拦截则由占位页按钮兜底
+      let popped = null;
+      try { popped = window.open(location.href, "_blank", "noopener"); } catch(e){ popped = null; }
+      showStandalonePlaceholder(popped);
     })
     .catch(()=>{});
+
+  function showStandalonePlaceholder(autoOpened){
+    const old = document.getElementById("__openmode_mask");
+    if (old) old.remove();
+    const root = document.createElement("div");
+    root.id = "__openmode_mask";
+    root.style.cssText = "position:fixed;inset:0;z-index:99998;display:flex;align-items:center;justify-content:center;background:var(--bg,#f3f4f6)";
+    const card = document.createElement("div");
+    card.style.cssText = "max-width:430px;margin:16px;padding:28px 26px;border-radius:14px;background:var(--card,#fff);box-shadow:0 10px 40px rgba(0,0,0,.14);text-align:center;font-size:14px;color:var(--text,#1f2937)";
+    card.innerHTML =
+      '<div style="font-size:34px;line-height:1">↗</div>' +
+      '<div style="font-weight:600;font-size:16px;margin:10px 0 6px">已选择「独立网页」模式</div>' +
+      '<div style="opacity:.75;line-height:1.7">' + (autoOpened
+        ? '页面已在浏览器新标签页打开，本窗口可以关闭。'
+        : '本页面将在浏览器新标签页中打开，以获得完整浏览器能力（全屏 / 下载 / 插件）。') + '</div>';
+    const btnOpen = document.createElement("button");
+    btnOpen.textContent = "在浏览器新标签页打开";
+    btnOpen.style.cssText = "margin-top:16px;padding:9px 18px;border:none;border-radius:9px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;font-size:14px;cursor:pointer;font-weight:500";
+    btnOpen.addEventListener("click", function(){
+      try { window.open(location.href, "_blank", "noopener"); } catch(e){}
+    });
+    const btnStay = document.createElement("button");
+    btnStay.textContent = "仍在此窗口查看";
+    btnStay.style.cssText = "margin:16px 0 0 10px;padding:9px 18px;border:1px solid rgba(128,128,128,.35);border-radius:9px;background:transparent;color:inherit;font-size:14px;cursor:pointer";
+    btnStay.addEventListener("click", function(){
+      try { sessionStorage.setItem("__fnm_stay_iframe", "1"); } catch(e){}
+      root.remove();
+    });
+    const tip = document.createElement("div");
+    tip.textContent = "切换打开方式：设置 → 飞牛桌面打开方式";
+    tip.style.cssText = "margin-top:14px;font-size:12px;opacity:.55";
+    card.appendChild(btnOpen);
+    card.appendChild(btnStay);
+    card.appendChild(tip);
+    root.appendChild(card);
+    document.body.appendChild(root);
+  }
 })();
 </script>
 </body>

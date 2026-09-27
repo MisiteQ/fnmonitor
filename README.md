@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.14.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.16.2-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与七套主题。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.14.0**
+- 当前版本：**v2.16.2**
 - 作者：**Misite齊**
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（安装向导可改）
@@ -33,7 +33,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.14.0-x86.fpk`（x86 机型）或 `fnmonitor-2.14.0-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.16.2-x86.fpk`（x86 机型）或 `fnmonitor-2.16.2-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -41,7 +41,12 @@ https://github.com/MisiteQ/FnDepot
 
 ## 🛠 从源码打包
 
-需要安装 [fnpack](https://developer.fnnas.com/docs/cli/fnpack/) 命令行工具。
+需要安装 [fnpack](https://developer.fnnas.com/docs/cli/fnpack/) 命令行工具（Windows 下也可直接把 `fnpack.exe` 放到项目根目录，打包脚本会优先使用）。
+
+构建脚本会自动读取 `manifest` 中的版本号，**一次构建同时产出带版本号的双架构安装包**：
+
+- `fnmonitor-<版本>-x86.fpk`（x86 机型）
+- `fnmonitor-<版本>-arm.fpk`（arm64 机型）
 
 ### Windows（PowerShell 5+）
 
@@ -55,6 +60,8 @@ https://github.com/MisiteQ/FnDepot
 ```bash
 bash build.sh
 ```
+
+> 打包过程中脚本会临时切换 `manifest` 的 `platform` 字段分别构建，结束后自动恢复原值；发布新版本时只需修改 `manifest` 的 `version` 与 `changelog` 后重新执行脚本。
 
 ## 📁 项目结构
 
@@ -83,6 +90,9 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 | 版本 | 内容 |
 |---|---|
+| v2.16.2 | **修复「独立网页」模式点击桌面图标无反应 / 仍弹内嵌窗口的根因**：真机实证飞牛桌面入口的真实数据源是系统数据库（应用中心 `appcenter.app_service`/`app_open` + 桌面服务 `trim_sac.entry`），磁盘上的 `ui/config` 仅在安装 / 升级时被读取物化——此前只改写配置文件，系统数据库仍为旧值，导致桌面按旧方式打开、甚至查不到条目而点击静默无效。现保存打开方式 / 端口时直接幂等同步数据库（仅在存在差异时 UPDATE），**保存不再重启应用中心服务**，刷新飞牛桌面（F5）即生效；应用每次启动也自动校验数据库入口一致性并自愈。已在真机完成 url ↔ iframe 双向回归（独立网页：浏览器新标签页直开、无内嵌窗口；飞牛窗口：内嵌窗口正常渲染）。**打包调整**：构建脚本一次产出 `fnmonitor-<版本>-x86.fpk` / `fnmonitor-<版本>-arm.fpk` 双架构带版本号安装包 |
+| v2.16.1 | 修复切换「独立网页」后点击桌面图标仍弹出内嵌窗口：桌面入口配置（ui/config）此前只写入应用可执行目录，而 fnOS 应用中心与桌面实际从应用基础目录 `/var/apps/{应用ID}/` 读取——现同步写入全部入口配置位置（基础目录缺失时自动补建），并重启应用中心服务使配置重读（该重启方案在 v2.16.2 已被数据库直写取代） |
+| v2.16.0 | **重构「飞牛桌面打开方式」切换机制**：可选择点击桌面图标时在飞牛窗口（iframe）内打开或在浏览器新标签页（url，完整浏览器能力：全屏 / 下载 / 插件）独立打开，保存后自动改写桌面入口配置并重读；iframe 内误开时窗口内显示一键转跳浏览器的引导页。**修复修改监听端口后桌面图标打不开**：改端口保存及应用启动 / 升级时自动把桌面入口配置的端口同步为实际监听端口（此前始终指向默认 8777） |
 | v2.15.1 | **修复天气城市搜索不准**：新增内置中国行政区划坐标库（省/市/县三级 3200+，来源阿里 DataV GeoAtlas，与 QWeather 同源），国内城市名一律本地检索（名称精确 > 前缀 > 包含）——此前 Open-Meteo 地理编码基于 GeoNames，中国城市中文覆盖差，部分城市（如常州、温州、驻马店）搜不到、同名地点错配（如佛山解析到云南、东莞坐标偏到海南）；未命中再回退 Open-Meteo（国际城市/拼音），「纬度,经度」与自动定位逻辑不变；天气卡显示名带省份消歧（如「佛山市（广东省）」） |
 | v2.15.0 | **新增硬 RAID 物理盘温度与健康监控（LSI/Broadcom storcli 通用）**：MegaRAID（含 Dell PERC 贴牌）RAID 模式下物理盘不作为 `/dev/sdX` 暴露给系统、smartctl 不可见，现经 storcli/perccli 的 JSON 输出结构化解析——「阵列设定」面板展示控制器型号与 ROC 芯片温度、虚拟阵列（VD）状态、每块物理盘的盘位/型号/介质/容量/状态/**温度/健康/介质错误**表格；健康自动分级（SMART 告警与离线/丢失 → 故障，介质或预测失败计数 > 0 → 警告，重建中 → 重建，其余正常）。storcli64/storcli/perccli64/perccli 全自动查找（含 `/opt/MegaRAID`、`/usr/local/bin` 等常见路径），检测到阵列卡但未装工具时给出安装指引、装好即自动识别；HBA 直通卡（IT 模式）仍走标准 SMART 路径。阵列卡识别按优先级修正（RAID > HBA/SAS > 存储控制器 > SATA 控制器），纯 SATA 主板不再误报为阵列卡；RAID 物理盘温度并入总览温度卡（名称形如「阵列 32:0」）。温度与 SMART 由阵列卡读取传感器数据、不寻道，**不会唤醒 STANDBY 休眠硬盘** |
 | v2.14.0 | **休眠硬盘保护（不再周期性唤醒机械硬盘）**：电源状态检测只使用非唤醒命令（`smartctl -n standby` / `hdparm -C`，8 秒缓存，工具缺失自动退避）；休眠盘的容量 statvfs、SMART 详情、硬盘温度、历史库写入/清理、内置应用目录扫描全部跳过并沿用上一次活跃数据，历史采样在硬盘唤醒后自动补写不丢点；**前端面板轮询触发的历史库 SELECT 同样门控**（休眠期间返回休眠前缓存数据，杜绝开着面板把盘唤醒）；设置页新增「休眠硬盘保护」开关（默认开启，可一键关闭恢复完整采集）。**整机功耗口径修正**：RAPL 仅测得 CPU 封装功耗（如 N5095 空闲仅 2-3W，与插座实测差距大），现整机功耗 = CPU 封装 + 内存 + 主板/其他固定底座（默认 8W，可在设置中按插座实测补差）+ 活动硬盘功耗（休眠盘不计），实时面板展示各分项与口径说明。**应用端口显示实际监听值**：不再只信 manifest 的安装默认端口，改为通过 `ss` 监听端口 + `/proc` 进程归属（cmdline/exe/cwd/cgroup 引用 `@appcenter/@appdata/<appid>`）交叉校验，如应用默认 8000 实际运行在 8899 时显示粗体实际端口并灰字标注默认值，新增「运行中/未运行」状态 |
