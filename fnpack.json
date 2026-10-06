@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.15.1/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,7 +27,24 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
-    "2.16.3": {
+   "2.16.4": {
+    "changelog": "v2.16.4<br>① 修复「时间·农历」显示与真实农历不同步：公历转农历查表算法的三处错误——年份回补误用下一年天数（闰月年后日期错 1～2 个月，如 2025-06-25 误显四月廿九、实为六月初一）、月份回补同理且闰月标志未复位（闰月后月份全被错标为「闰」，出现闰七月/闰腊月）、日干支常数错误（+50 应为 +17，日柱长期算错）；已经 1950–2048 共 36000 天逐日连续性自检与权威万年历对照（2026-10-06 = 丙午年八月廿六·癸丑日）",
+    "updated_at": "2026-10-06T20:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-x86.fpk",
+      "sha256": "52aada51df4dd32c71199b58c98355cbc7289b97a48111b68b21ed5c577f9373",
+      "size": 292259
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-arm.fpk",
+      "sha256": "170984c9ae094c5d9bb1f519b4d961943d76349fc8c251b064c2aea68012f169",
+      "size": 292271
+     }
+    }
+   },
+   "2.16.3": {
      "changelog": "v2.16.3<br>① 修复已安装最新版仍提示「发现新版本」：版本号常量硬编码未随 2.16.x 升级，现改为启动时从 manifest 动态读取（唯一数据源）<br>② 修复「关于 / 软件更新」版本号与已安装版本对不上：侧边栏/页脚硬编码 v2.15.1 残留，现四处版本显示统一由接口实时下发",
      "updated_at": "2026-09-27T23:30:00+08:00",
      "os_min_version": "0.9.0",

@@ -1845,21 +1845,26 @@ function lunarInfo(y, m, d){
   function lLeap(y){ return leapMonth(y); }
   const base = Date.UTC(1900, 0, 31);
   let offset = Math.floor((Date.UTC(y, m-1, d) - base) / 86400000);
-  let yc = 1900, mc = 0;
-  for (yc = 1900; yc < 2101 && offset > 0; yc++){ const ld = lYearDays(yc); offset -= ld; }
-  if (offset < 0){ offset += lYearDays(yc); yc--; }
+  let yc = 1900, mc = 0, sub = 0;
+  // 注意：循环变量在每次迭代末尾自增，回补时必须用「本次实际扣减的天数」，
+  // 不能用自增后年份/月份的天数（相邻年/月天数不同会导致日期错位）
+  for (yc = 1900; yc < 2101 && offset > 0; yc++){ sub = lYearDays(yc); offset -= sub; }
+  if (offset < 0){ offset += sub; yc--; }
   const leap = leapMonth(yc);
   let isLeap = false;
   for (mc = 1; mc < 13 && offset > 0; mc++){
-    if (leap > 0 && mc === (leap + 1) && !isLeap){ --mc; isLeap = true; const ld = leapDays(yc); offset -= ld; }
-    else { const ld = lMonthDays(yc, mc); offset -= ld; }
+    if (leap > 0 && mc === (leap + 1) && !isLeap){ --mc; isLeap = true; sub = leapDays(yc); }
+    else { sub = lMonthDays(yc, mc); if (isLeap) isLeap = false; }
+    offset -= sub;
   }
   if (offset === 0 && leap > 0 && mc === (leap + 1)){ if (isLeap){ isLeap = false; } else { isLeap = true; --mc; } }
-  if (offset < 0){ offset += lMonthDays(yc, mc); --mc; }
-  const gzY = GAN[(yc - 4) % 10] + ZHI[(yc - 4) % 12];
+  if (offset < 0){ offset += sub; --mc; }
+  const gzY = GAN[(yc - 4 + 1000) % 10] + ZHI[(yc - 4 + 1000) % 12];
   const md = LUNAR_MONTHS[mc - 1] + "月";
   const dd = LUNAR_DAYS2[offset];
-  const gzD = GAN[Math.floor((Date.UTC(y,m-1,d)/86400000 + 50) % 60 % 10)] + ZHI[Math.floor((Date.UTC(y,m-1,d)/86400000 + 50) % 60 % 12)];
+  // 日干支：以 1949-10-01 甲子日（Unix 第 -7397 天）为锚点，常数 +17，正模避免负数
+  const dayNum = Math.floor(Date.UTC(y,m-1,d) / 86400000);
+  const gzD = GAN[((dayNum + 17) % 10 + 10) % 10] + ZHI[((dayNum + 17) % 12 + 12) % 12];
   return { y: yc, m: mc, d: offset + 1, monthName: md, dayName: dd, gzY: gzY, gzD: gzD, isLeap: isLeap };
 }
 function updateLunar(){
