@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.16.3-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.16.5-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与七套主题。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.16.3**
+- 当前版本：**v2.16.5**
 - 作者：**Misite齊**
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（安装向导可改）
@@ -33,7 +33,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.16.3-x86.fpk`（x86 机型）或 `fnmonitor-2.16.3-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.16.5-x86.fpk`（x86 机型）或 `fnmonitor-2.16.5-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
