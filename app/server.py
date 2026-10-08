@@ -53,7 +53,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.16.4"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.16.5"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3223,13 +3223,26 @@ class History:
             return False
 
     def _memo(self, key, rows):
-        """记录 / 取用休眠期间的读缓存（条目过多时丢弃最旧的一批）。"""
+        """记录 / 取用休眠期间的读缓存（条目过多时丢弃最旧的一批）。
+
+        仅用于面板轮询触发的查询（query），使休眠的机械硬盘不被周期性 SELECT 唤醒；
+        用户主动的导出 / 报告 / 统计操作不应调用本方法——其结果可能含数百万行，
+        挂入 _read_memo 会长期占用数 GB 内存且永不释放（参见 issue #3）。
+        """
         if rows is None:
             return self._read_memo.get(key, [])
         self._read_memo[key] = rows
         if len(self._read_memo) > 128:
             for k in list(self._read_memo)[:32]:
                 self._read_memo.pop(k, None)
+        return rows
+
+    def _no_cache(self, rows):
+        """导出 / 报告路径专用：不挂入缓存，函数返回后由 Python GC 回收。
+
+        导出是用户主动的一次性操作，下次导出可能要不同范围或最新数据，
+        缓存它毫无意义且会持有数百万行导致 RSS 冲顶不回落（issue #3）。
+        休眠保护仍保留：读 db 会唤醒 STANDBY 硬盘，休眠时返回空列表。"""
         return rows
 
     def _init(self):
@@ -3285,10 +3298,15 @@ class History:
         return self._memo(key, rows)
 
     def export_net(self, seconds):
-        """导出网卡上下行历史 (ts, metric, value)。seconds=0 表示全部。"""
-        key = ("enet", seconds)
+        """导出网卡上下行历史 (ts, metric, value)。seconds=0 表示全部。
+
+        导出路径不挂入 _read_memo 缓存（issue #3）：全表结果可达数百万行，
+        缓存会长期占用数 GB 内存且永不释放。休眠保护仍生效，休眠时返回空列表。
+        """
         if self._asleep():
-            return self._memo(key, None)
+            return []
+        # 全表查询加 LIMIT 保护，防止极端积累（约 23 个月 × 每分钟 1 条）撑爆内存
+        limit = "" if seconds else " LIMIT 1000000"
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
@@ -3296,56 +3314,71 @@ class History:
                     cutoff = time.time() - seconds
                     rows = conn.execute(
                         "SELECT ts, metric, value FROM metrics WHERE ts>=? "
-                        "AND (metric LIKE 'net_rx:%' OR metric LIKE 'net_tx:%') ORDER BY ts",
+                        "AND (metric LIKE 'net_rx:%' OR metric LIKE 'net_tx:%') ORDER BY ts"
+                        + limit,
                         (cutoff,),
                     ).fetchall()
                 else:
                     rows = conn.execute(
                         "SELECT ts, metric, value FROM metrics "
-                        "WHERE (metric LIKE 'net_rx:%' OR metric LIKE 'net_tx:%') ORDER BY ts",
+                        "WHERE (metric LIKE 'net_rx:%' OR metric LIKE 'net_tx:%') ORDER BY ts"
+                        + limit,
                     ).fetchall()
             finally:
                 conn.close()
         except Exception:
             return []
-        return self._memo(key, rows)
+        return self._no_cache(rows)
 
     def export_rows(self, seconds):
-        """导出全部历史记录 (ts, metric, value)；seconds=0 表示全部。"""
-        key = ("erows", seconds)
+        """导出全部历史记录 (ts, metric, value)；seconds=0 表示全部。
+
+        导出路径不挂入 _read_memo 缓存（issue #3）：全表结果可达数百万行，
+        缓存会长期占用数 GB 内存且永不释放。休眠保护仍生效，休眠时返回空列表。
+        """
         if self._asleep():
-            return self._memo(key, None)
+            return []
+        # 全表查询加 LIMIT 保护，防止极端积累（约 23 个月 × 每分钟 1 条）撑爆内存
+        limit = "" if seconds else " LIMIT 1000000"
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
                 if seconds:
                     cutoff = time.time() - seconds
                     rows = conn.execute(
-                        "SELECT ts, metric, value FROM metrics WHERE ts>=? ORDER BY ts",
+                        "SELECT ts, metric, value FROM metrics WHERE ts>=? ORDER BY ts"
+                        + limit,
                         (cutoff,),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT ts, metric, value FROM metrics ORDER BY ts",
+                        "SELECT ts, metric, value FROM metrics ORDER BY ts"
+                        + limit,
                     ).fetchall()
             finally:
                 conn.close()
         except Exception:
             return []
-        return self._memo(key, rows)
+        return self._no_cache(rows)
 
     def query_prefix(self, prefix, seconds):
         """按前缀批量查询历史指标（如 'net_rx_bytes:' 返回所有网卡的累计字节历史）。
-        seconds=0 表示全部保留期。返回 [(ts, metric, value)] 列表。"""
-        key = ("qp", prefix, seconds)
+        seconds=0 表示全部保留期。返回 [(ts, metric, value)] 列表。
+
+        导出 / 统计路径不挂入 _read_memo 缓存（issue #3）：全前缀结果可达数百万行，
+        缓存会长期占用数 GB 内存且永不释放。休眠保护仍生效，休眠时返回空列表。
+        """
         if self._asleep():
-            return self._memo(key, None)
+            return []
         cutoff = (time.time() - seconds) if seconds else 0
+        # 全表查询加 LIMIT 保护，防止极端积累撑爆内存
+        limit = "" if seconds else " LIMIT 1000000"
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             try:
                 cur = conn.execute(
-                    "SELECT ts, metric, value FROM metrics WHERE metric LIKE ? AND ts>=? ORDER BY ts",
+                    "SELECT ts, metric, value FROM metrics WHERE metric LIKE ? AND ts>=? ORDER BY ts"
+                    + limit,
                     (prefix + "%", cutoff),
                 )
                 rows = cur.fetchall()
@@ -3353,7 +3386,7 @@ class History:
                 conn.close()
         except Exception:
             return []
-        return self._memo(key, rows)
+        return self._no_cache(rows)
 
     def cleanup(self, retention_days):
         cutoff = time.time() - retention_days * 86400
