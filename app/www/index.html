@@ -651,6 +651,12 @@ body{display:flex;flex-direction:column;min-height:100vh}
       <button class="panel-hide" data-panel="overview" title="隐藏此面板">✕</button>
     </div>
     <div class="cards">
+    <div class="card monthly-summary" data-mod="m-monthly" style="grid-column:1/-1;display:none">
+      <div class="label">📊 上月汇总<button class="mod-hide" data-mod="m-monthly" title="隐藏此模块">✕</button></div>
+      <div class="value" id="ms-month" style="font-size:1.1em">--</div>
+      <div class="ms-grid" id="ms-content" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px;margin-top:6px"></div>
+      <div class="sub" id="ms-note" style="opacity:.72"></div>
+    </div>
     <div class="card cpu" data-mod="m-cpu"><div class="label">🖥 CPU 使用率<button class="mod-hide" data-mod="m-cpu" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">负载 <b>--</b> / <b>--</b> 核</div></div>
     <div class="card mem" data-mod="m-mem"><div class="label">🧠 内存<button class="mod-hide" data-mod="m-mem" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
     <div class="card disk" data-mod="m-disk"><div class="label">💾 存储总使用<button class="mod-hide" data-mod="m-disk" title="隐藏此模块">✕</button></div><div class="value">--<small>%</small></div><div class="bar"><i style="width:0%"></i></div><div class="sub">-- / --</div></div>
@@ -863,6 +869,12 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <input id="set-retention" class="inp" type="number" min="1" max="365" placeholder="7">
         <button class="op-btn" onclick="saveConfig()">保存</button>
         <button class="mod-hide" data-mod="m-set-retention" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-monthly">
+        <div class="s-label"><b>上月汇总</b><div class="s-sub">在仪表盘显示上个月各项数据汇总（CPU / 内存 / 网络 / 功耗 / 温度等）。<b>历史保留天数不足整月时自动叠加保存</b>，确保汇总数据完整不丢失</div></div>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-right:8px"><input type="checkbox" id="set-monthly-summary" onchange="saveMonthlySummary()"> <b>启用</b></label>
+        <span id="monthly-note" style="opacity:.85;font-size:.85em"></span>
+        <button class="mod-hide" data-mod="m-set-monthly" title="隐藏此模块">✕</button>
       </div>
       <div class="set-row" data-mod="m-set-weather">
         <div class="s-label"><b>天气位置（自定义）</b><div class="s-sub">填城市名（如 徐州）或 纬度,经度（如 34.26,117.18）；留空=按网络自动定位。需联网</div></div>
@@ -2468,6 +2480,57 @@ async function pollOverview(){
   }
 }
 async function pollPorts(){ if (document.hidden) return; try { const j = await getJSON("/api/ports"); renderPorts(j.ports || {}); } catch(e){} }
+/* ---------- 上月汇总 ---------- */
+async function pollMonthlySummary(){
+  try {
+    const j = await getJSON("/api/monthly_summary");
+    renderMonthlySummary(j);
+  } catch(e){}
+}
+function renderMonthlySummary(j){
+  const card = document.querySelector('.card.monthly-summary');
+  if (!card) return;
+  // 配置加载时同步开关状态
+  const cb = $("set-monthly-summary");
+  if (cb && j.enabled != null) cb.checked = !!j.enabled;
+  // 显示/隐藏卡片：仅开启开关且有数据时显示
+  const noteEl = $("monthly-note");
+  if (j.enabled && j.retention_days != null && j.retention_days < 31 && noteEl){
+    noteEl.textContent = "历史保留天数 " + j.retention_days + " 不足整月，已自动叠加保存汇总";
+  } else if (noteEl){
+    noteEl.textContent = "";
+  }
+  if (!j.enabled || !j.available){
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "";
+  $("ms-month").textContent = (j.year || "--") + "年" + (j.month || "--") + "月汇总";
+  const items = [];
+  if (j.cpu) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">CPU 均值</span><br><b>' + (j.cpu.avg||0) + '%</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.cpu.max||0) + '%</span></div>');
+  if (j.mem) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">内存均值</span><br><b>' + (j.mem.avg||0) + '%</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.mem.max||0) + '%</span></div>');
+  if (j.disk) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">磁盘均值</span><br><b>' + (j.disk.avg||0) + '%</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.disk.max||0) + '%</span></div>');
+  if (j.temp) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">温度均值</span><br><b>' + (j.temp.avg||0) + '°C</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.temp.max||0) + '°C</span></div>');
+  if (j.net_rx != null || j.net_tx != null) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">总流量</span><br><b>↓' + fmtBytes(j.net_rx||0) + '</b><br><span style="opacity:.6;font-size:.75em">↑' + fmtBytes(j.net_tx||0) + '</span></div>');
+  if (j.power) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">功耗</span><br><b>' + (j.power.kwh||0) + ' kWh</b><br><span style="opacity:.6;font-size:.75em">均 ' + (j.power.avg_w||0) + 'W</span></div>');
+  if (j.power && j.power.yuan != null) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">电费</span><br><b>¥' + (j.power.yuan||0) + '</b></div>');
+  if (j.load1) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">负载均值</span><br><b>' + (j.load1.avg||0) + '</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.load1.max||0) + '</span></div>');
+  $("ms-content").innerHTML = items.join("") || '<div class="empty">暂无数据</div>';
+  const note = $("ms-note");
+  if (note) note.textContent = j.note || "";
+}
+async function saveMonthlySummary(){
+  const v = $("set-monthly-summary") && $("set-monthly-summary").checked ? 1 : 0;
+  try {
+    const r = await fetch("/api/config/save", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({monthly_summary_enabled: v}) });
+    const j = await r.json();
+    if (j.ok){
+      $("monthly-note").textContent = v ? "已开启，等待后台采集归档" : "已关闭";
+      if (v) pollMonthlySummary();
+      else { const card = document.querySelector('.card.monthly-summary'); if (card) card.style.display = "none"; }
+    }
+  } catch(e){}
+}
 /* ---------- 天气（总览卡） ---------- */
 function renderWeather(w){
   const card = document.querySelector(".card.weather");
@@ -2639,6 +2702,7 @@ const MOD_LABELS = {
   "m-ex-traffic": "导出流量 CSV", "m-ex-power": "导出功耗 CSV",
   "m-set-port": "设置·服务端口", "m-set-interval": "设置·采集间隔", "m-set-hist": "设置·历史采样间隔",
   "m-set-retention": "设置·历史保留天数", "m-set-sync": "设置·界面同步", "m-set-weather": "设置·天气位置",
+  "m-monthly": "总览·上月汇总", "m-set-monthly": "设置·上月汇总",
   "m-set-update": "设置·软件更新", "m-set-about": "设置·关于", "m-set-font": "设置·字体大小",
   "m-set-datadir": "设置·数据目录", "m-set-resetui": "设置·初始化界面",
   "m-set-tdp": "设置·CPU TDP", "m-set-rate": "设置·电价", "m-set-diskw": "设置·单盘功耗",
@@ -3055,7 +3119,7 @@ function autoHideEmptyPanels(){
     try { t = localStorage.getItem("fnmonitor-tab") || "home"; } catch(e){}
     switchTab(t);
   })();
-  await Promise.all([pollOverview(), pollDocker(), pollProcesses(), pollApps(), pollPorts(), loadConfigForm(), pollWall(), pollTraffic(), pollPowerStats()]);
+  await Promise.all([pollOverview(), pollDocker(), pollProcesses(), pollApps(), pollPorts(), loadConfigForm(), pollWall(), pollTraffic(), pollPowerStats(), pollMonthlySummary()]);
   pollWeather(); // 天气需外网，异步加载不阻塞首屏
   await loadUI();
   loadHistory();
@@ -3068,12 +3132,13 @@ function autoHideEmptyPanels(){
   setInterval(pollWeather, 600000);
   setInterval(pollTraffic, 15000);
   setInterval(pollPowerStats, 15000);
+  setInterval(pollMonthlySummary, 300000); // 上月汇总 5 分钟轮询即可
   setInterval(loadHistory, 60000);   // 历史每 60 秒才新增一个点，30 秒拉取是重复查询
   // 启动 5 分钟后检查数据可用性：从未获取到数据的面板/模块自动隐藏
   setTimeout(autoHideEmptyPanels, 5 * 60 * 1000);
   // 切回本标签页时立即补一次刷新（后台期间轮询被暂停，数据会滞后）
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden){ pollOverview(); pollWall(); pollDocker(); loadHistory(); pollTraffic(); pollPowerStats(); }
+    if (!document.hidden){ pollOverview(); pollWall(); pollDocker(); loadHistory(); pollTraffic(); pollPowerStats(); pollMonthlySummary(); }
   });
 })();
 

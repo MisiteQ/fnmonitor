@@ -53,12 +53,12 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.16.5"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.16.6"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url"}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url", "monthly_summary_enabled": 0}
 # 虚拟网卡前缀（Docker 网桥 / 容器 / VPN 等）：流量与功耗估算统一口径
 VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
 
@@ -3252,6 +3252,15 @@ class History:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("CREATE TABLE IF NOT EXISTS metrics (ts REAL NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_metric_ts ON metrics(metric, ts)")
+                # 上月汇总表：cleanup 删除 metrics 前先把数据按月汇总 UPSERT 到此表，
+                # 不受 retention 清理影响，即使 retention=7 月度汇总仍完整（增量叠加）
+                conn.execute("""CREATE TABLE IF NOT EXISTS monthly_summary (
+                    year INTEGER NOT NULL, month INTEGER NOT NULL, metric TEXT NOT NULL,
+                    sum_val REAL DEFAULT 0, count_val INTEGER DEFAULT 0,
+                    max_val REAL, min_val REAL, first_val REAL, last_val REAL,
+                    first_ts REAL, last_ts REAL, updated_at REAL,
+                    PRIMARY KEY (year, month, metric))""")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_ms_ym ON monthly_summary(year DESC, month DESC)")
                 # 自愈：v2.8.0 前的历史写入曾把 (指标名, 时间戳) 两列互换（ts 列存了文本），
                 # 这些脏行永远查不出来还会拖慢查询，启动时一次性清除
                 conn.execute("DELETE FROM metrics WHERE typeof(ts) != 'real'")
@@ -3388,8 +3397,123 @@ class History:
             return []
         return self._no_cache(rows)
 
-    def cleanup(self, retention_days):
+    def _archive_to_monthly(self, cutoff):
+        """把即将被 cleanup 删除的 metrics 数据（ts < cutoff）按月汇总后 UPSERT 到 monthly_summary。
+
+        叠加策略（INSERT ON CONFLICT）：
+        - sum_val += new_sum, count_val += new_count（用于加权平均 avg = sum/count）
+        - max_val = MAX(max_val, new_max), min_val = MIN(min_val, new_min)
+        - first_val/first_ts 取更早的；last_val/last_ts 取更晚的
+        - 累计型指标（net_rx_bytes 等）月度值 = last_val - first_val
+        """
+        import datetime
+        conn = sqlite3.connect(self.db_path, timeout=15)
+        try:
+            rows = conn.execute(
+                "SELECT metric, SUM(value), COUNT(value), MAX(value), MIN(value) "
+                "FROM metrics WHERE ts < ? GROUP BY metric", (cutoff,)
+            ).fetchall()
+            if not rows:
+                return
+            now = time.time()
+            for metric, s, cnt, mx, mn in rows:
+                first_row = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric=? AND ts<? ORDER BY ts ASC LIMIT 1",
+                    (metric, cutoff)
+                ).fetchone()
+                last_row = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric=? AND ts<? ORDER BY ts DESC LIMIT 1",
+                    (metric, cutoff)
+                ).fetchone()
+                if not first_row:
+                    continue
+                dt = datetime.datetime.fromtimestamp(first_row[0])
+                y, m = dt.year, dt.month
+                conn.execute("""
+                    INSERT INTO monthly_summary(year, month, metric, sum_val, count_val, max_val, min_val,
+                        first_val, last_val, first_ts, last_ts, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(year, month, metric) DO UPDATE SET
+                        sum_val = monthly_summary.sum_val + excluded.sum_val,
+                        count_val = monthly_summary.count_val + excluded.count_val,
+                        max_val = MAX(monthly_summary.max_val, excluded.max_val),
+                        min_val = MIN(monthly_summary.min_val, excluded.min_val),
+                        first_val = CASE WHEN excluded.first_ts < monthly_summary.first_ts
+                                    THEN excluded.first_val ELSE monthly_summary.first_val END,
+                        first_ts = MIN(monthly_summary.first_ts, excluded.first_ts),
+                        last_val = CASE WHEN excluded.last_ts > monthly_summary.last_ts
+                                   THEN excluded.last_val ELSE monthly_summary.last_val END,
+                        last_ts = MAX(monthly_summary.last_ts, excluded.last_ts),
+                        updated_at = excluded.updated_at
+                """, (y, m, metric, s or 0, cnt, mx, mn,
+                      first_row[1], last_row[1], first_row[0], last_row[0], now))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    def _archive_to_monthly_range(self, start_ts, end_ts):
+        """把 metrics 表中指定时间范围 [start_ts, end_ts) 的数据按月汇总后 UPSERT 到 monthly_summary。
+
+        用于月初补全：月末最后几天的数据可能还没被 cleanup 删除，但月初时需要归档到 monthly_summary，
+        确保上月汇总完整（与 _archive_to_monthly 的叠加策略相同）。
+        """
+        import datetime
+        conn = sqlite3.connect(self.db_path, timeout=15)
+        try:
+            rows = conn.execute(
+                "SELECT metric, SUM(value), COUNT(value), MAX(value), MIN(value) "
+                "FROM metrics WHERE ts >= ? AND ts < ? GROUP BY metric", (start_ts, end_ts)
+            ).fetchall()
+            if not rows:
+                return
+            now = time.time()
+            for metric, s, cnt, mx, mn in rows:
+                first_row = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric=? AND ts>=? AND ts<? ORDER BY ts ASC LIMIT 1",
+                    (metric, start_ts, end_ts)
+                ).fetchone()
+                last_row = conn.execute(
+                    "SELECT ts, value FROM metrics WHERE metric=? AND ts>=? AND ts<? ORDER BY ts DESC LIMIT 1",
+                    (metric, start_ts, end_ts)
+                ).fetchone()
+                if not first_row:
+                    continue
+                dt = datetime.datetime.fromtimestamp(first_row[0])
+                y, m = dt.year, dt.month
+                conn.execute("""
+                    INSERT INTO monthly_summary(year, month, metric, sum_val, count_val, max_val, min_val,
+                        first_val, last_val, first_ts, last_ts, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(year, month, metric) DO UPDATE SET
+                        sum_val = monthly_summary.sum_val + excluded.sum_val,
+                        count_val = monthly_summary.count_val + excluded.count_val,
+                        max_val = MAX(monthly_summary.max_val, excluded.max_val),
+                        min_val = MIN(monthly_summary.min_val, excluded.min_val),
+                        first_val = CASE WHEN excluded.first_ts < monthly_summary.first_ts
+                                    THEN excluded.first_val ELSE monthly_summary.first_val END,
+                        first_ts = MIN(monthly_summary.first_ts, excluded.first_ts),
+                        last_val = CASE WHEN excluded.last_ts > monthly_summary.last_ts
+                                   THEN excluded.last_val ELSE monthly_summary.last_val END,
+                        last_ts = MAX(monthly_summary.last_ts, excluded.last_ts),
+                        updated_at = excluded.updated_at
+                """, (y, m, metric, s or 0, cnt, mx, mn,
+                      first_row[1], last_row[1], first_row[0], last_row[0], now))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    def cleanup(self, retention_days, archive_enabled=False):
         cutoff = time.time() - retention_days * 86400
+        # 开启上月汇总时，删除前先把即将清理的数据按月汇总叠加保存（issue #3 邻近思路）
+        if archive_enabled:
+            try:
+                self._archive_to_monthly(cutoff)
+            except Exception:
+                pass
         conn = sqlite3.connect(self.db_path, timeout=15)
         try:
             conn.execute("DELETE FROM metrics WHERE ts<?", (cutoff,))
@@ -3731,9 +3855,26 @@ class Collector(threading.Thread):
         if now - self._last_cleanup_ts >= 3600 and not path_on_standby(self.data_dir):
             self._last_cleanup_ts = now
             try:
-                self.db.cleanup(self.config.get("retention_days", 7))
+                # 开启上月汇总时，cleanup 前先把即将删除的数据按月叠加归档
+                archive = bool(int(self.config.get("monthly_summary_enabled", 0) or 0))
+                self.db.cleanup(self.config.get("retention_days", 7), archive_enabled=archive)
             except Exception:
                 pass
+
+        # ---- 月初补全：进入新月份前 3 天内，把上月仍在 metrics 表中的数据归档到 monthly_summary ----
+        # 确保 retention 足够时月末数据不被遗漏（retention 不足时 cleanup 已增量叠加）
+        try:
+            import datetime as _dt
+            _now_ms = _dt.datetime.now()
+            if _now_ms.day <= 3 and now - getattr(self, "_last_monthly_rollover", 0) >= 86400:
+                self._last_monthly_rollover = now
+                if int(self.config.get("monthly_summary_enabled", 0) or 0):
+                    prev = _now_ms.replace(day=1) - _dt.timedelta(days=1)
+                    ms_start = _dt.datetime(prev.year, prev.month, 1).timestamp()
+                    ms_end = _dt.datetime(_now_ms.year, _now_ms.month, 1).timestamp()
+                    self.db._archive_to_monthly_range(ms_start, ms_end)
+        except Exception:
+            pass
 
         # ---- Docker（每 30 秒；docker ps 为外部进程调用，容器列表变化慢，无需高频） ----
         if now - self._last_docker_ts >= 30:
@@ -4217,6 +4358,9 @@ class MonitorApp:
                     return
                 if path == "/api/weather":
                     self._json(app.api_weather())
+                    return
+                if path == "/api/monthly_summary":
+                    self._json(app.api_monthly_summary())
                     return
                 if path == "/api/update/check":
                     force = (qs.get("force") or ["0"])[0] in ("1", "true", "yes")
@@ -4745,6 +4889,9 @@ class MonitorApp:
         # 硬盘休眠保护开关
         if "disk_standby_protect" in data:
             cur["disk_standby_protect"] = 1 if str(data["disk_standby_protect"]) in ("1", "true", "on") else 0
+        # 上月汇总开关
+        if "monthly_summary_enabled" in data:
+            cur["monthly_summary_enabled"] = 1 if str(data["monthly_summary_enabled"]) in ("1", "true", "on") else 0
         if "data_dir" in data:
             nd = str(data["data_dir"]).strip()
             if nd and os.path.isabs(nd):
@@ -5273,6 +5420,65 @@ th{color:#64748b;font-weight:600;font-size:13px}.meta{color:#94a3b8;font-size:13
             w.writerow([iso, "%.3f" % ts] + [row.get(c, "") for c in cols])
         return ("\ufeff" + buf.getvalue()).encode("utf-8")  # 加 BOM，Excel/WPS 直接打开不乱码
 
+    def api_monthly_summary(self):
+        """返回最近的月度汇总数据（上月优先，无则取最近一条）。
+
+        数据来自 monthly_summary 表（cleanup 前增量叠加归档 + 月初补全）。
+        速率型指标返回 avg/max/min；累计型指标（流量）返回月内差值 = last_val - first_val。
+        """
+        enabled = bool(int(self.config.get("monthly_summary_enabled", 0) or 0))
+        retention = int(self.config.get("retention_days", 7))
+        conn = sqlite3.connect(self.collector.db.db_path, timeout=15)
+        try:
+            row = conn.execute(
+                "SELECT year, month FROM monthly_summary ORDER BY year DESC, month DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return {"available": False, "enabled": enabled,
+                        "retention_days": retention,
+                        "note": "暂无汇总数据（需开启开关后等待后台采集归档）"}
+            y, m = row
+            rows = conn.execute(
+                "SELECT metric, sum_val, count_val, max_val, min_val, first_val, last_val "
+                "FROM monthly_summary WHERE year=? AND month=?", (y, m)
+            ).fetchall()
+        finally:
+            conn.close()
+        hist_interval = int(self.config.get("history_interval", 60))
+        result = {"year": y, "month": m, "available": True, "enabled": enabled,
+                  "retention_days": retention}
+        net_rx_total = 0
+        net_tx_total = 0
+        for metric, s, cnt, mx, mn, fv, lv in rows:
+            avg = (s / cnt) if cnt else 0
+            if metric == "cpu":
+                result["cpu"] = {"avg": round(avg, 1), "max": round(mx or 0, 1), "min": round(mn or 0, 1)}
+            elif metric == "mem":
+                result["mem"] = {"avg": round(avg, 1), "max": round(mx or 0, 1), "min": round(mn or 0, 1)}
+            elif metric == "disk_total":
+                result["disk"] = {"avg": round(avg, 1), "max": round(mx or 0, 1)}
+            elif metric == "temp":
+                result["temp"] = {"avg": round(avg, 1), "max": round(mx or 0, 1), "min": round(mn or 0, 1)}
+            elif metric == "power":
+                kwh = round((s or 0) * hist_interval / 3_600_000, 2)
+                rate = float(self.config.get("power_rate_yuan", 0.6))
+                result["power"] = {"avg_w": round(avg, 1), "max_w": round(mx or 0, 1),
+                                   "kwh": kwh, "yuan": round(kwh * rate, 2)}
+            elif metric == "load1":
+                result["load1"] = {"avg": round(avg, 2), "max": round(mx or 0, 2)}
+            elif metric == "fan_avg":
+                result["fan"] = {"avg": round(avg, 0)}
+            elif metric.startswith("net_rx_bytes:"):
+                net_rx_total += max(0, (lv or 0) - (fv or 0))
+            elif metric.startswith("net_tx_bytes:"):
+                net_tx_total += max(0, (lv or 0) - (fv or 0))
+        result["net_rx"] = net_rx_total
+        result["net_tx"] = net_tx_total
+        # 提示：retention 不足整月时告知用户已启用叠加保存
+        if enabled and retention < 31:
+            result["note"] = "历史保留天数 %d 不足整月，已自动叠加保存汇总统计" % retention
+        return result
+
     def api_export_status(self):
         """当前状态全量快照导出为 JSON。"""
         return {
@@ -5587,6 +5793,9 @@ def load_config(data_dir):
         # 硬盘休眠保护开关（默认开启：监控不主动唤醒已停转的机械硬盘）
         if "disk_standby_protect" in user:
             cfg["disk_standby_protect"] = 1 if str(user["disk_standby_protect"]) in ("1", "true", "on") else 0
+        # 上月汇总开关：cleanup 前增量叠加归档 + 仪表盘显示上月汇总
+        if "monthly_summary_enabled" in user:
+            cfg["monthly_summary_enabled"] = 1 if str(user["monthly_summary_enabled"]) in ("1", "true", "on") else 0
         if "weather_city" in user:
             cfg["weather_city"] = str(user["weather_city"])
         if "data_dir" in user:

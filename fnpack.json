@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.5/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.16.6": {
+    "changelog": "v2.16.6<br>① 新增「上月汇总」功能：总览仪表盘顶部新增上月汇总卡片，展示上个月各项监控数据汇总（CPU/内存/磁盘/温度的均值与峰值、网络总流量、功耗 kWh 与电费、负载等），设置中可开关。核心机制：清理前增量叠加——每次 cleanup 删除过期 metrics 数据前，先把数据按月汇总 UPSERT 到独立的 monthly_summary 表（不受 cleanup 影响），即使历史保留天数不足整月（如 7 天）月度汇总仍完整不丢失；历史保留天数 < 31 时在设置页与卡片中提示已自动叠加保存汇总统计",
+    "updated_at": "2026-10-09T15:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-x86.fpk",
+      "sha256": "1a9cadf77b939edde110532136fc33e58b9df08daa6e98d7013ea92fb5aab190",
+      "size": 296705
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-arm.fpk",
+      "sha256": "37e654718fc5172832e2b72995009c63e8ac2d64be48738f121db9e7cfc5bb66",
+      "size": 296701
+     }
+    }
+   },
    "2.16.5": {
     "changelog": "v2.16.5<br>① 修复长期运行后内存冲顶不回落（issue #3）：历史导出与流量统计/健康报告路径的查询结果被误挂入休眠读缓存 _read_memo 永久持有——全表 fetchall 可达数百万行，一次导出即 +1.44 GiB RSS 且不释放；导出是用户主动的一次性操作不该缓存，现改为不挂缓存（函数返回后 GC 回收），_memo 仅保留给面板轮询查询（休眠保护场景）；全表查询加 LIMIT 1000000 保护；休眠保护仍生效（休眠时返回空列表）",
     "updated_at": "2026-10-08T15:00:00+08:00",
