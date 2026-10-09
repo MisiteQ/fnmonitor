@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.16.8": {
+    "changelog": "v2.16.8<br>① 修复更新后版本号显示为旧值（2.9.7 缓存问题）：HTML head 添加 meta Cache-Control/Pragma/Expires 禁止缓存，更新成功后 location.reload 改为 cache-busting URL（?v=时间戳）强制浏览器从服务器获取最新页面；② 删除「一键初始化界面」描述中残留的「云纹背景」字样；③ 修复开启上月汇总后总仪表盘不显示汇总卡片：用户刚开启功能时 monthly_summary 表暂无数据（需等 cleanup 触发归档），原逻辑 available=false 时卡片隐藏；改为 enabled=true 时无论有无数据都显示，无数据时展示暂无汇总数据提示",
+    "updated_at": "2026-10-09T17:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-x86.fpk",
+      "sha256": "abc256aee20e0df53748a6770db8f11c0d9500c79f7e4863c092d3ec0fdf260e",
+      "size": 297458
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-arm.fpk",
+      "sha256": "3a45db13b54ea3964cc9bb108d081cb7ce618106c89c33d92411134ba4a109cd",
+      "size": 297171
+     }
+    }
+   },
    "2.16.7": {
     "changelog": "v2.16.7<br>① 修复「上月汇总」开关点击启用后瞬间复原、功能打不开：api_config_save 保存配置到 config.json 后同步内存 self.config 时漏了 monthly_summary_enabled 字段，导致内存中始终是旧值 0，紧接着 pollMonthlySummary 回读 /api/monthly_summary 返回 enabled=false 把 checkbox 重置；现内存同步循环补入 monthly_summary_enabled；同时前端 loadConfigForm 补入开关状态加载，renderMonthlySummary 移除回写 checkbox 逻辑",
     "updated_at": "2026-10-09T16:00:00+08:00",

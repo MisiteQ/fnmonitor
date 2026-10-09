@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>飞牛监控</title>
 <style>
@@ -964,7 +967,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <button class="op-btn" onclick="restorePanels()">恢复全部</button>
       </div>
       <div class="set-row" data-mod="m-set-resetui">
-        <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小 / 云纹背景恢复为默认样式</div></div>
+        <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小恢复为默认样式</div></div>
         <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
         <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
       </div>
@@ -2156,14 +2159,14 @@ async function updateInstall(){
     const j = await getJSON("/api/update/install");
     if (j.ok){
       setText("upd-msg", j.note || "安装完成，服务重启中…");
-      setTimeout(() => location.reload(), 4000);  // 服务重启后刷新页面
+      setTimeout(() => { location.href = location.pathname + "?v=" + Date.now(); }, 4000);  // 服务重启后刷新页面（cache-bust）
     } else {
       setText("upd-msg", "更新失败：" + (j.error || "未知错误"));
       if (btn){ btn.disabled = false; btn.textContent = "立即更新"; }
     }
   } catch(e){
     setText("upd-msg", "更新请求中断（服务可能正在重启），页面将自动刷新…");
-    setTimeout(() => location.reload(), 4000);
+    setTimeout(() => { location.href = location.pathname + "?v=" + Date.now(); }, 4000);
   }
 }
 async function saveAutoUpdate(){
@@ -2491,18 +2494,28 @@ async function pollMonthlySummary(){
 function renderMonthlySummary(j){
   const card = document.querySelector('.card.monthly-summary');
   if (!card) return;
-  // 显示/隐藏卡片：仅开启开关且有数据时显示
+  // 未开启开关时隐藏卡片
+  if (!j.enabled){
+    card.style.display = "none";
+    return;
+  }
+  // 已开启：无论是否有数据都显示卡片
+  card.style.display = "";
+  // 提示：历史保留天数不足整月时显示叠加保存说明
   const noteEl = $("monthly-note");
-  if (j.enabled && j.retention_days != null && j.retention_days < 31 && noteEl){
+  if (j.retention_days != null && j.retention_days < 31 && noteEl){
     noteEl.textContent = "历史保留天数 " + j.retention_days + " 不足整月，已自动叠加保存汇总";
   } else if (noteEl){
     noteEl.textContent = "";
   }
-  if (!j.enabled || !j.available){
-    card.style.display = "none";
+  // 无汇总数据时显示提示（用户刚开启，等待后台 cleanup 归档）
+  if (!j.available){
+    $("ms-month").textContent = "上月汇总";
+    $("ms-content").innerHTML = '<div class="empty" style="grid-column:1/-1;padding:16px;text-align:center;opacity:.6">暂无汇总数据，等待后台采集归档（每小时自动清理时触发）</div>';
+    const note = $("ms-note");
+    if (note) note.textContent = j.note || "";
     return;
   }
-  card.style.display = "";
   $("ms-month").textContent = (j.year || "--") + "年" + (j.month || "--") + "月汇总";
   const items = [];
   if (j.cpu) items.push('<div class="ms-item" style="text-align:center;padding:4px 2px"><span style="opacity:.72;font-size:.8em">CPU 均值</span><br><b>' + (j.cpu.avg||0) + '%</b><br><span style="opacity:.6;font-size:.75em">峰 ' + (j.cpu.max||0) + '%</span></div>');

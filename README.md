@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.16.7-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.16.8-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与七套主题。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.16.7**
+- 当前版本：**v2.16.8**
 - 作者：**Misite齊**
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（安装向导可改）
@@ -33,7 +33,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.16.7-x86.fpk`（x86 机型）或 `fnmonitor-2.16.7-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.16.8-x86.fpk`（x86 机型）或 `fnmonitor-2.16.8-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -90,6 +90,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 | 版本 | 内容 |
 |---|---|
+| v2.16.8 | ① **修复更新后版本号显示为旧值（2.9.7 缓存问题）**：HTML head 添加 meta Cache-Control/Pragma/Expires 禁止缓存，更新成功后 `location.reload` 改为 cache-busting URL（`?v=时间戳`）强制浏览器从服务器获取最新页面；② **删除"一键初始化界面"描述中残留的"云纹背景"字样**；③ **修复开启上月汇总后总仪表盘不显示汇总卡片**：用户刚开启功能时 `monthly_summary` 表暂无数据（需等 cleanup 触发归档），原逻辑 `available=false` 时卡片隐藏；改为 `enabled=true` 时无论有无数据都显示，无数据时展示"暂无汇总数据，等待后台采集归档"提示 |
 | v2.16.7 | **修复「上月汇总」开关点击启用后瞬间复原、功能打不开**：`api_config_save` 保存配置到 config.json 后同步内存 `self.config` 时漏了 `monthly_summary_enabled` 字段，导致内存中始终是旧值 0，紧接着 `pollMonthlySummary` 回读 `/api/monthly_summary` 返回 `enabled=false` 把 checkbox 重置；现内存同步循环补入 `monthly_summary_enabled`；同时前端 `loadConfigForm` 补入开关状态加载（刷新页面后开关反映已保存配置），`renderMonthlySummary` 移除回写 checkbox 逻辑避免轮询覆盖用户操作 |
 | v2.16.6 | **新增「上月汇总」功能**：在总览仪表盘顶部新增上月汇总卡片，展示上个月各项监控数据汇总（CPU/内存/磁盘/温度的均值与峰值、网络总流量、功耗 kWh 与电费、负载等），设置中可开关。**核心机制：清理前增量叠加**——每次 cleanup 删除过期 metrics 数据前，先把数据按月汇总 UPSERT 到独立的 `monthly_summary` 表（不受 cleanup 影响），即使历史保留天数不足整月（如 7 天）月度汇总仍完整不丢失；历史保留天数 < 31 时在设置页与卡片中提示「已自动叠加保存汇总统计」 |
 | v2.16.5 | **修复长期运行后内存冲顶不回落（[issue #3](https://github.com/MisiteQ/fnmonitor/issues/3)）**：历史导出（`/api/export?range=all`）与流量统计 / 健康报告路径的查询结果被误挂入「休眠读缓存」`_read_memo` 永久持有——全表 `fetchall()` 可达数百万行（实测 692 万行），一次导出即 **+1.44 GiB RSS 且 32 秒内不回落**。根因：`_memo` 缓存本为「休眠硬盘不被面板轮询唤醒」设计，但被误用到导出路径——导出是用户主动的一次性操作，下次可能要不同范围或最新数据，缓存它毫无意义。修复：导出路径（`export_rows` / `export_net` / `query_prefix`）改为不挂缓存，函数返回后 GC 回收；`_memo` 仅保留给面板轮询触发的 `query()`（休眠保护核心场景）；全表查询加 `LIMIT 1000000` 保护防止极端积累；休眠保护仍生效（休眠时返回空列表，不读 db 唤醒硬盘） |
