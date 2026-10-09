@@ -2194,6 +2194,7 @@ async function loadConfigForm(){
     if (c.power_base_w != null && $("set-basew")) $("set-basew").value = c.power_base_w;
     if (c.disk_standby_protect != null && $("set-standby-protect")) $("set-standby-protect").value = String(c.disk_standby_protect);
     if (c.traffic_exclude_bridge != null && $("set-bridge")) $("set-bridge").value = c.traffic_exclude_bridge;
+    if (c.monthly_summary_enabled != null && $("set-monthly-summary")) $("set-monthly-summary").checked = !!c.monthly_summary_enabled;
     if ((c.open_mode === "url" || c.open_mode === "iframe") && $("set-open-mode")) $("set-open-mode").value = c.open_mode;
     if (c.data_dir) $("set-data-dir").value = c.data_dir;
     else if (c.data_dir_actual) $("set-data-dir").placeholder = "当前默认：" + c.data_dir_actual;
@@ -2490,9 +2491,6 @@ async function pollMonthlySummary(){
 function renderMonthlySummary(j){
   const card = document.querySelector('.card.monthly-summary');
   if (!card) return;
-  // 配置加载时同步开关状态
-  const cb = $("set-monthly-summary");
-  if (cb && j.enabled != null) cb.checked = !!j.enabled;
   // 显示/隐藏卡片：仅开启开关且有数据时显示
   const noteEl = $("monthly-note");
   if (j.enabled && j.retention_days != null && j.retention_days < 31 && noteEl){

@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.16.7": {
+    "changelog": "v2.16.7<br>① 修复「上月汇总」开关点击启用后瞬间复原、功能打不开：api_config_save 保存配置到 config.json 后同步内存 self.config 时漏了 monthly_summary_enabled 字段，导致内存中始终是旧值 0，紧接着 pollMonthlySummary 回读 /api/monthly_summary 返回 enabled=false 把 checkbox 重置；现内存同步循环补入 monthly_summary_enabled；同时前端 loadConfigForm 补入开关状态加载，renderMonthlySummary 移除回写 checkbox 逻辑",
+    "updated_at": "2026-10-09T16:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-x86.fpk",
+      "sha256": "b96e27da6e5ad739e98bd89348eb20e1b9998d5ee64135887d2879e711493ae5",
+      "size": 296670
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-arm.fpk",
+      "sha256": "3e8f6dc6f51e3d8f69c3dc25f60c51fa244bae1fbbca1d065702b6adc3827de1",
+      "size": 296679
+     }
+    }
+   },
    "2.16.6": {
     "changelog": "v2.16.6<br>① 新增「上月汇总」功能：总览仪表盘顶部新增上月汇总卡片，展示上个月各项监控数据汇总（CPU/内存/磁盘/温度的均值与峰值、网络总流量、功耗 kWh 与电费、负载等），设置中可开关。核心机制：清理前增量叠加——每次 cleanup 删除过期 metrics 数据前，先把数据按月汇总 UPSERT 到独立的 monthly_summary 表（不受 cleanup 影响），即使历史保留天数不足整月（如 7 天）月度汇总仍完整不丢失；历史保留天数 < 31 时在设置页与卡片中提示已自动叠加保存汇总统计",
     "updated_at": "2026-10-09T15:00:00+08:00",
