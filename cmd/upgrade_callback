@@ -9,6 +9,12 @@ if [ -d "${APP_DEST}/ui" ] && [ ! -e "${APP_BASE}/ui" ]; then
     ln -s "${APP_DEST}/ui" "${APP_BASE}/ui" 2>/dev/null || true
 fi
 chmod +x "${APP_DEST}/server.py" 2>/dev/null || true
+# 同步 manifest 到应用目录：fnOS 把顶层 manifest 放 /var/apps/，但 server.py
+# 的 _read_manifest_version() 优先从 APP_DEST 读。若旧版 manifest 残留在此，
+# 版本号会显示为旧值。此处用 /var/apps/ 的权威 manifest 覆盖。
+if [ -f "${APP_BASE}/manifest" ]; then
+    cp -f "${APP_BASE}/manifest" "${APP_DEST}/manifest" 2>/dev/null || true
+fi
 # 保持已有配置
 mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
 if [ ! -f "${TRIM_PKGVAR}/config.json" ]; then

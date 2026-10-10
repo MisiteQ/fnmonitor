@@ -53,12 +53,12 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.16.8"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.17.0"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url", "monthly_summary_enabled": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password": "", "auth_session_days": 7}
 # 虚拟网卡前缀（Docker 网桥 / 容器 / VPN 等）：流量与功耗估算统一口径
 VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "lxc", "kube", "wg")
 
@@ -4258,6 +4258,9 @@ class MonitorApp:
         self._power_stats_ts = 0.0
         self._disk_standby_cache = None
         self._disk_standby_ts = 0.0
+        # ---- 登录鉴权：会话持久化到 data_dir/sessions.json，内存缓存加速校验 ----
+        self._sessions = {}
+        self._load_sessions()
 
     def make_handler(self):
         app = self
@@ -4285,6 +4288,34 @@ class MonitorApp:
                 parsed = urlparse(self.path)
                 path = parsed.path
                 qs = parse_qs(parsed.query)
+
+                # ---- 鉴权：登录页与登录接口始终可访问（无需会话） ----
+                if path == "/login.html":
+                    self._serve_file(os.path.join(app.www_dir, "login.html"), "text/html; charset=utf-8")
+                    return
+                if path == "/api/auth/session":
+                    self._json(app.api_auth_session(self.headers))
+                    return
+                if path == "/api/auth/config":
+                    self._json(app.api_auth_config())
+                    return
+                # ---- 鉴权拦截：启用口令且未登录时，HTML 跳登录页 / API 返 401 ----
+                if not app._check_auth(self.headers):
+                    if path in ("/", "/index.html"):
+                        self._serve_file(os.path.join(app.www_dir, "login.html"), "text/html; charset=utf-8")
+                        return
+                    if path.startswith("/api/"):
+                        body = json.dumps({"ok": False, "error": "未登录",
+                                           "auth_required": True}, ensure_ascii=False).encode("utf-8")
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    self.send_error(401, "Unauthorized")
+                    return
 
                 if path in ("/", "/index.html"):
                     self._serve_file(os.path.join(app.www_dir, "index.html"), "text/html; charset=utf-8")
@@ -4459,6 +4490,33 @@ class MonitorApp:
                     except Exception:
                         return {}
 
+                # ---- 鉴权：登录 / 初始化 / 登出接口始终可访问 ----
+                if path == "/api/auth/password":
+                    data = _read_json()
+                    resp, sid, ma = app.api_auth_password(data)
+                    self._json_with_cookie(resp, sid, ma)
+                    return
+                if path == "/api/auth/setup":
+                    data = _read_json()
+                    resp, sid, ma = app.api_auth_setup(data)
+                    self._json_with_cookie(resp, sid, ma)
+                    return
+                if path == "/api/auth/logout":
+                    resp = app.api_auth_logout(self.headers)
+                    self._json_with_cookie(resp, None, 0)
+                    return
+                # ---- 鉴权拦截：启用口令且未登录时，POST 接口返 401 ----
+                if not app._check_auth(self.headers):
+                    body = json.dumps({"ok": False, "error": "未登录",
+                                       "auth_required": True}, ensure_ascii=False).encode("utf-8")
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
                 if path == "/api/docker/action":
                     data = _read_json()
                     cid = str(data.get("id") or "").strip()
@@ -4481,6 +4539,23 @@ class MonitorApp:
 
             def _json(self, obj):
                 self._send_bytes(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+            def _json_with_cookie(self, obj, sid=None, max_age=0):
+                """发送 JSON 响应，并附带会话 Cookie（sid=None 时清除 Cookie）。"""
+                body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                if sid:
+                    self.send_header("Set-Cookie",
+                                     "fnmp_sid=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax"
+                                     % (sid, max_age))
+                else:
+                    self.send_header("Set-Cookie",
+                                     "fnmp_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+                self.end_headers()
+                self.wfile.write(body)
 
             def _send_bytes(self, body):
                 self.send_response(200)
@@ -4736,7 +4811,155 @@ class MonitorApp:
         c["version"] = VERSION
         c["arch"] = self.updater.detect_arch()
         c["update_status"] = self.updater.status()
+        # 鉴权状态（不回传密码明文，前端只关心开关与是否已设口令）
+        c["auth_enabled"] = 1 if str(self.config.get("auth_enabled") or "0") in ("1", "true", "on") else 0
+        c["auth_has_password"] = bool(str(self.config.get("auth_password") or "").strip())
+        c["auth_session_days"] = int(self.config.get("auth_session_days") or 7)
         return {"config": c}
+
+    # ------------------------------------------------------------------
+    # 登录鉴权：会话管理 + 口令登录 / 初始化 / 登出
+    # ------------------------------------------------------------------
+    def _sessions_path(self):
+        return os.path.join(self.data_dir, "sessions.json")
+
+    def _load_sessions(self):
+        """从磁盘加载会话表，并清理已过期的会话。"""
+        try:
+            with open(self._sessions_path(), "r", errors="ignore") as f:
+                self._sessions = json.load(f)
+        except Exception:
+            self._sessions = {}
+        now = time.time()
+        expired = [sid for sid, s in self._sessions.items()
+                   if float(s.get("expires") or 0) < now]
+        if expired:
+            for sid in expired:
+                self._sessions.pop(sid, None)
+            self._save_sessions()
+
+    def _save_sessions(self):
+        """原子写入会话表（临时文件 + os.replace，避免并发写坏）。"""
+        path = self._sessions_path()
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._sessions, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+    def _create_session(self, user, via):
+        """创建会话，返回 (sid, max_age_seconds)。"""
+        days = max(1, min(365, int(self.config.get("auth_session_days") or 7)))
+        max_age = days * 86400
+        sid = hashlib.sha256(os.urandom(24)).hexdigest()
+        now = time.time()
+        self._sessions[sid] = {"user": user, "via": via,
+                              "created": now, "expires": now + max_age}
+        self._save_sessions()
+        return sid, max_age
+
+    def _check_session(self, sid):
+        """校验会话有效性，返回 True/False；过期会话自动清理。"""
+        if not sid:
+            return False
+        s = self._sessions.get(sid)
+        if not s:
+            return False
+        if float(s.get("expires") or 0) < time.time():
+            self._sessions.pop(sid, None)
+            self._save_sessions()
+            return False
+        return True
+
+    def _auth_required(self):
+        """是否需要鉴权：auth_enabled=1 且已设口令时才启用。"""
+        if str(self.config.get("auth_enabled") or "0") not in ("1", "true", "on"):
+            return False
+        return bool(str(self.config.get("auth_password") or "").strip())
+
+    def _get_cookie_sid(self, headers):
+        """从 Cookie 头解析 fnmp_sid 值。"""
+        cookie = headers.get("Cookie") or ""
+        for part in cookie.split(";"):
+            kv = part.strip().split("=", 1)
+            if len(kv) == 2 and kv[0].strip() == "fnmp_sid":
+                return kv[1].strip()
+        return ""
+
+    def _check_auth(self, headers):
+        """鉴权检查：返回 True=已登录或无需鉴权。"""
+        if not self._auth_required():
+            return True
+        sid = self._get_cookie_sid(headers)
+        return self._check_session(sid)
+
+    def api_auth_session(self, headers):
+        """查询当前登录态。"""
+        if not self._auth_required():
+            return {"ok": True, "logged_in": True, "auth_required": False}
+        sid = self._get_cookie_sid(headers)
+        if self._check_session(sid):
+            s = self._sessions.get(sid, {})
+            return {"ok": True, "logged_in": True, "auth_required": True,
+                    "user": s.get("user", ""), "via": s.get("via", "")}
+        return {"ok": True, "logged_in": False, "auth_required": True}
+
+    def api_auth_config(self):
+        """返回鉴权配置（供登录页判断模式）。"""
+        pw = str(self.config.get("auth_password") or "").strip()
+        return {"auth_enabled": 1 if str(self.config.get("auth_enabled") or "0") in ("1", "true", "on") else 0,
+                "requires_password": bool(pw),
+                "setup_mode": not bool(pw)}
+
+    def api_auth_password(self, data, headers=None):
+        """口令登录：校验密码 → 建会话 → 返回 sid/max_age 供 Handler 写 Cookie。"""
+        pw = str(self.config.get("auth_password") or "").strip()
+        if not pw:
+            return {"ok": False, "error": "未配置登录口令"}, None, 0
+        inp = str((data or {}).get("password") or "")
+        if inp != pw:
+            return {"ok": False, "error": "口令错误"}, None, 0
+        sid, ma = self._create_session("(登录口令)", "password")
+        return {"ok": True}, sid, ma
+
+    def api_auth_setup(self, data):
+        """首次初始化口令：仅在未设口令时可用，口令 >= 4 位。"""
+        pw = str(self.config.get("auth_password") or "").strip()
+        if pw:
+            return {"ok": False, "error": "已设置口令，请使用登录修改"}
+        inp = str((data or {}).get("password") or "").strip()
+        if len(inp) < 4:
+            return {"ok": False, "error": "口令至少 4 位"}
+        self.config["auth_password"] = inp
+        self.config["auth_enabled"] = 1
+        # 写入 config.json 持久化
+        try:
+            path = os.path.join(self._cfg_dir, "config.json")
+            cur = {}
+            try:
+                with open(path, "r", errors="ignore") as f:
+                    cur = json.load(f)
+            except Exception:
+                pass
+            cur["auth_password"] = inp
+            cur["auth_enabled"] = 1
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cur, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+        sid, ma = self._create_session("(初始化)", "setup")
+        return {"ok": True}, sid, ma
+
+    def api_auth_logout(self, headers):
+        """登出：删会话 + 清 Cookie。"""
+        sid = self._get_cookie_sid(headers)
+        if sid and sid in self._sessions:
+            self._sessions.pop(sid, None)
+            self._save_sessions()
+        return {"ok": True}
+
 
     def api_update_check(self, force=False):
         return self.updater.check(force=force)
@@ -4905,6 +5128,18 @@ class MonitorApp:
             m = str(data["open_mode"]).lower()
             if m in ("iframe", "url"):
                 cur["open_mode"] = m
+        # 登录口令：开关 / 修改密码 / 会话有效期（设置页提交）
+        if "auth_enabled" in data:
+            cur["auth_enabled"] = 1 if str(data["auth_enabled"]) in ("1", "true", "on") else 0
+        if "auth_password" in data:
+            pw = str(data["auth_password"])
+            if pw:  # 空字符串=不改密码
+                cur["auth_password"] = pw
+        if "auth_session_days" in data:
+            try:
+                cur["auth_session_days"] = max(1, min(365, int(data["auth_session_days"])))
+            except Exception:
+                pass
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(cur, f, ensure_ascii=False, indent=1)
@@ -4937,6 +5172,16 @@ class MonitorApp:
             if new_mode in ("iframe", "url"):
                 open_mode_changed = (str(self.config.get("open_mode") or "") != new_mode)
                 self.config["open_mode"] = new_mode
+            # 登录口令配置同步到内存即时生效
+            if "auth_enabled" in cur:
+                self.config["auth_enabled"] = 1 if str(cur["auth_enabled"]) in ("1", "true", "on") else 0
+            if "auth_password" in cur:
+                self.config["auth_password"] = str(cur["auth_password"])
+            if "auth_session_days" in cur:
+                try:
+                    self.config["auth_session_days"] = max(1, min(365, int(cur["auth_session_days"])))
+                except Exception:
+                    pass
             # 桌面入口同步：端口变更同步 port；打开方式变更同步 type。除写 ui/config
             # 文件外，apply_launcher_entry 内部还会同步 fnOS 应用中心数据库（真机
             # 实证桌面点击行为由数据库决定）——刷新飞牛桌面页（F5）后点击桌面图标
@@ -5803,6 +6048,16 @@ def load_config(data_dir):
         # 飞牛桌面打开方式（iframe=飞牛窗口内打开 / url=浏览器新标签页）
         if str(user.get("open_mode", "")).lower() in ("iframe", "url"):
             cfg["open_mode"] = str(user["open_mode"]).lower()
+        # 登录口令（明文存储，与应用内设置一致；空口令=未设置）
+        if "auth_enabled" in user:
+            cfg["auth_enabled"] = 1 if str(user["auth_enabled"]) in ("1", "true", "on") else 0
+        if "auth_password" in user:
+            cfg["auth_password"] = str(user["auth_password"])
+        if "auth_session_days" in user:
+            try:
+                cfg["auth_session_days"] = max(1, min(365, int(user["auth_session_days"])))
+            except Exception:
+                pass
     except Exception:
         pass
     return cfg

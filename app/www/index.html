@@ -629,6 +629,7 @@ body{display:flex;flex-direction:column;min-height:100vh}
     <button class="icon-btn" id="fullscreen-btn" title="进入全屏（F11）"></button>
     <button class="icon-btn" id="refresh-btn" title="刷新全部数据" onclick="globalRefresh()">⟳</button>
     <button class="theme-btn" id="theme-btn" title="切换主题（当前浅色清新，点击切换）">🍀</button>
+    <button class="icon-btn" id="logout-btn" title="退出登录" onclick="doLogout()" style="display:none">🚪</button>
   </div>
 </header>
 
@@ -970,6 +971,26 @@ body{display:flex;flex-direction:column;min-height:100vh}
         <div class="s-label"><b>一键初始化界面</b><div class="s-sub">把面板顺序 / 隐藏状态 / 主题 / 布局 / 字体大小恢复为默认样式</div></div>
         <button class="op-btn" onclick="resetUI()" style="border-color:var(--red);color:var(--red)">恢复默认界面</button>
         <button class="mod-hide" data-mod="m-set-resetui" title="隐藏此模块">✕</button>
+      </div>
+
+      <div class="set-group">安全</div>
+      <div class="set-row" data-mod="m-set-auth">
+        <div class="s-label"><b>登录口令</b><div class="s-sub">开启后访问飞牛监控需先输入口令登录。未设口令时开启无效；首次设置请在下方输入口令后保存。会话有效期可设置 1-365 天，过期后需重新登录</div></div>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-right:8px"><input type="checkbox" id="set-auth-enabled" onchange="onAuthToggleChange()"> <b>启用登录</b></label>
+        <span id="auth-status-note" style="font-size:.85em;opacity:.8"></span>
+        <button class="mod-hide" data-mod="m-set-auth" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-authpw">
+        <div class="s-label"><b>设置 / 修改口令</b><div class="s-sub">首次设置或修改登录口令（至少 4 位）。留空保存则不修改当前口令。修改后已有登录会话不受影响（下次过期后用新口令登录）</div></div>
+        <input id="set-auth-pw" class="inp" type="password" placeholder="输入新口令（≥4位）" style="max-width:200px">
+        <button class="op-btn" onclick="saveAuthConfig()">保存口令</button>
+        <button class="mod-hide" data-mod="m-set-authpw" title="隐藏此模块">✕</button>
+      </div>
+      <div class="set-row" data-mod="m-set-authdays">
+        <div class="s-label"><b>登录会话有效期（天）</b><div class="s-sub">登录后多少天内免重复输入口令（1-365），默认 7 天</div></div>
+        <input id="set-auth-days" class="inp" type="number" min="1" max="365" placeholder="7" style="max-width:100px">
+        <button class="op-btn" onclick="saveAuthConfig()">保存</button>
+        <button class="mod-hide" data-mod="m-set-authdays" title="隐藏此模块">✕</button>
       </div>
 
       <div class="set-group">数据</div>
@@ -2052,6 +2073,59 @@ async function saveOpenMode(){
     }
   } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
 }
+/* ---------- 登录口令设置 ---------- */
+let AUTH_HAS_PW = false;
+function onAuthToggleChange(){
+  const note = $("auth-status-note");
+  const cb = $("set-auth-enabled");
+  if (!note || !cb) return;
+  if (cb.checked && !AUTH_HAS_PW){
+    note.textContent = "（尚未设置口令，请在下方输入并保存）";
+    note.style.color = "var(--amber)";
+  } else if (cb.checked){
+    note.textContent = "已开启：访问需口令登录";
+    note.style.color = "var(--accent)";
+  } else {
+    note.textContent = "已关闭：任何人可直接访问";
+    note.style.color = "var(--dim)";
+  }
+}
+async function saveAuthConfig(){
+  const msg = $("settings-msg");
+  const data = {};
+  // 口令：有输入才提交（空=不改）
+  const pwEl = $("set-auth-pw");
+  const pw = pwEl ? pwEl.value.trim() : "";
+  if (pw){ data.auth_password = pw; }
+  // 会话天数
+  const daysEl = $("set-auth-days");
+  const days = parseInt(daysEl ? daysEl.value : "", 10);
+  if (!isNaN(days)) data.auth_session_days = days;
+  // 开关
+  const cb = $("set-auth-enabled");
+  if (cb) data.auth_enabled = cb.checked ? "1" : "0";
+  if (pw && pw.length < 4){ if (msg){ msg.textContent = "口令至少 4 位"; setTimeout(() => msg.textContent = "", 5000); } return; }
+  if (Object.keys(data).length === 0){ if (msg){ msg.textContent = "无修改内容"; setTimeout(() => msg.textContent = "", 3000); } return; }
+  try {
+    const r = await fetch("/api/config/save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data) });
+    const j = await r.json();
+    if (msg){
+      if (j.ok){
+        let parts = [];
+        if (pw){ AUTH_HAS_PW = true; parts.push("口令已保存"); if (pwEl) pwEl.value = ""; }
+        if (!isNaN(days)) parts.push("会话有效期已保存");
+        if (cb) parts.push(cb.checked ? "登录已启用" : "登录已关闭");
+        msg.textContent = parts.join("，") || "已保存";
+      } else msg.textContent = "保存失败: " + (j.error || "");
+      setTimeout(() => msg.textContent = "", 5000);
+    }
+    onAuthToggleChange();
+  } catch(e){ if (msg) msg.textContent = "请求失败: " + e.message; }
+}
+async function doLogout(){
+  try { await fetch("/api/auth/logout", { method: "POST" }); } catch(e){}
+  location.href = location.pathname + "login.html";
+}
 /* 「数据保存目录」编辑状态：输入与已保存值不一致时显示「取消」，可一键还原 */
 let DATADIR_BASELINE = "";
 function dataDirChanged(){
@@ -2209,6 +2283,13 @@ async function loadConfigForm(){
     if (uiPath) uiPath.textContent = c.ui_file || ((c.data_dir_actual || "数据目录") + "/ui.json");
     // 软件更新：当前版本 / 架构 / 自动检查状态
     renderUpdateStatus(c);
+    // 登录口令状态
+    AUTH_HAS_PW = !!c.auth_has_password;
+    if ($("set-auth-enabled")) $("set-auth-enabled").checked = !!c.auth_enabled;
+    if (c.auth_session_days != null && $("set-auth-days")) $("set-auth-days").value = c.auth_session_days;
+    onAuthToggleChange();
+    // 登出按钮：启用口令登录时才显示
+    if ($("logout-btn")) $("logout-btn").style.display = (c.auth_enabled && c.auth_has_password) ? "" : "none";
   } catch(e){}
 }
 async function saveWeatherCity(){
@@ -2499,7 +2580,9 @@ function renderMonthlySummary(j){
     card.style.display = "none";
     return;
   }
-  // 已开启：无论是否有数据都显示卡片
+  // 已开启：若用户已通过 ✕ 隐藏此模块，则保持隐藏（不覆盖 applyMods 的状态）
+  if (state.hiddenMods.has("m-monthly")) return;
+  // 已开启且未被用户隐藏：无论是否有数据都显示卡片
   card.style.display = "";
   // 提示：历史保留天数不足整月时显示叠加保存说明
   const noteEl = $("monthly-note");
@@ -2719,6 +2802,7 @@ const MOD_LABELS = {
   "m-set-tdp": "设置·CPU TDP", "m-set-rate": "设置·电价", "m-set-diskw": "设置·单盘功耗",
   "m-set-nicw": "设置·网卡功耗", "m-set-bridge": "设置·排除网桥流量", "m-set-openmode": "设置·桌面打开方式",
   "m-set-basew": "设置·主板固定功耗", "m-set-standby": "设置·休眠硬盘保护",
+  "m-set-auth": "设置·登录口令", "m-set-authpw": "设置·修改口令", "m-set-authdays": "设置·会话有效期",
 };
 function modLabel(id){ return MOD_LABELS[id] || id; }
 /* 应用模块隐藏状态：只接管曾被本功能隐藏过的元素，避免与天气卡等数据驱动的 display 冲突 */
@@ -2987,10 +3071,19 @@ async function loadUI(){
       moTimer = setTimeout(() => { moTimer = null; if (state.hiddenMods.size) applyMods(); }, 0);
     }).observe(mainEl, { childList: true, subtree: true });
   }
-  // 拖拽排序
+  // 拖拽排序（仅标题栏 .panel-head 可发起拖拽，正文/图表不可拖）
   let dragPanel = null;
   document.querySelectorAll("main section[data-panel]").forEach(p => {
-    p.draggable = true;
+    const head = p.querySelector(".panel-head");
+    p.draggable = false;  // 默认整块不可拖
+    if (head){
+      head.addEventListener("mousedown", e => {
+        // ✕ 隐藏按钮不触发拖拽
+        if (e.target.closest(".panel-hide")){ p.draggable = false; return; }
+        p.draggable = true;  // 仅标题区按下才开启拖拽
+      });
+    }
+    p.addEventListener("mouseup", () => { p.draggable = false; });
     p.addEventListener("dragstart", e => {
       dragPanel = p;
       p.classList.add("dragging");
@@ -3000,6 +3093,7 @@ async function loadUI(){
     p.addEventListener("dragend", () => {
       dragPanel = null;
       p.classList.remove("dragging");
+      p.draggable = false;  // 拖完立即复位
       savePanelOrder();
       saveUI();
     });

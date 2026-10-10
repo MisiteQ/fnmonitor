@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>飞牛监控 · 登录</title>
+<style>
+/* 复用主站设计令牌，登录页独立适配暗 / 亮主题 */
+:root{
+  --bg:#0b0f1a; --card:#111827; --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.16);
+  --red:#f87171; --radius:16px;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --bg:#f1f3f6; --card:#ffffff; --border:#e2e8f0; --text:#1e293b; --muted:#64748b; --dim:#94a3b8;
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.12);
+  --red:#ef4444;
+  color-scheme:light;
+}
+:root[data-theme="blue"]{
+  --bg:#0a1929; --card:#0f2944; --border:#1e3a5f; --text:#e0f2fe; --muted:#7dd3fc; --dim:#4a90b8;
+  --accent:#38bdf8; --accent-soft:rgba(56,189,248,.14);
+  --red:#f87171;
+  color-scheme:dark;
+}
+:root[data-theme="fresh"]{
+  --bg:#f0f7f4; --card:#ffffff; --border:#d1e7dd; --text:#1a3a2e; --muted:#5b8c7a; --dim:#8fb8a3;
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.12);
+  --red:#ef4444;
+  color-scheme:light;
+}
+:root[data-theme="green"]{
+  --bg:#0a1f15; --card:#0f2e1f; --border:#1a4030; --text:#dcfce7; --muted:#86efac; --dim:#4ade80;
+  --accent:#34d399; --accent-soft:rgba(52,211,153,.14);
+  --red:#f87171;
+  color-scheme:dark;
+}
+:root[data-theme="yellow"]{
+  --bg:#1f1a0a; --card:#2a2210; --border:#3f341a; --text:#fef9c3; --muted:#fde047; --dim:#ca8a04;
+  --accent:#fbbf24; --accent-soft:rgba(251,191,36,.14);
+  --red:#f87171;
+  color-scheme:dark;
+}
+:root[data-theme="cyan"]{
+  --bg:#0a1a1f; --card:#0f2329; --border:#1a3a40; --text:#cffafe; --muted:#67e8f9; --dim:#22d3ee;
+  --accent:#06b6d4; --accent-soft:rgba(6,182,212,.14);
+  --red:#f87171;
+  color-scheme:dark;
+}
+:root[data-theme="dark"]{
+  --bg:#0b0f1a; --card:#111827; --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
+  --accent:#10b981; --accent-soft:rgba(16,185,129,.16);
+  --red:#f87171;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:20px;transition:background .3s,color .3s;
+}
+.login-card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:40px 36px;width:100%;max-width:380px;box-shadow:0 20px 60px -20px rgba(0,0,0,.5);
+}
+.logo-row{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:8px}
+.logo{width:32px;height:32px;color:var(--accent)}
+.brand{font-size:22px;font-weight:700}
+.brand-sub{font-size:11px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;text-align:center;margin-bottom:28px}
+.field{margin-bottom:18px}
+.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;font-weight:600}
+.field input{
+  width:100%;padding:11px 14px;font-size:15px;border:1px solid var(--border);border-radius:10px;
+  background:var(--bg);color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;
+}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.btn{
+  width:100%;padding:12px;font-size:15px;font-weight:700;border:none;border-radius:10px;
+  background:var(--accent);color:#fff;cursor:pointer;transition:opacity .2s,transform .1s;
+}
+.btn:hover{opacity:.9}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.msg{text-align:center;font-size:13px;margin-top:14px;min-height:18px;color:var(--red)}
+.hint{text-align:center;font-size:12px;color:var(--dim);margin-top:20px;line-height:1.6}
+.eye-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;
+  color:var(--dim);cursor:pointer;font-size:16px;padding:4px}
+.input-wrap{position:relative}
+@media(max-width:420px){.login-card{padding:28px 22px}}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo-row">
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 13 7 9 11 13 17 7 21 11"/><polyline points="3 19 7 15 11 19 17 13 21 17" opacity=".5"/></svg>
+    <span class="brand">飞牛监控</span>
+  </div>
+  <div class="brand-sub">FNNAS MONITOR</div>
+  <div id="login-form" style="display:none">
+    <div class="field">
+      <label>登录口令</label>
+      <div class="input-wrap">
+        <input type="password" id="pw" placeholder="请输入登录口令" autofocus>
+        <button type="button" class="eye-toggle" onclick="toggleEye('pw',this)" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+    <button class="btn" id="btn-login" onclick="doLogin()">登 录</button>
+    <div class="msg" id="msg"></div>
+  </div>
+  <div id="setup-form" style="display:none">
+    <div class="field">
+      <label>设置登录口令（首次使用）</label>
+      <div class="input-wrap">
+        <input type="password" id="new-pw" placeholder="至少 4 位" autofocus>
+        <button type="button" class="eye-toggle" onclick="toggleEye('new-pw',this)" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>确认口令</label>
+      <div class="input-wrap">
+        <input type="password" id="new-pw2" placeholder="再输入一次">
+        <button type="button" class="eye-toggle" onclick="toggleEye('new-pw2',this)" title="显示/隐藏">👁</button>
+      </div>
+    </div>
+    <button class="btn" id="btn-setup" onclick="doSetup()">设置口令并登录</button>
+    <div class="msg" id="msg"></div>
+  </div>
+  <div id="loading" style="text-align:center;padding:20px;color:var(--dim)">加载中…</div>
+  <div class="hint" id="hint" style="display:none"></div>
+</div>
+<script>
+"use strict";
+// 同步主题（与主站 localStorage 一致）
+try{
+  var t=localStorage.getItem("fnmonitor-theme")||"fresh";
+  document.documentElement.setAttribute("data-theme",t);
+}catch(e){}
+function $(id){return document.getElementById(id);}
+function showMsg(txt){var m=$("msg");if(m)m.textContent=txt;}
+function toggleEye(id,btn){
+  var el=$(id);if(!el)return;
+  el.type=el.type==="password"?"text":"password";
+  btn.textContent=el.type==="password"?"👁":"🙈";
+}
+async function getJSON(url){
+  var r=await fetch(url,{cache:"no-store"});
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  return r.json();
+}
+async function init(){
+  try{
+    // 已登录直接跳转主页
+    var s=await getJSON("/api/auth/session");
+    if(s.logged_in){location.href=location.pathname.replace(/login\.html$/,"");return;}
+    var c=await getJSON("/api/auth/config");
+    $("loading").style.display="none";
+    if(c.setup_mode){
+      // 未设口令：首次设置
+      $("setup-form").style.display="";
+      var h=$("hint");h.style.display="";h.textContent="首次使用，请设置登录口令（至少 4 位）。设置后每次访问需口令登录。";
+    }else if(c.requires_password){
+      // 已设口令：登录
+      $("login-form").style.display="";
+    }else{
+      // 未启用鉴权：直接跳转
+      location.href=location.pathname.replace(/login\.html$/,"");
+    }
+  }catch(e){
+    $("loading").textContent="连接失败：" + e.message;
+  }
+}
+async function doLogin(){
+  var pw=$("pw").value;
+  if(!pw){showMsg("请输入口令");return;}
+  var btn=$("btn-login");btn.disabled=true;btn.textContent="登录中…";
+  try{
+    var r=await fetch("/api/auth/password",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({password:pw})
+    });
+    var j=await r.json();
+    if(j.ok){location.href=location.pathname.replace(/login\.html$/,"");}
+    else showMsg(j.error||"登录失败");
+  }catch(e){showMsg("请求失败："+e.message);}
+  btn.disabled=false;btn.textContent="登 录";
+}
+async function doSetup(){
+  var pw=$("new-pw").value,pw2=$("new-pw2").value;
+  if(pw.length<4){showMsg("口令至少 4 位");return;}
+  if(pw!==pw2){showMsg("两次输入不一致");return;}
+  var btn=$("btn-setup");btn.disabled=true;btn.textContent="设置中…";
+  try{
+    var r=await fetch("/api/auth/setup",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({password:pw})
+    });
+    var j=await r.json();
+    if(j.ok){location.href=location.pathname.replace(/login\.html$/,"");}
+    else showMsg(j.error||"设置失败");
+  }catch(e){showMsg("请求失败："+e.message);}
+  btn.disabled=false;btn.textContent="设置口令并登录";
+}
+// 回车提交
+document.addEventListener("keydown",function(e){
+  if(e.key!=="Enter")return;
+  if($("login-form").style.display!=="none")doLogin();
+  else if($("setup-form").style.display!=="none")doSetup();
+});
+init();
+</script>
+</body>
+</html>

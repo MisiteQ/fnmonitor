@@ -22,5 +22,10 @@ fi
 # 3. 可执行权限
 chmod +x "${APP_DEST}/server.py" 2>/dev/null || true
 
+# 4. 同步 manifest 到应用目录（确保版本号正确）
+if [ -f "${APP_BASE}/manifest" ]; then
+    cp -f "${APP_BASE}/manifest" "${APP_DEST}/manifest" 2>/dev/null || true
+fi
+
 echo "fnmonitor 安装完成"
 exit 0

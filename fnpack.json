@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.17.0": {
+    "changelog": "v2.17.0<br>① 新增登录口令功能：设置页可开启口令登录，访问监控面板需先输入口令；支持首次设置、修改口令、会话有效期（1-365 天），未设口令时自动引导设置；② 面板拖拽改为仅标题栏可拖：拖拽排序不再从正文/图表区域发起，只有面板标题栏（⠿ 区域）可发起拖拽，避免误触图表交互",
+    "updated_at": "2026-10-10T18:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/fnmonitor-2.17.0-x86.fpk",
+      "sha256": "034a245d67cd82b5920fb28c2e5130581e4a11cfe2d8639ad15fbdd0c15fc613",
+      "size": 306537
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/fnmonitor-2.17.0-arm.fpk",
+      "sha256": "946fee617fce32078c1cd50f0567af1eaf4c9eb7235824e6fe8aadff51982858",
+      "size": 306545
+     }
+    }
+   },
    "2.16.8": {
     "changelog": "v2.16.8<br>① 修复更新后版本号显示为旧值（2.9.7 缓存问题）：HTML head 添加 meta Cache-Control/Pragma/Expires 禁止缓存，更新成功后 location.reload 改为 cache-busting URL（?v=时间戳）强制浏览器从服务器获取最新页面；② 删除「一键初始化界面」描述中残留的「云纹背景」字样；③ 修复开启上月汇总后总仪表盘不显示汇总卡片：用户刚开启功能时 monthly_summary 表暂无数据（需等 cleanup 触发归档），原逻辑 available=false 时卡片隐藏；改为 enabled=true 时无论有无数据都显示，无数据时展示暂无汇总数据提示",
     "updated_at": "2026-10-09T17:00:00+08:00",
