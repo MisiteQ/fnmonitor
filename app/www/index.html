@@ -278,7 +278,7 @@ main section[data-panel="settings"]{--p-acc:#94a3b8}
 /* ===== 详情 / 子块 ===== */
 .detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{display:grid;grid-template-columns:1fr 1fr;gap:13px}
 @media (max-width:1100px){.detail-grid,.hw-grid,.pg-grid,.chart-grid,.two-col{grid-template-columns:1fr}}
-.detail-box,.hw-box,.chart-box,.sens-card,.app-card,.dstat,.pg-card,.fan-card,.mod-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px}
+.detail-box,.hw-box,.chart-box,.sens-card,.app-card,.dstat,.pg-card,.mod-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px}
 .detail-box{padding:14px}
 .detail-box h4{font-size:12.5px;color:var(--muted);margin-bottom:10px;font-weight:700;letter-spacing:.2px}
 .core-row{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px;color:var(--muted)}
@@ -483,20 +483,7 @@ table.listen-tbl td:nth-child(2){max-width:230px;overflow-wrap:break-word;white-
 .dimm .d-size{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
 .dimm .d-mfr{font-size:11px;color:var(--muted)}
 .dimm .d-spec{font-size:10px;color:var(--dim)}
-.fan-card{padding:14px}
-.fan-card .f-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.fan-card .f-name{font-size:13px;font-weight:700;flex:1}
-.fan-card .f-rpm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.fan-card .f-rpm.zero{color:var(--red)}
-.fan-card input[type=range]{width:100%;accent-color:var(--accent);margin:6px 0}
-.fan-card .f-ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.fan-card .f-msg{font-size:11px;color:var(--emerald);margin-top:4px}
-.fan-preset{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.fan-preset button{border:1px solid var(--border);background:var(--card);color:var(--muted);border-radius:8px;
-  padding:3px 10px;font-size:11px;cursor:pointer;transition:border-color .15s,color .15s}
-.fan-preset button:hover{border-color:var(--accent);color:var(--accent)}
 .mem-slot-wrap{display:flex;flex-wrap:wrap;gap:10px}
-.fan-row{flex-wrap:wrap}
 
 /* ===== 硬件信息 / 范围切换 / 空状态 ===== */
 .hw-box{padding:14px}
@@ -1580,7 +1567,6 @@ function renderSysExtra(o){
   const el = $("sys-extra");
   if (!el) return;
   const sensors = (o && o.sensors) || {};
-  const fans = (o && o.fans) || [];
   let h = "";
   // 温度分类 + 电压（紧接温度概览，温度测点卡片横向平铺，自适应填满整行）
   const temps = sensors.temps || [];
@@ -1610,23 +1596,6 @@ function renderSysExtra(o){
   if (!rpmFans.length && state.fansDetected === false){
     h += '<div class="hw-line" style="margin-top:14px"><span>🌀 风扇转速</span><b>未检测到可读取的风扇传感器</b></div>' +
          '<div class="d-sub" style="margin:4px 2px 0;line-height:1.6">已自动适配标准 hwmon、IPMI/BMC、ThinkPad ACPI，并对 0xA20 硬件监控邮箱做机型无关自动识别（任意品牌，端口与应答双重验证、只读安全）；仍无数值通常表示该机型固件未向系统开放风扇数据。服务器 / 带 BMC 的主机可执行 <code>sudo apt install ipmitool</code> 后自动识别</div>';
-  }
-  // 风扇控制
-  if (fans.length){
-    h += '<div class="hw-box" data-mod="m-fans" style="margin-top:14px"><h4>🌀 风扇控制 <span class="tag">拖动滑块调速 · 可恢复自动温控</span><button class="mod-hide" data-mod="m-fans" title="隐藏此模块">✕</button></h4><div class="sens-grid" style="margin-top:6px">';
-    fans.forEach(f => {
-      const zero = f.rpm === 0;
-      h += '<div class="fan-card" id="fan-' + f.idx + '">' +
-        '<div class="f-head"><span class="f-name">' + esc(f.name) + "</span>" +
-        '<span class="f-rpm ' + (zero ? "zero" : "") + '">' + (zero ? "停转/无信号" : f.rpm + " RPM") + "</span></div>" +
-        '<input type="range" min="0" max="255" value="' + (f.duty || 0) + '" oninput="fanSlide(' + f.idx + ',this.value)" onchange="fanSet(' + f.idx + ',this.value)">' +
-        '<div class="f-ctl"><span class="d-sub">占空比 <b class="f-duty">' + (f.duty || 0) + "</b>/255</span>" +
-        '<button class="op-btn" onclick="fanPreset(' + f.idx + ',128)">50%</button>' +
-        '<button class="op-btn" onclick="fanPreset(' + f.idx + ',255)">全速</button>' +
-        '<button class="op-btn" onclick="fanAuto(' + f.idx + ')">恢复自动</button></div>' +
-        '<div class="f-msg" id="fmsg-' + f.idx + '"></div></div>';
-    });
-    h += "</div></div>";
   }
   el.innerHTML = h;
 }
@@ -1955,36 +1924,6 @@ async function pollPowerStats(){
   } catch(e){}
 }
 
-/* ---------- 风扇控制 ---------- */
-function fanSlide(idx, v){
-  const card = $("fan-" + idx);
-  if (card) card.querySelector(".f-duty").textContent = v;
-}
-async function fanSet(idx, duty){
-  try {
-    const r = await fetch("/api/fan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idx: idx, duty: duty }) });
-    const j = await r.json();
-    const m = $("fmsg-" + idx);
-    if (m) m.textContent = j.ok ? (j.note || "已设置") : ("失败: " + (j.error || ""));
-    setTimeout(() => { if (m) m.textContent = ""; }, 3000);
-  } catch(e){}
-}
-function fanPreset(idx, duty){
-  const r = document.querySelector("#fan-" + idx + " input[type=range]");
-  if (r) r.value = duty;
-  const c = $("fan-" + idx);
-  if (c) c.querySelector(".f-duty").textContent = duty;
-  fanSet(idx, duty);
-}
-async function fanAuto(idx){
-  try {
-    const r = await fetch("/api/fan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idx: idx, auto: true }) });
-    const j = await r.json();
-    const m = $("fmsg-" + idx);
-    if (m) m.textContent = j.ok ? (j.note || "已恢复自动温控") : ("失败: " + (j.error || ""));
-    setTimeout(() => { if (m) m.textContent = ""; }, 3000);
-  } catch(e){}
-}
 async function saveConfig(){
   const data = {};
   const port = parseInt($("set-port").value, 10);
@@ -2783,7 +2722,7 @@ const MOD_LABELS = {
   "m-phydisks": "硬盘信息", "m-partio": "磁盘分区与 IO",
   "m-ports-apps": "已安装应用端口", "m-ports-dk": "Docker 端口映射", "m-ports-listen": "系统监听端口",
   "m-hw-cpu": "处理器", "m-hw-board": "主板/BIOS", "m-hw-gpu": "显卡信息", "m-hw-net": "网卡",
-  "m-memslots": "内存插槽", "m-hw-raid": "阵列设定", "m-sens-temp": "温度传感器", "m-sens-volt": "电压", "m-fans": "风扇控制",
+  "m-memslots": "内存插槽", "m-hw-raid": "阵列设定", "m-sens-temp": "温度传感器", "m-sens-volt": "电压", "m-fans": "风扇转速",
   "m-wall-hero": "温度概览", "m-wall-body": "温度测点墙",
   "m-power": "整机实时功耗", "m-gpu": "显卡实时状态",
   "m-ch-main": "CPU/内存趋势", "m-ch-disk": "存储趋势", "m-ch-net": "网络趋势",

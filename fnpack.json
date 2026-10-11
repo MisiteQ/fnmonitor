@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,20 +27,20 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
-   "2.17.0": {
-    "changelog": "v2.17.0<br>① 新增登录口令功能：设置页可开启口令登录，访问监控面板需先输入口令；支持首次设置、修改口令、会话有效期（1-365 天），未设口令时自动引导设置；② 面板拖拽改为仅标题栏可拖：拖拽排序不再从正文/图表区域发起，只有面板标题栏（⠿ 区域）可发起拖拽，避免误触图表交互",
-    "updated_at": "2026-10-10T18:00:00+08:00",
+   "2.17.1": {
+    "changelog": "v2.17.1<br>① 移除风扇控制功能：本系统定位为纯数据读取监控，不操作系统硬件；删除风扇调速滑块、占空比设置、恢复自动温控（交还 BIOS）等所有写操作，仅保留风扇转速读取与趋势展示",
+    "updated_at": "2026-10-11T10:00:00+08:00",
     "os_min_version": "0.9.0",
     "packages": {
      "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/fnmonitor-2.17.0-x86.fpk",
-      "sha256": "034a245d67cd82b5920fb28c2e5130581e4a11cfe2d8639ad15fbdd0c15fc613",
-      "size": 306537
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-x86.fpk",
+      "sha256": "0aff3590619cb57a1b4852d5e1947135379161f054e117aa432c70198343d091",
+      "size": 304939
      },
      "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.0/fnmonitor-2.17.0-arm.fpk",
-      "sha256": "946fee617fce32078c1cd50f0567af1eaf4c9eb7235824e6fe8aadff51982858",
-      "size": 306545
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-arm.fpk",
+      "sha256": "f1f8cda08ee235964a07da287a91dc3fd000708e3fd823571da68954dfa94fc1",
+      "size": 304957
      }
     }
    },

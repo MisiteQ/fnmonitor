@@ -53,7 +53,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.17.0"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.17.1"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -1792,7 +1792,7 @@ def _hwmon_resolve(hpath, dpath, fname):
 
 
 def _hwmon_fans():
-    """枚举 /sys/class/hwmon 下所有风扇通道（fanN_input + 对应 pwmN），供控制用。"""
+    """枚举 /sys/class/hwmon 下所有风扇通道（只读 fanN_input 转速）。"""
     fans = []
     base = "/sys/class/hwmon"
     if not os.path.isdir(base):
@@ -1801,7 +1801,6 @@ def _hwmon_fans():
         hw_list = sorted(os.listdir(base))
     except Exception:
         return fans
-    idx = 0
     for hw in hw_list:
         hpath = os.path.join(base, hw)
         if not os.path.isdir(hpath):
@@ -1827,16 +1826,10 @@ def _hwmon_fans():
         for f in fan_inputs:
             num = re.sub(r"\D", "", f)
             rpm = read_int_file(_hwmon_resolve(hpath, dpath, f))
-            pwm_path = _hwmon_resolve(hpath, dpath, "pwm" + num)
-            pwm = read_int_file(pwm_path)
-            enable = read_int_file(_hwmon_resolve(hpath, dpath, "pwm" + num + "_enable"))
             fans.append({
-                "idx": idx, "hwmon": hw, "chip": hname, "num": num,
+                "chip": hname, "num": num,
                 "name": hname + " 风扇 " + num, "rpm": rpm,
-                "duty": pwm, "enable": enable,
-                "path": pwm_path,
             })
-            idx += 1
     return fans
 
 
@@ -1999,44 +1992,6 @@ def _ec_hwm_fans():
         except Exception:
             pass
     return fans
-
-
-def fan_set(idx, duty):
-    """设置指定风扇通道占空比 0-255（idx 对应 _hwmon_fans 枚举序号）。"""
-    fans = _hwmon_fans()
-    if idx < 0 or idx >= len(fans):
-        return {"ok": False, "error": "无效的风扇序号"}
-    f = fans[idx]
-    try:
-        duty = max(0, min(255, int(duty)))
-    except Exception:
-        return {"ok": False, "error": "非法占空比"}
-    try:
-        with open(f["path"], "w") as fh:
-            fh.write(str(duty))
-        return {"ok": True, "idx": idx, "duty": duty, "name": f["name"],
-                "note": "已设置 %s 占空比 %d" % (f["name"], duty)}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-def fan_enable_auto(idx):
-    """恢复该风扇为自动温控（pwmN_enable=2）。"""
-    fans = _hwmon_fans()
-    if idx < 0 or idx >= len(fans):
-        return {"ok": False, "error": "无效的风扇序号"}
-    f = fans[idx]
-    hpath = os.path.join("/sys/class/hwmon", f["hwmon"])
-    dpath = os.path.join(hpath, "device")
-    if not os.path.isdir(dpath):
-        dpath = ""
-    epath = _hwmon_resolve(hpath, dpath, "pwm" + f["num"] + "_enable")
-    try:
-        with open(epath, "w") as fh:
-            fh.write("2")
-        return {"ok": True, "idx": idx, "note": "已恢复自动温控"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 
 def collect_raid():
@@ -4531,10 +4486,6 @@ class MonitorApp:
                     data = _read_json()
                     self._json(app.api_config_save(data))
                     return
-                if path == "/api/fan":
-                    data = _read_json()
-                    self._json(app.api_fan_set(data))
-                    return
                 self.send_error(404, "Not Found")
 
             def _json(self, obj):
@@ -5582,19 +5533,6 @@ th{color:#64748b;font-weight:600;font-size:13px}.meta{color:#94a3b8;font-size:13
             return ("<html><body><h2>报告生成失败</h2>"
                     "<p>生成健康报告时发生错误，请查看服务日志（journalctl / 应用日志）中的异常堆栈。</p>"
                     "</body></html>").encode("utf-8")
-
-    def api_fan_set(self, data):
-        """风扇控制：设置占空比或恢复自动温控。{idx, duty} 或 {idx, auto:true}。"""
-        try:
-            idx = int(data.get("idx", -1))
-        except Exception:
-            return {"ok": False, "error": "缺少风扇序号"}
-        if data.get("auto"):
-            return fan_enable_auto(idx)
-        duty = data.get("duty")
-        if duty is None:
-            return {"ok": False, "error": "缺少占空比"}
-        return fan_set(idx, duty)
 
     def api_docker_action(self, cid, action):
         if not cid:
