@@ -10,19 +10,47 @@ LOG_FILE="${TRIM_PKGVAR}/server.log"
 APP_DIR="${TRIM_APPDEST}"
 PORT="${TRIM_SERVICE_PORT:-8777}"
 PYTHON="python3"
-SERVICE_CMD="$PYTHON $APP_DIR/server.py --port $PORT --data-dir $TRIM_PKGVAR"
+LOG_MAX_BYTES=5242880   # server.log 超过 5MB 时启动前轮转为 server.log.1
+
+if [ -z "${TRIM_PKGVAR}" ] || [ -z "${APP_DIR}" ]; then
+    echo "错误：TRIM_PKGVAR / TRIM_APPDEST 未设置" >&2
+    exit 1
+fi
+
+# 应用中心会把本脚本的输出追加进应用日志：只记录启动 / 停止这类状态变化，带上时间
+say() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# PID 文件残留且 PID 已被系统复用时，不能凭 PID 文件就 kill：
+# 必须确认该进程的命令行确实是本应用的 server.py
+pid_is_ours() {
+    local pid="$1"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ -r "/proc/$pid/cmdline" ] || return 0   # 非 Linux /proc 不可读时退回旧行为
+    local cmd
+    cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+    case "$cmd" in
+        *server.py*"$TRIM_PKGVAR"*) return 0 ;;
+    esac
+    return 1
+}
+
+read_pid() {
+    [ -f "$PID_FILE" ] || return 1
+    tr -d '[:space:]' < "$PID_FILE"
+}
 
 is_running() {
-    [ -f "$PID_FILE" ] || return 1
     local pid
-    pid=$(tr -d '[:space:]' < "$PID_FILE")
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    pid=$(read_pid) || return 1
+    pid_is_ours "$pid"
 }
 
 start() {
     if is_running; then
-        echo "$APP_NAME is already running"
-        exit 0
+        exit 0   # 已在运行：幂等返回，不重复记日志
     fi
     mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
     if [ ! -f "$APP_DIR/server.py" ]; then
@@ -37,15 +65,19 @@ start() {
     # 限制 glibc 多线程 malloc arena 数量（默认最多 8×核数）。Python 线程池服务在
     # 多核 NAS 上 RSS 常因 arena 碎片虚高到数百 MB，压到 2 后内存占用可下降数倍
     export MALLOC_ARENA_MAX=2
-    nohup $SERVICE_CMD >> "$LOG_FILE" 2>&1 &
+    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+        mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || : > "$LOG_FILE"
+    fi
+    nohup "$PYTHON" "$APP_DIR/server.py" --port "$PORT" --data-dir "$TRIM_PKGVAR" >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 1.5
     if is_running; then
-        echo "$APP_NAME started (pid $(tr -d '[:space:]' < "$PID_FILE"))"
+        say "已启动 ${APP_NAME}${TRIM_APPVER:+ v$TRIM_APPVER}（端口 $PORT，pid $(read_pid)）"
         exit 0
     fi
     echo "错误：$APP_NAME 启动失败，请查看日志 $LOG_FILE" > "$TRIM_TEMP_LOGFILE"
     tail -n 20 "$LOG_FILE" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null
+    say "启动失败，详见 $LOG_FILE"
     rm -f "$PID_FILE"
     exit 1
 }
@@ -53,37 +85,40 @@ start() {
 stop() {
     if [ -f "$PID_FILE" ]; then
         local pid
-        pid=$(tr -d '[:space:]' < "$PID_FILE")
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        pid=$(read_pid)
+        if pid_is_ours "$pid"; then
             kill -TERM "$pid" 2>/dev/null
             local i=0
             while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do
                 sleep 0.5
                 i=$((i + 1))
             done
-            if kill -0 "$pid" 2>/dev/null; then
+            if pid_is_ours "$pid"; then
+                say "10 秒内未退出，强制结束"
                 kill -KILL "$pid" 2>/dev/null
             fi
+            say "已停止 ${APP_NAME}（pid $pid）"
         fi
         rm -f "$PID_FILE"
     fi
-    echo "$APP_NAME stopped"
     return 0
 }
 
+# 应用中心会周期性调用 status，结果只看退出码：这里不能有任何输出，
+# 否则每次轮询都会往应用日志追加一行（旧版本因此刷出成千上万行 "is running"）
 status() {
     if is_running; then
-        echo "$APP_NAME is running"
         exit 0
     fi
     rm -f "$PID_FILE"
-    echo "$APP_NAME is not running"
     exit 3
 }
 
 log() {
     if [ -f "$LOG_FILE" ]; then
-        tail -n "${2:-100}" "$LOG_FILE"
+        local n="${2:-100}"
+        case "$n" in ''|*[!0-9]*) n=100 ;; esac
+        tail -n "$n" "$LOG_FILE"
     else
         echo "暂无日志"
     fi
@@ -93,7 +128,7 @@ log() {
 case "$1" in
     start)   start ;;
     stop)    stop ;;
-    restart) stop; sleep 1; start ;;
+    restart) say "重启 $APP_NAME"; stop; sleep 1; start ;;
     status)  status ;;
     log)     log "$@" ;;
     *)       echo "用法: $0 {start|stop|restart|status|log}"; exit 1 ;;
