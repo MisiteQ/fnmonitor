@@ -3,10 +3,10 @@
    20. PRODUCTION — 真实数据的空状态 / 连接状态 / 设置控件等补充
    ===================================================================== */
 .bays { display: flex; flex-wrap: wrap; }
-.bays > .bay { flex: 1 1 170px; max-width: 230px; }
-.bays::after { content: ""; flex: 999 1 0; min-width: 40px; min-height: 60px; border-radius: 12px; background: radial-gradient(var(--vent) 1px, transparent 1.4px) 0 0 / 7px 7px; opacity: .7; }
-.bays:has(.bays-empty)::after { display: none; }
-.bays-empty { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 28px 16px; color: var(--chassis-ink-2); font-size: var(--fs-sm); }
+/* 盘位卡片随数量自适应填满模块宽度：硬盘少时拉伸铺满，多时按 170px 起步换行 */
+.bays > .bay { flex: 1 1 170px; min-width: 0; }
+.bays:has(.bays-empty) { display: block; }
+.bays-empty { display: flex; align-items: center; gap: 10px; padding: 28px 16px; color: var(--chassis-ink-2); font-size: var(--fs-sm); }
 .empty-s { display: flex; gap: 12px; align-items: flex-start; padding: 14px 2px; color: var(--ink-2); font-size: var(--fs-sm); line-height: 1.6; text-align: left; }
 .empty-s > .i { color: var(--ink-3); margin-top: 2px; flex: none; }
 .empty-s b { display: block; color: var(--ink-1); font-weight: 600; }
@@ -68,10 +68,10 @@
 .wx-city { font-size: 13px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wx-sub .link-like { font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 .thermo-row .t-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dimm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
+.dimm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
 .dimm { background: var(--card-sunk); border-radius: var(--r-md); padding: 10px 12px; text-align: center; }
 .dimm.empty { opacity: .55; outline: 1.5px dashed var(--line-strong); outline-offset: -1.5px; background: transparent; }
-.dimm .d-loc, .dimm .d-mfr, .dimm .d-spec { font-size: 11.5px; color: var(--ink-3); }
+.dimm .d-loc, .dimm .d-mfr, .dimm .d-spec { font-size: 11.5px; color: var(--ink-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dimm .d-size { font-weight: 650; font-size: 15px; margin: 2px 0; }
 .port-col .row-i small { display: block; font-size: 11px; }
 .metric .m-sub:empty::before { content: "\00a0"; }
@@ -96,13 +96,12 @@
   #verTag { display: none; }
 }
 @media (max-width: 760px) {
-  .bays { flex-wrap: nowrap; }
-  .bays > .bay { flex: 0 0 140px; }
-  .bays::after { display: none; }
+  .bays { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; padding: 0 2px 2px; scroll-snap-type: x mandatory; }
+  .bays::-webkit-scrollbar { display: none; }
+  .bays > .bay { flex: 0 0 140px; scroll-snap-align: start; }
 }
 
 .th-pair .numfield .u { min-width: 18px; }
-[data-theme="dark"] .bays::after { opacity: .35; }
 .module:not(.in-view) .skel, .module:not(.in-view) .fan-ico svg, .module:not(.in-view) .bay-zz .dm { animation-play-state: paused; }
 
 /* ---- 2.18.1：全年估算标记 / 核显活跃度行 / 诊断链接 / 容器实时网速 ---- */

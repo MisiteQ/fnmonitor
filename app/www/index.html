@@ -1016,8 +1016,8 @@ a{color:var(--ink-1)}
 .bay-temp .st-warn{color:var(--warn)}
 .bay-temp .st-crit{color:var(--crit)}
 .bay-name{font:600 13px/1.2 var(--font-mono);margin-top:8px}
-.bay-model{font-size:11.5px;color:var(--chassis-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bay-cap{font:500 11px/1.3 var(--font-mono);color:var(--chassis-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bay-model{font-size:11.5px;color:var(--chassis-ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;word-break:break-word}
+.bay-cap{font:500 11px/1.3 var(--font-mono);color:var(--chassis-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .bay-grip{height:10px;border-radius:5px;background:repeating-linear-gradient(90deg,var(--grip) 0 2px,transparent 2px 5px)}
 .bay[data-type="nvme"] .bay-grip{background:none;border:1px dashed var(--grip);height:9px}
 .bay-zz{position:absolute;left:0;top:0;bottom:0;width:40px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:10.5px;color:var(--chassis-ink-2)}
@@ -1097,10 +1097,9 @@ a{color:var(--ink-1)}
 @media (max-width: 760px){.colorspec{grid-template-columns:1fr}
 }
 .bays{display:flex;flex-wrap:wrap}
-.bays>.bay{flex:1 1 170px;max-width:230px}
-.bays::after{content:"";flex:999 1 0;min-width:40px;min-height:60px;border-radius:12px;background:radial-gradient(var(--vent) 1px,transparent 1.4px) 0 0 / 7px 7px;opacity:.7}
-.bays:has(.bays-empty)::after{display:none}
-.bays-empty{grid-column:1 / -1;display:flex;align-items:center;gap:10px;padding:28px 16px;color:var(--chassis-ink-2);font-size:var(--fs-sm)}
+.bays>.bay{flex:1 1 170px;min-width:0}
+.bays:has(.bays-empty){display:block}
+.bays-empty{display:flex;align-items:center;gap:10px;padding:28px 16px;color:var(--chassis-ink-2);font-size:var(--fs-sm)}
 .empty-s{display:flex;gap:12px;align-items:flex-start;padding:14px 2px;color:var(--ink-2);font-size:var(--fs-sm);line-height:1.6;text-align:left}
 .empty-s>.i{color:var(--ink-3);margin-top:2px;flex:none}
 .empty-s b{display:block;color:var(--ink-1);font-weight:600}
@@ -1162,10 +1161,10 @@ a{color:var(--ink-1)}
 .wx-city{font-size:13px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wx-sub .link-like{font-weight:500;text-decoration:underline;text-underline-offset:2px}
 .thermo-row .t-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dimm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:12px}
+.dimm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}
 .dimm{background:var(--card-sunk);border-radius:var(--r-md);padding:10px 12px;text-align:center}
 .dimm.empty{opacity:.55;outline:1.5px dashed var(--line-strong);outline-offset:-1.5px;background:transparent}
-.dimm .d-loc,.dimm .d-mfr,.dimm .d-spec{font-size:11.5px;color:var(--ink-3)}
+.dimm .d-loc,.dimm .d-mfr,.dimm .d-spec{font-size:11.5px;color:var(--ink-3);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dimm .d-size{font-weight:650;font-size:15px;margin:2px 0}
 .port-col .row-i small{display:block;font-size:11px}
 .metric .m-sub:empty::before{content:"\00a0"}
@@ -1188,12 +1187,11 @@ a{color:var(--ink-1)}
 .fm-card{padding:var(--s7) var(--s5)}
 #verTag{display:none}
 }
-@media (max-width: 760px){.bays{flex-wrap:nowrap}
-.bays>.bay{flex:0 0 140px}
-.bays::after{display:none}
+@media (max-width: 760px){.bays{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -2px;padding:0 2px 2px;scroll-snap-type:x mandatory}
+.bays::-webkit-scrollbar{display:none}
+.bays>.bay{flex:0 0 140px;scroll-snap-align:start}
 }
 .th-pair .numfield .u{min-width:18px}
-[data-theme="dark"] .bays::after{opacity:.35}
 .module:not(.in-view) .skel,.module:not(.in-view) .fan-ico svg,.module:not(.in-view) .bay-zz .dm{animation-play-state:paused}
 .est-pill{height:18px;padding:0 7px;margin-left:6px;font-size:10.5px;vertical-align:1px}
 .engine.wide{grid-template-columns:minmax(64px,auto) 1fr 40px}
@@ -2390,7 +2388,7 @@ return m;
 }
 const detailBtn = (sheet, label = '详情') => mount(`<button class="link-btn" type="button" data-sheet="${sheet}">${label}${ic('chev', 'i-sm')}</button>`);
 const emptyHTML = (title, text = '', icon = 'info') => `<div class="empty-s">${ic(icon)}<div><b>${esc(title)}</b>${text ? `<span>${text}</span>` : ''}</div></div>`;
-const vendorModel = d => { const v = String(d.vendor || '').trim(), mo = String(d.model || '').trim(); return (v && !/^0x/i.test(v) && !mo.toLowerCase().startsWith(v.toLowerCase()) ? v + ' ' : '') + mo; };
+const vendorModel = d => { const v = String(d.vendor || '').trim(), mo = String(d.model || '').trim(); return (v && !/^0x/i.test(v) && !/^ata$/i.test(v) && !mo.toLowerCase().startsWith(v.toLowerCase()) ? v + ' ' : '') + mo; };
 const fPct = v => [F.int(v), '%'];
 const fDeg = v => [F.int(v), '℃'];
 const fW = v => [F.d1(v), 'W'];
@@ -4260,10 +4258,28 @@ if (g.custom) { g.custom(card); if (g.id === 'about' || g.id === 'update') card.
 else g.items.forEach(it => card.append(setRow(it)));
 main.append(grp);
 });
-nav.addEventListener('click', e => { const a = e.target.closest('a'); if (!a) return; e.preventDefault(); $('#set-' + a.dataset.g).scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' }); });
-const io = new IntersectionObserver(ens => ens.forEach(en => { if (en.isIntersecting) $$('a', nav).forEach(a => a.classList.toggle('on', 'set-' + a.dataset.g === en.target.id)); }), { rootMargin: '-20% 0px -70% 0px' });
-$$('.set-group', main).forEach(g => io.observe(g));
-$$('a', nav)[0].classList.add('on');
+const links = $$('a', nav), groups = $$('.set-group', main);
+let navLock = 0, navTick = false;
+const setActive = a => links.forEach(x => x.classList.toggle('on', x === a));
+nav.addEventListener('click', e => {
+const a = e.target.closest('a'); if (!a) return; e.preventDefault();
+setActive(a);                                    // 点击立即高亮，不等滚动
+const ms = reduced() ? 120 : 900;
+navLock = Date.now() + ms;                       // 平滑滚动期间不让滚动追踪改写高亮
+setTimeout(() => { navLock = 0; trackNav(); }, ms + 60);
+$('#set-' + a.dataset.g).scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+});
+function trackNav() {
+if (Date.now() < navLock) return;
+const probe = innerHeight * 0.28;
+let act = 0;
+groups.forEach((g, i) => { if (g.getBoundingClientRect().top <= probe) act = i; });
+const de = document.documentElement;
+if (innerHeight + scrollY >= de.scrollHeight - 4) act = groups.length - 1;
+setActive(links[act]);
+}
+addEventListener('scroll', () => { if (!navTick) { navTick = true; requestAnimationFrame(() => { navTick = false; trackNav(); }); } }, { passive: true });
+links[0].classList.add('on');
 applyConfig();
 }
 function syncSettings() {

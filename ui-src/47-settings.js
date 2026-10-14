@@ -395,10 +395,30 @@ function buildSettings() {
     else g.items.forEach(it => card.append(setRow(it)));
     main.append(grp);
   });
-  nav.addEventListener('click', e => { const a = e.target.closest('a'); if (!a) return; e.preventDefault(); $('#set-' + a.dataset.g).scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' }); });
-  const io = new IntersectionObserver(ens => ens.forEach(en => { if (en.isIntersecting) $$('a', nav).forEach(a => a.classList.toggle('on', 'set-' + a.dataset.g === en.target.id)); }), { rootMargin: '-20% 0px -70% 0px' });
-  $$('.set-group', main).forEach(g => io.observe(g));
-  $$('a', nav)[0].classList.add('on');
+  const links = $$('a', nav), groups = $$('.set-group', main);
+  let navLock = 0, navTick = false;
+  const setActive = a => links.forEach(x => x.classList.toggle('on', x === a));
+  nav.addEventListener('click', e => {
+    const a = e.target.closest('a'); if (!a) return; e.preventDefault();
+    setActive(a);                                    // 点击立即高亮，不等滚动
+    const ms = reduced() ? 120 : 900;
+    navLock = Date.now() + ms;                       // 平滑滚动期间不让滚动追踪改写高亮
+    setTimeout(() => { navLock = 0; trackNav(); }, ms + 60);
+    $('#set-' + a.dataset.g).scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'start' });
+  });
+  // 高亮跟随滚动位置：取「顶边已越过探测线」的最后一组；页面滚到底时高亮最后一组
+  // （矮分组如「关于 / 软件更新」永远滚不进旧 IntersectionObserver 的观察带，导致高亮停在错误的项上）
+  function trackNav() {
+    if (Date.now() < navLock) return;
+    const probe = innerHeight * 0.28;
+    let act = 0;
+    groups.forEach((g, i) => { if (g.getBoundingClientRect().top <= probe) act = i; });
+    const de = document.documentElement;
+    if (innerHeight + scrollY >= de.scrollHeight - 4) act = groups.length - 1;
+    setActive(links[act]);
+  }
+  addEventListener('scroll', () => { if (!navTick) { navTick = true; requestAnimationFrame(() => { navTick = false; trackNav(); }); } }, { passive: true });
+  links[0].classList.add('on');
   applyConfig();
 }
 function syncSettings() {

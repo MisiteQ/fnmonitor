@@ -1246,8 +1246,8 @@ a { color: var(--ink-1); }
 .bay-temp small { font-size: 11px; color: var(--chassis-ink-2); margin-left: 1px; }
 .bay-temp .st-warn { color: var(--warn); } .bay-temp .st-crit { color: var(--crit); }
 .bay-name { font: 600 13px/1.2 var(--font-mono); margin-top: 8px; }
-.bay-model { font-size: 11.5px; color: var(--chassis-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bay-cap { font: 500 11px/1.3 var(--font-mono); color: var(--chassis-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bay-model { font-size: 11.5px; color: var(--chassis-ink-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; word-break: break-word; }
+.bay-cap { font: 500 11px/1.3 var(--font-mono); color: var(--chassis-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .bay-grip { height: 10px; border-radius: 5px; background: repeating-linear-gradient(90deg, var(--grip) 0 2px, transparent 2px 5px); }
 .bay[data-type="nvme"] .bay-grip { background: none; border: 1px dashed var(--grip); height: 9px; }
 .bay-zz { position: absolute; left: 0; top: 0; bottom: 0; width: 40px; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font-size: 10.5px; color: var(--chassis-ink-2); }

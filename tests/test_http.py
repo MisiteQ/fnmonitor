@@ -90,9 +90,16 @@ class NoAuthTest(ServerTestCase):
         self.assertEqual((st, j["error"]), (403, "csrf_rejected"))
         st, *_ = self.srv.request("POST", "/api/ui", '{"theme":"dark"}', {"Content-Type": "text/plain", "X-FNM-Request": "1"})
         self.assertEqual(st, 403)
-        for origin in ("http://evil.example", "null", "http://127.0.0.1:9", "file://", "http://127.0.0.1.evil.com:%d" % self.srv.port):
+        for origin in ("http://evil.example", "null", "file://", "http://127.0.0.1.evil.com:%d" % self.srv.port,
+                       "http://8.8.8.8:9"):
             st, *_ = self.post("/api/ui", {"theme": "dark"}, headers={"Origin": origin})
             self.assertEqual(st, 403, origin)
+        # 局域网 / 本机来源放行（飞牛官方手机 app 经本机代理打开面板时 Origin 是 127.0.0.1 等）
+        cur = self.get("/api/ui")[1]["ui"]
+        for origin in ("http://127.0.0.1:9", "http://192.168.1.66:9999", "http://nas.local:1",
+                       "http://localhost:1"):
+            st, *_ = self.post("/api/ui", cur, headers={"Origin": origin})
+            self.assertEqual(st, 200, origin)
         st, *_ = self.srv.request("POST", "/api/auth/setup", '{"password":"abcdefgh"}',
                                   {"Content-Type": "text/plain", "Origin": "http://evil.example"})
         self.assertEqual(st, 403)

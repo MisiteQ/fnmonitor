@@ -58,7 +58,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.18.0"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.18.1"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -6449,25 +6449,32 @@ class MonitorApp:
                 if (self.headers.get("X-FNM-Request") or "").strip() != "1":
                     return False
                 origin = (self.headers.get("Origin") or "").strip()
-                if origin:
-                    try:
-                        o = urlparse(origin)
-                    except Exception:
-                        return False
-                    if o.scheme not in ("http", "https") or not o.hostname:
-                        return False          # 包括 Origin: null
-                    oname = o.hostname.lower().rstrip(".")
-                    try:
-                        oport = o.port or (443 if o.scheme == "https" else 80)
-                    except ValueError:
-                        return False
-                    hname, hport = split_host_port(self.headers.get("Host") or "")
-                    if oname != hname:
-                        return False
-                    if hport is None:
-                        return oport in (80, 443)
-                    return oport == hport
-                return True
+                if not origin:
+                    return True
+                try:
+                    o = urlparse(origin)
+                except Exception:
+                    return False
+                if o.scheme not in ("http", "https") or not o.hostname:
+                    return False          # 包括 Origin: null
+                oname = o.hostname.lower().rstrip(".")
+                hname = (split_host_port(self.headers.get("Host") or "")[0] or "").lower()
+                # 同主机名不限端口：官方 app 内嵌 WebView / 反向代理等会改写端口
+                if oname == hname:
+                    return True
+                # 局域网来源放行（私有 IP / localhost / 局域网主机名）：飞牛官方手机 app 经
+                # 本机代理打开面板时 Origin 是 127.0.0.1 之类的地址；浏览器跨站伪造请求仍会
+                # 被上面的 application/json 与 X-FNM-Request 两道闸拦住（跨站无法携带自定义
+                # 头，JSON 请求还会触发预检，本服务不应答预检）
+                try:
+                    ai = ipaddress.ip_address(oname.split("%", 1)[0])
+                except ValueError:
+                    ai = None
+                if ai and ai.is_private:
+                    return True
+                if oname == "localhost" or "." not in oname or oname.endswith(LAN_HOST_SUFFIXES):
+                    return True
+                return False
 
             def _read_body(self):
                 """读取并解析 JSON 请求体；超限 / 格式错误时已发送错误响应并返回 None。"""

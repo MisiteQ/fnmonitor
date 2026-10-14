@@ -13,6 +13,10 @@ Set-Location $root
 Write-Host "[1/4] 生成应用图标..." -ForegroundColor Cyan
 python make_icon.py
 
+# 清理 Python 字节码缓存：fnpack 会打包 app/ 下全部文件，__pycache__ 一旦残留（本地跑过服务/测试）就会混入 fpk
+Get-ChildItem -Path $root -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host "[2/4] 检查 fnpack..." -ForegroundColor Cyan
 if (Test-Path ".\fnpack.exe") {
     $fnpack = ".\fnpack.exe"

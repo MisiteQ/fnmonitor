@@ -38,7 +38,7 @@ function defineModule(def) {
 }
 const detailBtn = (sheet, label = '详情') => mount(`<button class="link-btn" type="button" data-sheet="${sheet}">${label}${ic('chev', 'i-sm')}</button>`);
 const emptyHTML = (title, text = '', icon = 'info') => `<div class="empty-s">${ic(icon)}<div><b>${esc(title)}</b>${text ? `<span>${text}</span>` : ''}</div></div>`;
-const vendorModel = d => { const v = String(d.vendor || '').trim(), mo = String(d.model || '').trim(); return (v && !/^0x/i.test(v) && !mo.toLowerCase().startsWith(v.toLowerCase()) ? v + ' ' : '') + mo; };
+const vendorModel = d => { const v = String(d.vendor || '').trim(), mo = String(d.model || '').trim(); return (v && !/^0x/i.test(v) && !/^ata$/i.test(v) && !mo.toLowerCase().startsWith(v.toLowerCase()) ? v + ' ' : '') + mo; };
 
 /* 格式器（给图表/图例用） */
 const fPct = v => [F.int(v), '%'];

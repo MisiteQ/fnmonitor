@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.0/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.18.1": {
+    "changelog": "v2.18.1<br>① 盘位与内存插槽卡片自适应：硬盘 / 内存数量少时卡片拉伸铺满模块宽度，多时自动换行；修复盘位卡片文字溢出（型号最多两行截断、精简前缀）<br>② 修复设置页侧边栏高亮错位：点击立即高亮并跟随滚动位置，底部矮分组也能正确高亮<br>③ 修复飞牛官方手机 app 内嵌打开面板报 csrf_rejected 无法登录的问题（放行同主机名任意端口与局域网来源，跨站防护不降级）",
+    "updated_at": "2026-10-14T21:30:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-x86.fpk",
+      "sha256": "6ec6da5c4c187cd644cac324b463d85f88f9f0e1a668eed1092603060123c456",
+      "size": 522966
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-arm.fpk",
+      "sha256": "14690c042e11d39ee3879783258e3fcca2e14d4723ceb69cd58a9d108d4c63c4",
+      "size": 522977
+     }
+    }
+   },
    "2.18.0": {
     "changelog": "v2.18.0<br>① 全新界面与后端升级（社区贡献者 @iqiuzixuan）：界面与设计体系全面重设计，新增虚拟机（QEMU/KVM）监控页（列表 / 实时读数 / 开关机等操作），后端安全加固（登录令牌 / CSRF / Host 校验 / 请求体限制 / 敏感信息脱敏），补全回归测试套件与 GitHub Actions CI（多 Python 版本单元 / HTTP 集成测试 + 前端构建一致性校验）；合并上游 PR #8 / #9 / #10 / #12<br>② 更换全新应用图标（桌面 / 应用中心 / 包内 / 网页 favicon 统一）<br>③ 补充 MIT 许可证（双版权：Misite齊 / iqiuzixuan），README 与应用内「关于」页加入贡献者署名与 GitHub 链接",
     "updated_at": "2026-10-14T20:00:00+08:00",

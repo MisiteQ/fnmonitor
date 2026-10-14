@@ -11,6 +11,9 @@ cd "$(dirname "$0")"
 echo "[1/4] 生成应用图标..."
 python3 make_icon.py
 
+# 清理 Python 字节码缓存：fnpack 会打包 app/ 下全部文件，__pycache__ 一旦残留（本地跑过服务/测试）就会混入 fpk
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
 echo "[2/4] 检查 fnpack..."
 if [ -x ./fnpack ]; then
     FNPACK=./fnpack

@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.18.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.18.1-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.18.0**
+- 当前版本：**v2.18.1**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（安装向导可改）
@@ -35,7 +35,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.18.0-x86.fpk`（x86 机型）或 `fnmonitor-2.18.0-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.18.1-x86.fpk`（x86 机型）或 `fnmonitor-2.18.1-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -101,6 +101,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 | 版本 | 内容 |
 |---|---|
+| v2.18.1 | ① **盘位与内存插槽卡片自适应**：硬盘 / 内存数量少时卡片拉伸铺满模块宽度（移除盘位假槽位填充与宽度上限），多时自动换行；修复盘位卡片文字溢出（型号最多两行截断、去掉无意义 ATA 前缀、内存插槽文字溢出保护）② **修复设置页侧边栏高亮错位**：点击立即高亮并跟随滚动位置，底部矮分组（数据 / 软件更新 / 关于）也能正确高亮 ③ **修复飞牛官方手机 app 内嵌打开面板报 csrf_rejected 无法登录的问题**：放行同主机名任意端口与局域网来源，跨站防护不降级 |
 | v2.18.0 | **全新界面与后端升级（社区贡献者 [iqiuzixuan](https://github.com/iqiuzixuan)）**：全面重设计界面与设计体系（点阵数字 / 大圆角卡片 / 深浅色 + 多主色 / 手机平板自适应）；**新增虚拟机（QEMU/KVM + libvirt）监控页**——列表与 CPU / 内存 / 磁盘 / 网络实时读数、开机 / 关机 / 重启 / 挂起 / 恢复 / 强制关机；后端安全加固（登录令牌、CSRF 与 Host 校验、请求体限制、敏感信息脱敏）；补全回归测试套件与 GitHub Actions CI（上游 PR [#8](https://github.com/MisiteQ/fnmonitor/pull/8) / [#9](https://github.com/MisiteQ/fnmonitor/pull/9) / [#10](https://github.com/MisiteQ/fnmonitor/pull/10) / [#12](https://github.com/MisiteQ/fnmonitor/pull/12)）。同时更换**全新应用图标**，并补充 **MIT 许可证（双版权）** 与贡献者署名 |
 | v2.17.1 | **移除风扇控制功能**：本系统定位为纯数据读取监控，不操作系统硬件；删除风扇调速滑块、占空比设置、恢复自动温控（交还 BIOS）等所有写操作，仅保留风扇转速读取与趋势展示 |
 | v2.17.0 | ① **新增登录口令功能**：设置页可开启口令登录，访问监控面板需先输入口令；支持首次设置、修改口令、会话有效期（1-365 天），未设口令时自动引导设置；② **面板拖拽改为仅标题栏可拖**：拖拽排序不再从正文/图表区域发起，只有面板标题栏（⠿ 区域）可发起拖拽，避免误触图表交互 |
