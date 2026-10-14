@@ -16,8 +16,9 @@ fi
 # 2. 数据目录与默认配置
 mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
 if [ ! -f "${TRIM_PKGVAR}/config.json" ]; then
-    echo "{\"interval\": 10, \"retention_days\": 7}" > "${TRIM_PKGVAR}/config.json"
+    ( umask 077; echo "{\"interval\": 10, \"retention_days\": 7}" > "${TRIM_PKGVAR}/config.json" )
 fi
+chmod 600 "${TRIM_PKGVAR}/config.json" "${TRIM_PKGVAR}/sessions.json" 2>/dev/null || true
 
 # 3. 可执行权限
 chmod +x "${APP_DEST}/server.py" 2>/dev/null || true
