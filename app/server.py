@@ -58,8 +58,14 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.18.2"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.18.3"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
+# CSRF：本机回环来源（127.x / ::1）默认直接信任——飞牛官方手机 app 的面板经官方远程
+# 域名（office.app.5ddd.com 等）+ fnOS 本机代理组件转发到本服务（来源 ::1），其请求的
+# Origin 是官方域名、与被代理改写后的 Host 不一致，会撞上公网跨站拒绝规则。回环来源由
+# 内核网络栈决定，外部浏览器跨站请求不可能表现为本服务主机的回环地址，无伪造面。
+# 测试套件统一从 127.0.0.1 发起请求，设 FNM_TRUST_LOOPBACK=0 关闭该信任以保持 CSRF 断言有效
+_TRUST_LOOPBACK = os.environ.get("FNM_TRUST_LOOPBACK", "1") != "0"
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
@@ -6448,6 +6454,13 @@ class MonitorApp:
                       % (gate, detail, self.client_ip, urlparse(self.path).path))
 
             def _csrf_ok(self):
+                # 本机回环来源直接信任（飞牛官方手机 app 经 fnOS 本机代理转发，来源 ::1）
+                if _TRUST_LOOPBACK:
+                    try:
+                        if ipaddress.ip_address(self.client_ip or "").is_loopback:
+                            return True
+                    except ValueError:
+                        pass
                 ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
                 if ctype != "application/json":
                     self._csrf_log("content_type", ctype or "空")

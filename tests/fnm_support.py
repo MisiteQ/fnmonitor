@@ -99,6 +99,9 @@ class ServerProcess:
         env["TRIM_APPNAME"] = "fnmonitor-test-%s" % uuid.uuid4().hex[:8]
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
+        # 测试客户端全部来自 127.0.0.1：关闭服务端对本机回环的 CSRF 信任，
+        # 使 test_csrf 的公网跨站来源断言保持有效
+        env["FNM_TRUST_LOOPBACK"] = "0"
         self._log = open(self.log_path, "wb")
         self.proc = subprocess.Popen(
             [sys.executable, os.path.join(app, "server.py"), "--host", self.host,
