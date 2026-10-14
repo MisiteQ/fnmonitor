@@ -1,0 +1,74 @@
+# 持续集成：每次提交（任意分支）/ PR / 手动触发都跑回归测试套件
+#   - test：Python 3.9 / 3.11（fnOS 自带）/ 3.12 / 3.13 × 语法检查 + 单元与 HTTP 集成测试（tests/，纯标准库）
+#     本地已验证 3.7 / 3.8 同样通过（最低支持 3.7）；FNM_BENCH=1 的性能基准默认不跑
+#   - frontend：app/www/index.html 必须与 ui-src/ 的全新构建一致 + 内联脚本 node --check
+#   - shellcheck：cmd/* 等打包脚本，error 级别阻断，warning 仅提示
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 语法检查
+        run: python -m py_compile app/server.py tools/minify_ui.py
+
+      - name: 回归测试（单元 + HTTP 集成 + JSON 契约 + 前端构建）
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 校验前端已由 ui-src 构建
+        run: |
+          sh tools/build_ui.sh
+          git diff --exit-code app/www/index.html || { echo "app/www/index.html 与 ui-src/ 不一致：请修改 ui-src 后执行 sh tools/build_ui.sh 再提交"; exit 1; }
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck（error 阻断）
+        run: shellcheck -S error cmd/* build.sh tools/build_ui.sh
+
+      - name: shellcheck（warning 提示，不阻断）
+        run: shellcheck -S warning -f gcc cmd/* build.sh tools/build_ui.sh || true

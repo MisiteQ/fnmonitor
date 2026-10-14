@@ -1,0 +1,271 @@
+{
+ "/api/auth/config": {
+  "auth_enabled": "number",
+  "password_min_len": "number",
+  "requires_password": "bool",
+  "setup_mode": "bool"
+ },
+ "/api/config": {
+  "config": {
+   "arch": "str",
+   "auth_enabled": "number",
+   "auth_has_password": "bool",
+   "auth_password_set": "bool",
+   "auth_session_days": "number",
+   "data_dir": "str",
+   "data_dir_actual": "str",
+   "disk_standby_protect": "number",
+   "ec_fan_probe": "number",
+   "history_interval": "number",
+   "interval": "number",
+   "listen_port": "number",
+   "monthly_summary_enabled": "number",
+   "open_mode": "str",
+   "password_min_len": "number",
+   "port": "number",
+   "power_base_w": "number",
+   "power_disk_typical_w": "number",
+   "power_nic_fixed_w": "number",
+   "power_rate_yuan": "number",
+   "power_tdp_w": "number",
+   "retention_days": "number",
+   "traffic_exclude_bridge": "number",
+   "ui_file": "str",
+   "update_autocheck": "number",
+   "update_autodownload": "number",
+   "update_autoupdate": "number",
+   "update_status": {
+    "download_dir": "str",
+    "downloaded_file": "str",
+    "downloading": "bool",
+    "error": "str",
+    "has_update": "bool",
+    "installing": "bool",
+    "last_check": "str",
+    "latest": "str"
+   },
+   "version": "str",
+   "weather_city": "str"
+  }
+ },
+ "/api/daily": {
+  "archived_until": "number",
+  "days": [
+   {
+    "avg_w": "number",
+    "cost": "number",
+    "cpu_avg": "number",
+    "cpu_max": "number",
+    "day": "str",
+    "has_data": "bool",
+    "kwh": "number",
+    "power_h": "number",
+    "rx": "number",
+    "tx": "number"
+   }
+  ],
+  "exclude_bridge": "bool",
+  "missing": "str",
+  "power_source": "str",
+  "rate": "number",
+  "today": "str"
+ },
+ "/api/docker": {
+  "available": "bool",
+  "containers": "list",
+  "error": "str",
+  "images": "number",
+  "sampled_at": "number"
+ },
+ "/api/history?metric=cpu&range=1h": {
+  "metric": "str",
+  "points": [
+   [
+    "number"
+   ]
+  ],
+  "range": "str"
+ },
+ "/api/monthly_summary": {
+  "available": "bool",
+  "cpu": {
+   "avg": "number",
+   "max": "number",
+   "min": "number"
+  },
+  "disk": {
+   "avg": "number",
+   "max": "number"
+  },
+  "enabled": "bool",
+  "fan": {
+   "avg": "number"
+  },
+  "load1": {
+   "avg": "number",
+   "max": "number"
+  },
+  "mem": {
+   "avg": "number",
+   "max": "number",
+   "min": "number"
+  },
+  "month": "number",
+  "net_rx": "number",
+  "net_tx": "number",
+  "power": {
+   "avg_w": "number",
+   "kwh": "number",
+   "max_w": "number",
+   "yuan": "number"
+  },
+  "retention_days": "number",
+  "temp": {
+   "avg": "number",
+   "max": "number",
+   "min": "number"
+  },
+  "year": "number"
+ },
+ "/api/overview": {
+  "apps": "list",
+  "config": {
+   "auth_enabled": "number",
+   "auth_has_password": "bool",
+   "auth_password_set": "bool",
+   "auth_session_days": "number",
+   "data_dir": "str",
+   "disk_standby_protect": "number",
+   "ec_fan_probe": "number",
+   "history_interval": "number",
+   "interval": "number",
+   "monthly_summary_enabled": "number",
+   "open_mode": "str",
+   "port": "number",
+   "power_base_w": "number",
+   "power_disk_typical_w": "number",
+   "power_nic_fixed_w": "number",
+   "power_rate_yuan": "number",
+   "power_tdp_w": "number",
+   "retention_days": "number",
+   "traffic_exclude_bridge": "number",
+   "update_autocheck": "number",
+   "update_autodownload": "number",
+   "update_autoupdate": "number",
+   "weather_city": "str"
+  },
+  "cpu": {
+   "cores": "number",
+   "frequency_mhz": "number",
+   "load": [
+    "number"
+   ],
+   "logical_cpus": "number",
+   "model": "str",
+   "per_core": "list",
+   "percent": "number",
+   "sockets": "number",
+   "threads": "number"
+  },
+  "disk_pools": "number",
+  "disk_size": "number",
+  "disk_total": "number",
+  "disk_used": "number",
+  "diskio": "list",
+  "disks": "list",
+  "disks_detail": "list",
+  "docker": "dict",
+  "fans": "list",
+  "gpu": "list",
+  "hardware": "dict",
+  "interval": "number",
+  "mem": {
+   "available": "number",
+   "buffers": "number",
+   "cached": "number",
+   "free": "number",
+   "percent": "number",
+   "swap_free": "number",
+   "swap_percent": "number",
+   "swap_total": "number",
+   "swap_used": "number",
+   "total": "number",
+   "used": "number"
+  },
+  "memory": "list",
+  "modules": "list",
+  "net": "list",
+  "ports": "dict",
+  "power": "dict",
+  "raid": "list",
+  "raidcard": "dict",
+  "sensors": {
+   "available": "bool",
+   "fans": "list",
+   "fans_source": "str",
+   "temps": "list",
+   "volts": "list"
+  },
+  "system": "dict",
+  "temp": {
+   "cpu": "null",
+   "disks": "list",
+   "system": "null"
+  },
+  "ts": "number",
+  "uptime": "number"
+ },
+ "/api/power_stats": {
+  "cost": {
+   "month_yuan": "number",
+   "rate_yuan_per_kwh": "number",
+   "today_yuan": "number"
+  },
+  "disks": "list",
+  "energy": {
+   "basis": "str",
+   "boot_kwh": "number",
+   "month_kwh": "number",
+   "today_kwh": "number"
+  },
+  "estimation_params": {
+   "base_w": "number",
+   "disk_typical_w": "number",
+   "nic_fixed_w": "number",
+   "tdp_w": "number"
+  },
+  "realtime": "dict",
+  "standby_protect": "bool"
+ },
+ "/api/traffic": {
+  "config": {
+   "exclude_bridge": "bool"
+  },
+  "containers": "list",
+  "ifaces": "list",
+  "realtime": {
+   "rx_rate": "number",
+   "tx_rate": "number"
+  },
+  "totals": {
+   "basis": "str",
+   "boot_rx": "number",
+   "boot_tx": "number",
+   "month_rx": "number",
+   "month_tx": "number",
+   "today_rx": "number",
+   "today_tx": "number"
+  }
+ },
+ "/api/ui": {
+  "ui": {}
+ },
+ "/api/vms": {
+  "available": "bool",
+  "error": "str",
+  "installed": "bool",
+  "kvm": "bool",
+  "sampled_at": "number",
+  "vms": "list"
+ }
+}
