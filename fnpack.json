@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.3/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.18.4": {
+    "changelog": "v2.18.4<br>① 安全加固：CSRF 检查简化为两道闸（社区贡献者 iqiuzixuan，PR #14）——移除 Origin 比对与本机回环信任，只保留 Content-Type: application/json 和 X-FNM-Request: 1 两道闸，浏览器跨站必须先走 CORS 预检而本服务从不放行；修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf_rejected<br>② 修复存储详情「阵列」标题被卡片压住（社区贡献者 iqiuzixuan，PR #15）——新增 .sheet-stack 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ 系统版本显示飞牛 fnOS 版本（社区贡献者 iqiuzixuan，PR #16）——首页概况、主机模块副标题和信息表改为显示 fnOS 版本号，不再显示底层 Debian",
+    "updated_at": "2026-10-14T16:30:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-x86.fpk",
+      "sha256": "36fb95000042b31a86aeb0087f20e938faad5e3fe3b7d3a3e771c424d0e9ac86",
+      "size": 524207
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-arm.fpk",
+      "sha256": "fc82ba7efe21dcfaea72b0fe3641b76d9c6fad7be8b37c4cfccf7b2d083845c5",
+      "size": 524210
+     }
+    }
+   },
    "2.18.3": {
     "changelog": "v2.18.3<br>① 修复飞牛官方手机 app 打开面板仍报 csrf_rejected 的问题（v2.18.1 / 2.18.2 修复不彻底）：手机 app 的面板经飞牛官方远程域名 + fnOS 本机代理组件转发到本服务，请求来源是本机回环（::1），其 Origin 是官方域名、与被代理改写后的 Host 不一致，撞上公网跨站拒绝规则；现对本机回环来源（127.x / ::1）直接信任 CSRF 检查——该来源由内核网络栈决定，外部浏览器跨站请求不可能伪造，公网防护不受影响",
     "updated_at": "2026-10-14T23:30:00+08:00",
