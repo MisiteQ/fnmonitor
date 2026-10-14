@@ -1,0 +1,85 @@
+</svg>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><span class="dm no-off" data-dm="FN"></span></span>
+      <span class="brand-name">飞牛监控</span>
+      <span class="host-chip" id="hostChip" title="实时数据" role="status"><span class="live" id="liveDot"></span><span id="hostName">连接中…</span></span>
+      <span id="verTag"></span>
+    </div>
+    <nav class="seg nav" id="pageSeg" role="tablist" aria-label="页面">
+      <span class="thumb"></span>
+      <button role="tab" type="button" data-page="overview" aria-selected="true">总览</button>
+      <button role="tab" type="button" data-page="docker" aria-selected="false">容器</button>
+      <button role="tab" type="button" data-page="vms" aria-selected="false" hidden>虚拟机</button>
+      <button role="tab" type="button" data-page="settings" aria-selected="false">设置</button>
+    </nav>
+    <div class="tools">
+      <span class="clock-mini tnum" id="clockMini">--:--</span>
+      <button class="icon-btn" type="button" id="btnSearch" title="搜索  /" aria-label="搜索"><svg class="i"><use href="#i-search"/></svg></button>
+      <button class="icon-btn hide-m" type="button" id="btnRefresh" title="刷新全部数据" aria-label="刷新全部数据"><svg class="i"><use href="#i-refresh"/></svg></button>
+      <button class="icon-btn hide-m" type="button" id="btnEdit" title="编辑布局  E" aria-label="编辑布局" aria-pressed="false"><svg class="i"><use href="#i-layout"/></svg></button>
+      <button class="icon-btn" type="button" id="btnTheme" title="切换浅色 / 深色  T" aria-label="切换浅色 / 深色"><svg class="i"><use href="#i-moon"/></svg></button>
+      <button class="icon-btn hide-m" type="button" id="btnFull" title="全屏  F11" aria-label="全屏" aria-pressed="false"></button>
+      <button class="icon-btn hide-m" type="button" id="btnKeys" title="键盘快捷键  ?" aria-label="键盘快捷键"><svg class="i"><use href="#i-key"/></svg></button>
+      <button class="icon-btn" type="button" id="btnLogout" title="退出登录" aria-label="退出登录" hidden><svg class="i"><use href="#i-logout"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="page" id="page-overview" data-page="overview" aria-label="总览">
+    <div class="hero" id="hero"></div>
+    <div class="layout" data-layout="overview" id="layout-overview"></div>
+  </section>
+  <section class="page" id="page-docker" data-page="docker" aria-label="容器与端口" hidden>
+    <div class="layout" data-layout="docker" id="layout-docker"></div>
+  </section>
+  <section class="page" id="page-vms" data-page="vms" aria-label="虚拟机" hidden>
+    <div class="layout" data-layout="vms" id="layout-vms"></div>
+  </section>
+  <section class="page" id="page-settings" data-page="settings" aria-label="设置" hidden>
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">设置</h1>
+        <p class="page-dek">改动会自动保存：服务配置保存到 NAS 的 config.json，外观、布局与阈值保存到 ui.json。</p>
+      </div>
+    </div>
+    <div class="settings">
+      <nav class="set-nav" id="setNav" aria-label="设置分组"></nav>
+      <div class="set-main" id="setMain"></div>
+    </div>
+  </section>
+</main>
+
+<nav class="bottom-nav" id="bottomNav" aria-label="页面">
+  <button type="button" data-page="overview" aria-selected="true"><svg class="i"><use href="#i-home"/></svg>总览</button>
+  <button type="button" data-page="docker" aria-selected="false"><svg class="i"><use href="#i-box"/></svg>容器</button>
+  <button type="button" data-page="vms" aria-selected="false" hidden><svg class="i"><use href="#i-vm"/></svg>虚拟机</button>
+  <button type="button" data-page="settings" aria-selected="false"><svg class="i"><use href="#i-gear"/></svg>设置</button>
+</nav>
+
+<div class="scrim" id="scrim"></div>
+<aside class="sheet" id="sheet" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet-head">
+    <span class="drive-ico" id="sheetIco"></span>
+    <div class="grow"><div class="sheet-title" id="sheetTitle"></div><div class="sheet-sub" id="sheetSub"></div></div>
+    <button class="icon-btn" type="button" id="sheetClose" title="关闭  Esc" aria-label="关闭"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</aside>
+
+<div class="editbar" id="editbar" role="toolbar" aria-label="编辑布局">
+  <span>编辑布局 <small>· 拖动排序，开关控制显示</small></span>
+  <button class="btn" type="button" id="editReset">恢复默认</button>
+  <button class="btn primary" type="button" id="editDone">完成</button>
+</div>
+<div class="palette-wrap" id="palette" role="dialog" aria-modal="true" aria-label="搜索">
+  <div class="palette">
+    <div class="palette-in"><svg class="i i-lg"><use href="#i-search"/></svg><input id="palInput" placeholder="搜索硬盘、容器、虚拟机、设置或页面…" autocomplete="off" spellcheck="false" aria-label="搜索"><span class="kbd">Esc</span></div>
+    <div class="palette-list" id="palList"></div>
+    <div class="palette-foot"><span><span class="kbd">↑</span><span class="kbd">↓</span> 选择</span><span><span class="kbd">↵</span> 打开</span><span><span class="kbd">/</span> 随时唤起</span></div>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
