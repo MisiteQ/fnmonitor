@@ -201,7 +201,8 @@ const API = {
     if (r.status === 401) { if (!S.authGone) { S.authGone = true; toast('登录已过期，正在跳转登录页', { icon: 'lock' }); setTimeout(() => { location.href = loginURL(); }, 900); } throw new Error('未登录'); }
     if (r.status === 403) {
       let j = null; try { j = await r.json(); } catch (e) { /* HTML 说明页 */ }
-      const err = String((j && (j.error || j.message)) || '');
+      // CSRF 拒绝时显示服务端说明（含被拒的闸门），便于在手机 app 里直接截图定位
+      const err = String((j && (j.error === 'csrf_rejected' && j.message || j.error || j.message)) || '');
       if (err === 'old_password_invalid') { const e = new Error('当前口令不正确'); e.status = 403; throw e; }
       // 访问策略拦截（未开启口令时通过公网域名访问）：整页说明，而不是零散的报错
       if (!opt || !opt.method || /域名|口令|host/i.test(err) || !j) blockedPage(err);
