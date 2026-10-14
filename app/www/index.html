@@ -2109,7 +2109,7 @@ const r = await fetch(url, Object.assign({ cache: 'no-store', credentials: 'same
 if (r.status === 401) { if (!S.authGone) { S.authGone = true; toast('登录已过期，正在跳转登录页', { icon: 'lock' }); setTimeout(() => { location.href = loginURL(); }, 900); } throw new Error('未登录'); }
 if (r.status === 403) {
 let j = null; try { j = await r.json(); } catch (e) { /* HTML 说明页 */ }
-const err = String((j && (j.error || j.message)) || '');
+const err = String((j && (j.error === 'csrf_rejected' && j.message || j.error || j.message)) || '');
 if (err === 'old_password_invalid') { const e = new Error('当前口令不正确'); e.status = 403; throw e; }
 if (!opt || !opt.method || /域名|口令|host/i.test(err) || !j) blockedPage(err);
 const e = new Error(err || '访问被拒绝'); e.status = 403; throw e;
