@@ -1,213 +1,224 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-accent="black">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23262626'/%3E%3Cstop offset='1' stop-color='%230A0A0A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='7.2' fill='url(%23g)'/%3E%3Crect x='0.125' y='0.125' width='31.75' height='31.75' rx='7.1' fill='none' stroke='%23fff' stroke-opacity='.09' stroke-width='0.25'/%3E%3Ccircle cx='8.8' cy='23.2' r='1.78' fill='%232FA36B'/%3E%3Ccircle cx='8.8' cy='18.4' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='8.8' cy='13.6' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='8.8' cy='8.8' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='13.6' cy='23.2' r='1.78' fill='%232FA36B'/%3E%3Ccircle cx='13.6' cy='18.4' r='1.78' fill='%232FA36B'/%3E%3Ccircle cx='13.6' cy='13.6' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='13.6' cy='8.8' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='18.4' cy='23.2' r='1.78' fill='%239BC53D'/%3E%3Ccircle cx='18.4' cy='18.4' r='1.78' fill='%239BC53D'/%3E%3Ccircle cx='18.4' cy='13.6' r='1.78' fill='%239BC53D'/%3E%3Ccircle cx='18.4' cy='8.8' r='1.44' fill='rgba(255,255,255,.075)'/%3E%3Ccircle cx='23.2' cy='23.2' r='1.78' fill='%23FA8233'/%3E%3Ccircle cx='23.2' cy='18.4' r='1.78' fill='%23FA8233'/%3E%3Ccircle cx='23.2' cy='13.6' r='1.78' fill='%23FA8233'/%3E%3Ccircle cx='23.2' cy='8.8' r='1.78' fill='%23FA8233'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
 <title>飞牛监控 · 登录</title>
+<script>
+  /* 与主站共用外观缓存（fnm.ui）；兼容旧版 fnmonitor-theme */
+  (function () {
+    try {
+      var u = JSON.parse(localStorage.getItem('fnm.ui') || 'null'), mode, acc;
+      if (u && u.layoutVersion >= 200) { mode = u.theme; acc = u.accent; }
+      else { var L = { dark: ['dark', 'black'], light: ['light', 'black'], blue: ['light', 'blue'], fresh: ['light', 'green'], green: ['light', 'green'], yellow: ['light', 'yellow'], cyan: ['light', 'cyan'] }[localStorage.getItem('fnmonitor-theme')]; if (L) { mode = L[0]; acc = L[1]; } }
+      if (!mode || mode === 'auto') mode = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = mode === 'dark' ? 'dark' : 'light';
+      if (/^(black|blue|green|yellow|cyan)$/.test(acc || '')) document.documentElement.dataset.accent = acc;
+    } catch (e) {}
+  })();
+</script>
 <style>
-/* 复用主站设计令牌，登录页独立适配暗 / 亮主题 */
-:root{
-  --bg:#0b0f1a; --card:#111827; --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
-  --accent:#10b981; --accent-soft:rgba(16,185,129,.16);
-  --red:#f87171; --radius:16px;
-  color-scheme:dark;
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --bg: #ECECEA; --bg-dot: rgba(14, 14, 14, .075); --card: #FFFFFF; --card-sunk: #F3F3F1;
+  --ink-1: #0E0E0E; --ink-2: #6B6B6B; --ink-3: #A9A9A6; --line: rgba(14, 14, 14, .08);
+  --crit: #C2272D; --crit-soft: rgba(194, 39, 45, .10); --warn: #CE5600; --warn-soft: rgba(250, 130, 51, .14);
+  --accent: #0E0E0E; --on-accent: #FFFFFF;
 }
-:root[data-theme="light"]{
-  --bg:#f1f3f6; --card:#ffffff; --border:#e2e8f0; --text:#1e293b; --muted:#64748b; --dim:#94a3b8;
-  --accent:#10b981; --accent-soft:rgba(16,185,129,.12);
-  --red:#ef4444;
-  color-scheme:light;
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000; --bg-dot: rgba(255, 255, 255, .055); --card: #161616; --card-sunk: #1F1F1F;
+  --ink-1: #F2F2F0; --ink-2: #92928F; --ink-3: #64645F; --line: rgba(255, 255, 255, .08);
+  --crit: #E54C4A; --crit-soft: rgba(229, 76, 74, .15); --warn: #FF8F49; --warn-soft: rgba(255, 143, 73, .15);
+  --accent: #F2F2F0; --on-accent: #0E0E0E;
 }
-:root[data-theme="blue"]{
-  --bg:#0a1929; --card:#0f2944; --border:#1e3a5f; --text:#e0f2fe; --muted:#7dd3fc; --dim:#4a90b8;
-  --accent:#38bdf8; --accent-soft:rgba(56,189,248,.14);
-  --red:#f87171;
-  color-scheme:dark;
+[data-accent="blue"] { --accent: #2B50C0; --on-accent: #FFFFFF; } [data-theme="dark"][data-accent="blue"] { --accent: #7896F4; --on-accent: #0E0E0E; }
+[data-accent="green"] { --accent: #0B9B61; --on-accent: #FFFFFF; } [data-theme="dark"][data-accent="green"] { --accent: #2BB98A; --on-accent: #0E0E0E; }
+[data-accent="yellow"] { --accent: #C98A00; --on-accent: #0E0E0E; } [data-theme="dark"][data-accent="yellow"] { --accent: #E2A646; }
+[data-accent="cyan"] { --accent: #0098B0; --on-accent: #FFFFFF; } [data-theme="dark"][data-accent="cyan"] { --accent: #22B5CC; --on-accent: #0E0E0E; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+  background: var(--bg) radial-gradient(var(--bg-dot) 1px, transparent 1.3px) 0 0 / 22px 22px; color: var(--ink-1);
+  font: 400 15px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-:root[data-theme="fresh"]{
-  --bg:#f0f7f4; --card:#ffffff; --border:#d1e7dd; --text:#1a3a2e; --muted:#5b8c7a; --dim:#8fb8a3;
-  --accent:#10b981; --accent-soft:rgba(16,185,129,.12);
-  --red:#ef4444;
-  color-scheme:light;
-}
-:root[data-theme="green"]{
-  --bg:#0a1f15; --card:#0f2e1f; --border:#1a4030; --text:#dcfce7; --muted:#86efac; --dim:#4ade80;
-  --accent:#34d399; --accent-soft:rgba(52,211,153,.14);
-  --red:#f87171;
-  color-scheme:dark;
-}
-:root[data-theme="yellow"]{
-  --bg:#1f1a0a; --card:#2a2210; --border:#3f341a; --text:#fef9c3; --muted:#fde047; --dim:#ca8a04;
-  --accent:#fbbf24; --accent-soft:rgba(251,191,36,.14);
-  --red:#f87171;
-  color-scheme:dark;
-}
-:root[data-theme="cyan"]{
-  --bg:#0a1a1f; --card:#0f2329; --border:#1a3a40; --text:#cffafe; --muted:#67e8f9; --dim:#22d3ee;
-  --accent:#06b6d4; --accent-soft:rgba(6,182,212,.14);
-  --red:#f87171;
-  color-scheme:dark;
-}
-:root[data-theme="dark"]{
-  --bg:#0b0f1a; --card:#111827; --border:#1f2a3d; --text:#e5e9f2; --muted:#94a3b8; --dim:#64748b;
-  --accent:#10b981; --accent-soft:rgba(16,185,129,.16);
-  --red:#f87171;
-  color-scheme:dark;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
-  background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;
-  padding:20px;transition:background .3s,color .3s;
-}
-.login-card{
-  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:40px 36px;width:100%;max-width:380px;box-shadow:0 20px 60px -20px rgba(0,0,0,.5);
-}
-.logo-row{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:8px}
-.logo{width:32px;height:32px;color:var(--accent)}
-.brand{font-size:22px;font-weight:700}
-.brand-sub{font-size:11px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;text-align:center;margin-bottom:28px}
-.field{margin-bottom:18px}
-.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;font-weight:600}
-.field input{
-  width:100%;padding:11px 14px;font-size:15px;border:1px solid var(--border);border-radius:10px;
-  background:var(--bg);color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;
-}
-.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.btn{
-  width:100%;padding:12px;font-size:15px;font-weight:700;border:none;border-radius:10px;
-  background:var(--accent);color:#fff;cursor:pointer;transition:opacity .2s,transform .1s;
-}
-.btn:hover{opacity:.9}
-.btn:active{transform:scale(.98)}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.msg{text-align:center;font-size:13px;margin-top:14px;min-height:18px;color:var(--red)}
-.hint{text-align:center;font-size:12px;color:var(--dim);margin-top:20px;line-height:1.6}
-.eye-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;
-  color:var(--dim);cursor:pointer;font-size:16px;padding:4px}
-.input-wrap{position:relative}
-@media(max-width:420px){.login-card{padding:28px 22px}}
+button, input { font: inherit; color: inherit; }
+.card { width: 100%; max-width: 400px; background: var(--card); border-radius: 26px; padding: 36px 32px 30px; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.mark { width: 40px; height: 40px; border-radius: 12px; background: var(--ink-1); color: var(--card); display: grid; place-items: center; flex: none; }
+.mark svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.brand b { display: block; font-size: 18px; font-weight: 650; letter-spacing: -.01em; line-height: 1.2; }
+.kicker { font: 500 10.5px/1 "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; margin-top: 5px; }
+h1 { margin: 30px 0 4px; font-size: 26px; font-weight: 650; letter-spacing: -.02em; line-height: 1.25; }
+.lead { color: var(--ink-2); font-size: 14px; margin-bottom: 22px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; font-weight: 550; color: var(--ink-2); margin-bottom: 7px; }
+.wrap { position: relative; }
+.wrap input { width: 100%; height: 46px; border: 0; outline: 0; border-radius: 14px; background: var(--card-sunk); padding: 0 46px 0 16px; font-size: 15px; transition: box-shadow .2s; }
+.wrap input:focus { box-shadow: inset 0 0 0 1.5px var(--ink-1); }
+.wrap input::placeholder { color: var(--ink-3); }
+.eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border: 0; border-radius: 50%; background: none; color: var(--ink-3); display: grid; place-items: center; cursor: pointer; }
+.eye:hover { color: var(--ink-1); }
+.eye svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.btn { width: 100%; height: 46px; margin-top: 8px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity .2s, transform .1s; }
+.btn:hover { opacity: .9; } .btn:active { transform: scale(.985); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.msg { min-height: 22px; margin-top: 12px; font-size: 13px; text-align: center; color: var(--crit); }
+.msg.wait { color: var(--warn); }
+.hint { margin-top: 18px; padding: 12px 14px; border-radius: 14px; background: var(--card-sunk); color: var(--ink-2); font-size: 12.5px; line-height: 1.65; }
+.loading { color: var(--ink-3); text-align: center; padding: 26px 0 8px; font-size: 14px; }
+.foot { margin-top: 22px; text-align: center; color: var(--ink-3); font-size: 12px; }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+@media (max-width: 420px) { .card { padding: 28px 22px 24px; } h1 { font-size: 23px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<div class="login-card">
-  <div class="logo-row">
-    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 13 7 9 11 13 17 7 21 11"/><polyline points="3 19 7 15 11 19 17 13 21 17" opacity=".5"/></svg>
-    <span class="brand">飞牛监控</span>
+<main class="card">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 13h3.2l2.3-5.5 4 10 2.6-6.5 1.4 2H21"/></svg></span>
+    <div><b>飞牛监控</b><div class="kicker">fnMonitor · NAS</div></div>
   </div>
-  <div class="brand-sub">FNNAS MONITOR</div>
-  <div id="login-form" style="display:none">
+
+  <div id="loading" class="loading">加载中…</div>
+
+  <form id="login-form" hidden autocomplete="on">
+    <h1>请输入登录口令</h1>
+    <p class="lead">访问这台 NAS 的监控面板需要口令。</p>
     <div class="field">
-      <label>登录口令</label>
-      <div class="input-wrap">
-        <input type="password" id="pw" placeholder="请输入登录口令" autofocus>
-        <button type="button" class="eye-toggle" onclick="toggleEye('pw',this)" title="显示/隐藏">👁</button>
+      <label for="pw">登录口令</label>
+      <div class="wrap">
+        <input type="password" id="pw" name="password" placeholder="请输入登录口令" autocomplete="current-password">
+        <button type="button" class="eye" data-eye="pw" title="显示 / 隐藏口令" aria-label="显示口令"></button>
       </div>
     </div>
-    <button class="btn" id="btn-login" onclick="doLogin()">登 录</button>
-    <div class="msg" id="msg"></div>
-  </div>
-  <div id="setup-form" style="display:none">
+    <button class="btn" id="btn-login" type="submit">登录</button>
+    <div class="msg" id="msg-login" role="alert"></div>
+  </form>
+
+  <form id="setup-form" hidden autocomplete="off">
+    <h1>设置登录口令</h1>
+    <p class="lead">首次使用，请设置访问口令。</p>
     <div class="field">
-      <label>设置登录口令（首次使用）</label>
-      <div class="input-wrap">
-        <input type="password" id="new-pw" placeholder="至少 4 位" autofocus>
-        <button type="button" class="eye-toggle" onclick="toggleEye('new-pw',this)" title="显示/隐藏">👁</button>
+      <label for="new-pw">新口令</label>
+      <div class="wrap">
+        <input type="password" id="new-pw" placeholder="至少 6 位" autocomplete="new-password">
+        <button type="button" class="eye" data-eye="new-pw" title="显示 / 隐藏口令" aria-label="显示口令"></button>
       </div>
     </div>
     <div class="field">
-      <label>确认口令</label>
-      <div class="input-wrap">
-        <input type="password" id="new-pw2" placeholder="再输入一次">
-        <button type="button" class="eye-toggle" onclick="toggleEye('new-pw2',this)" title="显示/隐藏">👁</button>
+      <label for="new-pw2">确认口令</label>
+      <div class="wrap">
+        <input type="password" id="new-pw2" placeholder="再输入一次" autocomplete="new-password">
+        <button type="button" class="eye" data-eye="new-pw2" title="显示 / 隐藏口令" aria-label="显示口令"></button>
       </div>
     </div>
-    <button class="btn" id="btn-setup" onclick="doSetup()">设置口令并登录</button>
-    <div class="msg" id="msg"></div>
-  </div>
-  <div id="loading" style="text-align:center;padding:20px;color:var(--dim)">加载中…</div>
-  <div class="hint" id="hint" style="display:none"></div>
-</div>
+    <button class="btn" id="btn-setup" type="submit">设置口令并登录</button>
+    <div class="msg" id="msg-setup" role="alert"></div>
+  </form>
+
+  <div class="hint" id="hint" hidden></div>
+  <p class="foot">纯本地运行 · 口令只保存在这台 NAS 上</p>
+</main>
 <script>
 "use strict";
-// 同步主题（与主站 localStorage 一致）
-try{
-  var t=localStorage.getItem("fnmonitor-theme")||"fresh";
-  document.documentElement.setAttribute("data-theme",t);
-}catch(e){}
-function $(id){return document.getElementById(id);}
-function showMsg(txt){var m=$("msg");if(m)m.textContent=txt;}
-function toggleEye(id,btn){
-  var el=$(id);if(!el)return;
-  el.type=el.type==="password"?"text":"password";
-  btn.textContent=el.type==="password"?"👁":"🙈";
-}
-async function getJSON(url){
-  var r=await fetch(url,{cache:"no-store"});
-  if(!r.ok)throw new Error("HTTP "+r.status);
-  return r.json();
-}
-async function init(){
-  try{
-    // 已登录直接跳转主页
-    var s=await getJSON("/api/auth/session");
-    if(s.logged_in){location.href=location.pathname.replace(/login\.html$/,"");return;}
-    var c=await getJSON("/api/auth/config");
-    $("loading").style.display="none";
-    if(c.setup_mode){
-      // 未设口令：首次设置
-      $("setup-form").style.display="";
-      var h=$("hint");h.style.display="";h.textContent="首次使用，请设置登录口令（至少 4 位）。设置后每次访问需口令登录。";
-    }else if(c.requires_password){
-      // 已设口令：登录
-      $("login-form").style.display="";
-    }else{
-      // 未启用鉴权：直接跳转
-      location.href=location.pathname.replace(/login\.html$/,"");
-    }
-  }catch(e){
-    $("loading").textContent="连接失败：" + e.message;
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var EYE = '<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M3.5 3.5l17 17M10.6 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.9 3.7M6.6 6.6A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.4 9.4 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+  var MIN = 6, timer = 0;
+  var home = function () { return location.pathname.replace(/login\.html$/, ''); };
+  function msg(id, txt, wait) { var m = $(id); m.textContent = txt || ''; m.classList.toggle('wait', !!wait); }
+  async function getJSON(url) {
+    var r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
   }
-}
-async function doLogin(){
-  var pw=$("pw").value;
-  if(!pw){showMsg("请输入口令");return;}
-  var btn=$("btn-login");btn.disabled=true;btn.textContent="登录中…";
-  try{
-    var r=await fetch("/api/auth/password",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({password:pw})
+  /* 写操作统一：POST + JSON + CSRF 标记头 */
+  async function post(url, body) {
+    var r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body) });
+    var j = {}; try { j = await r.json(); } catch (e) {}
+    j.__status = r.status;
+    return j;
+  }
+  document.querySelectorAll('[data-eye]').forEach(function (b) {
+    b.innerHTML = EYE;
+    b.addEventListener('click', function () {
+      var el = $(b.dataset.eye), show = el.type === 'password';
+      el.type = show ? 'text' : 'password'; b.innerHTML = show ? EYE_OFF : EYE; b.setAttribute('aria-label', show ? '隐藏口令' : '显示口令');
+      el.focus();
     });
-    var j=await r.json();
-    if(j.ok){location.href=location.pathname.replace(/login\.html$/,"");}
-    else showMsg(j.error||"登录失败");
-  }catch(e){showMsg("请求失败："+e.message);}
-  btn.disabled=false;btn.textContent="登 录";
-}
-async function doSetup(){
-  var pw=$("new-pw").value,pw2=$("new-pw2").value;
-  if(pw.length<4){showMsg("口令至少 4 位");return;}
-  if(pw!==pw2){showMsg("两次输入不一致");return;}
-  var btn=$("btn-setup");btn.disabled=true;btn.textContent="设置中…";
-  try{
-    var r=await fetch("/api/auth/setup",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({password:pw})
-    });
-    var j=await r.json();
-    if(j.ok){location.href=location.pathname.replace(/login\.html$/,"");}
-    else showMsg(j.error||"设置失败");
-  }catch(e){showMsg("请求失败："+e.message);}
-  btn.disabled=false;btn.textContent="设置口令并登录";
-}
-// 回车提交
-document.addEventListener("keydown",function(e){
-  if(e.key!=="Enter")return;
-  if($("login-form").style.display!=="none")doLogin();
-  else if($("setup-form").style.display!=="none")doSetup();
-});
-init();
+  });
+  /* 登录失败过多：后端返回 429 + retry_after，按秒倒计时后再允许重试 */
+  function countdown(sec, btn, id, label) {
+    clearInterval(timer);
+    var left = Math.max(1, Math.ceil(+sec || 30));
+    btn.disabled = true;
+    var tick = function () {
+      if (left <= 0) { clearInterval(timer); btn.disabled = false; btn.textContent = label; msg(id, ''); return; }
+      btn.textContent = left + ' 秒后可重试';
+      msg(id, '尝试次数过多，为保护账户安全请稍候 ' + left + ' 秒再试', true);
+      left--;
+    };
+    tick(); timer = setInterval(tick, 1000);
+  }
+  async function init() {
+    try {
+      var s = await getJSON('/api/auth/session');
+      if (s.logged_in) { location.href = home(); return; }
+      var c = await getJSON('/api/auth/config');
+      if (+c.password_min_len > 0) MIN = +c.password_min_len;
+      $('new-pw').placeholder = '至少 ' + MIN + ' 位';
+      $('loading').hidden = true;
+      if (c.setup_mode) {
+        $('setup-form').hidden = false;
+        $('hint').hidden = false; $('hint').textContent = '设置后，每次访问都需要输入口令。口令至少 ' + MIN + ' 位，建议混合大小写、数字与符号。';
+        $('new-pw').focus();
+      } else if (c.requires_password) {
+        $('login-form').hidden = false; $('pw').focus();
+      } else {
+        location.href = home();
+      }
+    } catch (e) {
+      $('loading').textContent = '连接失败：' + e.message;
+    }
+  }
+  $('login-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var pw = $('pw').value, btn = $('btn-login');
+    if (!pw) { msg('msg-login', '请输入口令'); return; }
+    btn.disabled = true; btn.textContent = '登录中…'; msg('msg-login', '');
+    try {
+      var j = await post('/api/auth/password', { password: pw });
+      if (j.ok) { location.href = home(); return; }
+      if (j.__status === 429) { countdown(j.retry_after, btn, 'msg-login', '登录'); return; }
+      msg('msg-login', j.error || '登录失败');
+    } catch (err) { msg('msg-login', '请求失败：' + err.message); }
+    btn.disabled = false; btn.textContent = '登录';
+  });
+  $('setup-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var pw = $('new-pw').value, pw2 = $('new-pw2').value, btn = $('btn-setup');
+    if (pw.length < MIN) { msg('msg-setup', '口令至少 ' + MIN + ' 位'); return; }
+    if (pw !== pw2) { msg('msg-setup', '两次输入不一致'); return; }
+    btn.disabled = true; btn.textContent = '设置中…'; msg('msg-setup', '');
+    try {
+      var j = await post('/api/auth/setup', { password: pw });
+      if (j.ok) { location.href = home(); return; }
+      if (j.__status === 429) { countdown(j.retry_after, btn, 'msg-setup', '设置口令并登录'); return; }
+      msg('msg-setup', j.error || '设置失败');
+    } catch (err) { msg('msg-setup', '请求失败：' + err.message); }
+    btn.disabled = false; btn.textContent = '设置口令并登录';
+  });
+  init();
+})();
 </script>
 </body>
 </html>

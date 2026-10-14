@@ -1,7 +1,7 @@
 appname=fnmonitor
 version=2.17.1
 display_name=飞牛监控
-desc="""<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置"""
+desc="""<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | 🖥 虚拟机 | ⚙️ 设置"""
 platform=x86
 source=thirdparty
 maintainer=Misite齊
