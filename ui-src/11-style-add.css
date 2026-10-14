@@ -63,6 +63,8 @@
 .spinning .i { animation: spin .8s linear infinite; }
 .temp-cells { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .temp-cells b { display: block; margin-top: 8px; font-size: 18px; font-weight: 600; }
+/* 抽屉内的动态包裹层：子元素沿用 .sheet-body 的竖向间距，否则小标题的负下边距会压住下一张卡片 */
+.sheet-stack > * + * { margin-top: var(--s4); }
 .sheet-seg { display: flex; justify-content: flex-end; margin: 24px 0 10px; overflow-x: auto; }
 .ctr-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .wx-city { font-size: 13px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

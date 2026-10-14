@@ -1156,6 +1156,7 @@ a{color:var(--ink-1)}
 .spinning .i{animation:spin .8s linear infinite}
 .temp-cells{grid-template-columns:repeat(4,minmax(0,1fr))}
 .temp-cells b{display:block;margin-top:8px;font-size:18px;font-weight:600}
+.sheet-stack>* + *{margin-top:var(--s4)}
 .sheet-seg{display:flex;justify-content:flex-end;margin:24px 0 10px;overflow-x:auto}
 .ctr-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .wx-city{font-size:13px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3157,7 +3158,7 @@ health: {
 icon: 'shield', title: () => '健康检查', sub: () => '每次刷新自动复核 · 阈值可在设置中调整',
 build(b) {
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">健康分</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">分</span></div></div><div data-ref="lvl"></div></div>
-<div data-ref="probs" style="display:contents"></div>
+<div class="sheet-stack" data-ref="probs" style="display:contents"></div>
 ${sec('逐项检查')}${rowsCard('<div data-ref="list"></div>')}
 <p class="sub">健康分从 100 起算：被忽略的提醒不计分；每项需要留意 −7，严重 −22，提示 −1。判定使用「设置 → 提醒阈值」，与健康报告口径一致。</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-dl="/api/report?format=html">${ic('download')}生成健康报告（HTML）</button><button class="btn ghost" type="button" data-goset="thresholds">${ic('alert')}调整提醒阈值</button></div>`;
@@ -3202,7 +3203,7 @@ const o = S.o, n = ((o.cpu || {}).per_core || []).length;
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">CPU 使用率</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">%</span></div></div><div style="text-align:right"><div class="eyebrow">负载 1 / 5 / 15</div><b class="tnum" data-ref="load"></b></div></div>
 ${sec('每核使用率')}<div class="card pad">${n ? `<div class="dcores" style="--cols:${Math.min(8, n)}">${Array.from({ length: n }, (_, i) => `<div class="dcore" data-ref="dc${i}"><div class="dcore-f"><span>C${i}</span><b data-ref="cv${i}"></b></div></div>`).join('')}</div>` : emptyHTML('每核数据不可用')}</div>`;
 sheetCharts(ctx, b, [TREND_DEFS[0].series && { title: 'CPU 使用率', yMin: 0, yMax: 100, yTick: v => v + '%', peak: true, thresholds: TREND_DEFS[0].thresholds, series: [TREND_DEFS[0].series[0]] }, { title: '系统负载（1 分钟）', yMin: 0, yTick: v => String(v), series: [{ m: 'load1', label: '负载', color: M.cpu, fmt: fLoad }] }]);
-b.insertAdjacentHTML('beforeend', `${sec('占用最高的进程', '<span class="faint">每 15 秒刷新</span>')}${rowsCard('<div data-ref="procs"></div>')}${sec('规格')}<div data-ref="spec"></div>${sec('显卡')}<div data-ref="gpu"></div>`);
+b.insertAdjacentHTML('beforeend', `${sec('占用最高的进程', '<span class="faint">每 15 秒刷新</span>')}${rowsCard('<div data-ref="procs"></div>')}${sec('规格')}<div data-ref="spec"></div>${sec('显卡')}<div class="sheet-stack" data-ref="gpu"></div>`);
 const x = collect(b), cg = Array.from({ length: n }, (_, i) => dotGauge(x['dc' + i], 3, n > 8 ? 8 : 14));
 return o => {
 const c = o.cpu || {}, hc = (o.hardware || {}).cpu || {};
@@ -3244,7 +3245,7 @@ build(b, arg, ctx) {
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">存储池已用</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">%</span></div></div><div style="text-align:right"><div class="eyebrow">可用</div><b class="tnum" data-ref="free"></b></div></div>
 ${rowsCard('<div data-ref="disks"></div>')}`;
 sheetCharts(ctx, b, [TREND_DEFS[2], { title: '存储池使用率', yMin: 0, yMax: 100, yTick: v => v + '%', thresholds: () => [{ v: TH.capWarn, lv: 'warn' }, { v: TH.capCrit, lv: 'crit' }], series: [{ m: 'disk_total', label: '已用', color: M.io, fmt: fPct }] }]);
-b.insertAdjacentHTML('beforeend', `${sec('分区与挂载')}<div class="card pad tbl-wrap"><table class="tbl"><thead><tr><th>挂载点</th><th class="hide-m">设备</th><th class="r">读</th><th class="r">写</th><th class="r">使用率</th><th class="r hide-m">已用 / 总量</th></tr></thead><tbody data-ref="parts"></tbody></table></div><div data-ref="raid"></div>${sec('硬盘休眠状态', '<span data-ref="prot"></span>')}<div data-ref="sb"></div>`);
+b.insertAdjacentHTML('beforeend', `${sec('分区与挂载')}<div class="card pad tbl-wrap"><table class="tbl"><thead><tr><th>挂载点</th><th class="hide-m">设备</th><th class="r">读</th><th class="r">写</th><th class="r">使用率</th><th class="r hide-m">已用 / 总量</th></tr></thead><tbody data-ref="parts"></tbody></table></div><div class="sheet-stack" data-ref="raid"></div>${sec('硬盘休眠状态', '<span data-ref="prot"></span>')}<div data-ref="sb"></div>`);
 const x = collect(b);
 return o => {
 const dd = disksOf(o), has = +o.disk_size > 0;
@@ -3290,7 +3291,7 @@ if (!d0) { b.innerHTML = `<div class="empty"><b>未找到硬盘 ${esc(a)}</b><sp
 const sm0 = smartState(d0), sl = isSleep(d0);
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">已用</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">%</span></div></div><div data-ref="pill"></div></div>
 <div class="card pad"><div class="dbar" data-n="40" data-ref="bar"></div><div class="legend" data-ref="leg"></div></div>
-<div data-ref="notes"></div>
+<div class="sheet-stack" data-ref="notes"></div>
 ${sl ? '' : `${sec('实时读写', '<span class="faint">近 5 分钟</span>')}<div class="card chart-card"><div class="chart-head"><div class="chart-title">读写速率</div><div class="chart-legend"><span><span class="lk"><i class="k0" style="--k:var(--e-blue)"></i>读取</span><span class="lv" data-ref="rv">--</span></span><span><span class="lk"><i class="k1" style="--k:var(--e-coral)"></i>写入</span><span class="lv" data-ref="wv">--</span></span></div></div><div style="height:64px" data-ref="sp"></div></div>`}
 ${sec('SMART')}<div class="card pad" style="padding-top:14px;padding-bottom:6px"><table class="tbl"><thead><tr><th>属性</th><th class="r">值</th><th class="r">状态</th></tr></thead><tbody data-ref="smart"></tbody></table></div>
 ${sec('信息')}<div data-ref="info"></div>`;
