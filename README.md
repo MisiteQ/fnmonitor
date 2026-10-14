@@ -95,6 +95,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 ## 🙏 致谢
 
 - 飞牛 fnOS 与 [FnDepot](https://github.com/EWEDLCM/FnDepot)
+- 特别感谢 **[iqiuzixuan](https://github.com/iqiuzixuan)**：为本项目贡献了全新界面与设计体系、虚拟机（QEMU/KVM）监控页、后端安全加固，以及回归测试套件与 GitHub Actions CI（上游 PR [#8](https://github.com/MisiteQ/fnmonitor/pull/8) / [#9](https://github.com/MisiteQ/fnmonitor/pull/9) / [#10](https://github.com/MisiteQ/fnmonitor/pull/10) / [#12](https://github.com/MisiteQ/fnmonitor/pull/12)）
 
 ## 📋 版本历史
 
