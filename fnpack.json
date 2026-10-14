@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.18.2": {
+    "changelog": "v2.18.2<br>① 修复飞牛官方手机 app 内嵌打开面板仍报 csrf_rejected 的问题：放行 Origin: null 与 app 内部 scheme 等 WebView 特征来源（此前仅放行局域网 Origin 不够），跨站防护不降级<br>② 新增 CSRF 拒绝日志：POST 请求被拒时在 server.log 记录具体闸门与来源，便于定位 app 内嵌等特殊访问场景",
+    "updated_at": "2026-10-14T22:40:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-x86.fpk",
+      "sha256": "e4dc18e2827073f278a6e18b121540c4727c3d2cc74287a43124a010008f9ed6",
+      "size": 523329
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-arm.fpk",
+      "sha256": "d37de5b2425e3013db726e507532ab78e70ca43e40a1cbafe73c85c67236aa21",
+      "size": 523331
+     }
+    }
+   },
    "2.18.1": {
     "changelog": "v2.18.1<br>① 盘位与内存插槽卡片自适应：硬盘 / 内存数量少时卡片拉伸铺满模块宽度，多时自动换行；修复盘位卡片文字溢出（型号最多两行截断、精简前缀）<br>② 修复设置页侧边栏高亮错位：点击立即高亮并跟随滚动位置，底部矮分组也能正确高亮<br>③ 修复飞牛官方手机 app 内嵌打开面板报 csrf_rejected 无法登录的问题（放行同主机名任意端口与局域网来源，跨站防护不降级）",
     "updated_at": "2026-10-14T21:30:00+08:00",

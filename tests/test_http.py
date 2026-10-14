@@ -90,14 +90,16 @@ class NoAuthTest(ServerTestCase):
         self.assertEqual((st, j["error"]), (403, "csrf_rejected"))
         st, *_ = self.srv.request("POST", "/api/ui", '{"theme":"dark"}', {"Content-Type": "text/plain", "X-FNM-Request": "1"})
         self.assertEqual(st, 403)
-        for origin in ("http://evil.example", "null", "file://", "http://127.0.0.1.evil.com:%d" % self.srv.port,
+        # 公网跨站来源仍拒绝；null / 自定义 scheme 为手机 app WebView 特征来源，放行
+        # （浏览器跨站仍被 application/json + X-FNM-Request 两道闸挡住：无自定义头触发预检失败）
+        for origin in ("http://evil.example", "http://127.0.0.1.evil.com:%d" % self.srv.port,
                        "http://8.8.8.8:9"):
             st, *_ = self.post("/api/ui", {"theme": "dark"}, headers={"Origin": origin})
             self.assertEqual(st, 403, origin)
-        # 局域网 / 本机来源放行（飞牛官方手机 app 经本机代理打开面板时 Origin 是 127.0.0.1 等）
+        # 局域网 / 本机 / 非标准来源放行（飞牛官方手机 app 经本机代理打开面板时 Origin 是 127.0.0.1 等）
         cur = self.get("/api/ui")[1]["ui"]
         for origin in ("http://127.0.0.1:9", "http://192.168.1.66:9999", "http://nas.local:1",
-                       "http://localhost:1"):
+                       "http://localhost:1", "null", "file://", "app://fnos"):
             st, *_ = self.post("/api/ui", cur, headers={"Origin": origin})
             self.assertEqual(st, 200, origin)
         st, *_ = self.srv.request("POST", "/api/auth/setup", '{"password":"abcdefgh"}',

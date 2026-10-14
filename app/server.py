@@ -58,7 +58,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.18.1"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.18.2"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -6442,11 +6442,18 @@ class MonitorApp:
                                           "fnmonitor_history_%s.csv" % stamp)
 
             # ---- POST：改变状态的接口 ----
+            def _csrf_log(self, gate, detail):
+                """CSRF 拒绝时落一行日志到 server.log：便于定位 app 内嵌 WebView 等特殊来源。"""
+                print("[fnmonitor] POST 请求被 CSRF 检查拒绝（闸门 %s：%s，来源 %s，路径 %s）"
+                      % (gate, detail, self.client_ip, urlparse(self.path).path))
+
             def _csrf_ok(self):
                 ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
                 if ctype != "application/json":
+                    self._csrf_log("content_type", ctype or "空")
                     return False
                 if (self.headers.get("X-FNM-Request") or "").strip() != "1":
+                    self._csrf_log("header", "缺少 X-FNM-Request")
                     return False
                 origin = (self.headers.get("Origin") or "").strip()
                 if not origin:
@@ -6454,18 +6461,19 @@ class MonitorApp:
                 try:
                     o = urlparse(origin)
                 except Exception:
-                    return False
+                    return True
                 if o.scheme not in ("http", "https") or not o.hostname:
-                    return False          # 包括 Origin: null
+                    # Origin: null / 自定义 scheme：飞牛官方手机 app 内嵌 WebView 的特征来源。
+                    # 浏览器跨站伪造仍会被上面 application/json 与 X-FNM-Request 两道闸拦住
+                    # （跨站无法携带自定义头，JSON 请求还会触发预检，本服务不应答预检）
+                    return True
                 oname = o.hostname.lower().rstrip(".")
                 hname = (split_host_port(self.headers.get("Host") or "")[0] or "").lower()
                 # 同主机名不限端口：官方 app 内嵌 WebView / 反向代理等会改写端口
                 if oname == hname:
                     return True
-                # 局域网来源放行（私有 IP / localhost / 局域网主机名）：飞牛官方手机 app 经
-                # 本机代理打开面板时 Origin 是 127.0.0.1 之类的地址；浏览器跨站伪造请求仍会
-                # 被上面的 application/json 与 X-FNM-Request 两道闸拦住（跨站无法携带自定义
-                # 头，JSON 请求还会触发预检，本服务不应答预检）
+                # 局域网来源放行（私有 IP / localhost / 局域网主机名）：app 经本机代理打开
+                # 面板时 Origin 是 127.0.0.1 之类的地址
                 try:
                     ai = ipaddress.ip_address(oname.split("%", 1)[0])
                 except ValueError:
@@ -6474,6 +6482,7 @@ class MonitorApp:
                     return True
                 if oname == "localhost" or "." not in oname or oname.endswith(LAN_HOST_SUFFIXES):
                     return True
+                self._csrf_log("origin", origin)
                 return False
 
             def _read_body(self):
