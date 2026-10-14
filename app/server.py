@@ -3056,6 +3056,29 @@ def read_temps():
     return temps
 
 
+_FNOS_VERSION_RE = re.compile(r"^\d[\w.+~-]{0,31}$")
+
+
+def read_fnos_version():
+    """飞牛 fnOS 版本号（如 1.2.0800）。/etc/os-release 是底层 Debian，不用它：
+    先读 /usr/trim/etc/version，读不到再找 dpkg 里 trim 包（Fn NAS）的版本；都没有返回空串，前端不显示。"""
+    v = read_text("/usr/trim/etc/version").strip()
+    if _FNOS_VERSION_RE.match(v):
+        return v
+    try:
+        with open("/var/lib/dpkg/status", "r", errors="ignore") as f:
+            hit = False
+            for line in f:
+                if line.startswith("Package: "):
+                    hit = line[9:].strip() == "trim"
+                elif hit and line.startswith("Version: "):
+                    v = line[9:].strip()
+                    return v if _FNOS_VERSION_RE.match(v) else ""
+    except Exception:
+        pass
+    return ""
+
+
 def system_info(hostname_override=None):
     info = {}
     info["hostname"] = hostname_override or socket.gethostname()
@@ -3064,11 +3087,7 @@ def system_info(hostname_override=None):
     info["uptime"] = read_uptime()
     info["boot_time"] = time.time() - info["uptime"] if info["uptime"] else 0
     info["cpu_model"] = read_cpu_model()
-    info["os_pretty"] = ""
-    for line in read_text("/etc/os-release").splitlines():
-        if line.startswith("PRETTY_NAME="):
-            info["os_pretty"] = line.split("=", 1)[1].strip().strip('"')
-            break
+    info["fnos_version"] = read_fnos_version()
     # 内核版本与系统版本
     kv = read_text("/proc/version").strip()
     info["kernel_version"] = kv[:120] if kv else ""

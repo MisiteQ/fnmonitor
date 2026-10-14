@@ -169,6 +169,30 @@ class SmallParsersTest(unittest.TestCase):
         self.assertEqual(srv.estimate_power(100, 4, 1, 65, 8, 5), 102.0)
         self.assertEqual(srv.estimate_power(None, 0, 0, 65, 8, 5), 19.5)
 
+    def test_fnos_version(self):
+        # 只取飞牛版本：/usr/trim/etc/version 优先，其次 dpkg 的 trim 包，都没有返回空串（不退回 Debian）
+        tmp = tempfile.mkdtemp(prefix="fnm-fnos-")
+        self.addCleanup(shutil.rmtree, tmp)
+        status = os.path.join(tmp, "status")
+        with open(status, "w") as f:
+            f.write("Package: trim-repo-release\nVersion: 1.2.3\n\nPackage: trim\nStatus: install ok installed\n"
+                    "Version: 1.2.0800\nDescription: Fn NAS\n")
+        real_open = open
+
+        def fake_open(path, *a, **kw):
+            return real_open(status if path == "/var/lib/dpkg/status" else os.path.join(tmp, "missing"), *a, **kw)
+
+        files = {"/usr/trim/etc/version": "1.2.0801\n"}
+        with mock.patch.object(srv, "read_text", lambda p: files.get(p, "")), \
+                mock.patch("builtins.open", fake_open):
+            self.assertEqual(srv.read_fnos_version(), "1.2.0801")
+            files.clear()
+            self.assertEqual(srv.read_fnos_version(), "1.2.0800")
+            os.remove(status)
+            self.assertEqual(srv.read_fnos_version(), "")
+            files["/usr/trim/etc/version"] = "<garbage>"
+            self.assertEqual(srv.read_fnos_version(), "")
+
 
 @unittest.skipUnless(IS_LINUX and os.path.exists("/proc/stat"), "needs Linux /proc")
 class LiveProcSmokeTest(unittest.TestCase):
