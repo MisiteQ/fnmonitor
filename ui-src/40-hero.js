@@ -80,7 +80,7 @@ const Hero = {
         <div class="issues" data-ref="issues"></div>
         <div class="facts">
           <span>${ic('clock')}已运行 <b class="tnum" data-ref="uptime">--</b></span>
-          <span>${ic('server')}<span data-ref="os">--</span></span>
+          <span data-ref="osW" hidden>${ic('server')}<span data-ref="os"></span></span>
           <span>${ic('net')}<span class="tnum" data-ref="ip">--</span></span>
           <span data-ref="ctrW">${ic('box')}<span data-ref="ctrs">--</span></span>
         </div>
@@ -161,7 +161,8 @@ const Hero = {
     setHTML(r.verdict, v);
     setHTML(r.issues, h.issues.slice(0, 6).map((it, i) => `<button class="pill btn ${it.level === 'info' ? '' : it.level}" type="button" data-i="${i}">${ic(it.level === 'info' ? 'info' : 'alert')}${esc(it.text)}${ic('chev')}</button>`).join('') + (h.issues.length > 6 ? `<button class="pill btn" type="button" data-sheet="health">另有 ${h.issues.length - 6} 项${ic('chev')}</button>` : '') + (h.ignored.length ? `<button class="pill btn ghost" type="button" data-ignored="1" title="已忽略的提醒不计入健康分">${ic('eye-off')}已忽略 ${h.ignored.length} 项</button>` : ''));
     setText(r.uptime, F.dur(up));
-    setText(r.os, String(sy.os_pretty || '--').replace(/ \(.*\)/, ''));
+    // 只显示飞牛 fnOS 版本，读不到就整项隐藏（不退回底层 Debian）
+    setText(r.os, sy.fnos_version ? 'fnOS ' + sy.fnos_version : ''); r.osW.hidden = !sy.fnos_version;
     const ip = (sy.ips || []).find(x => (x.ipv4 || []).length); setText(r.ip, ip ? ip.ipv4[0] : '--');
     const dk = S.docker || o.docker;
     if (dockerOk(dk)) { const cs = dk.containers || []; setText(r.ctrs, `${cs.filter(ctrRun).length} / ${cs.length} 个容器运行中`); r.ctrW.hidden = false; }
