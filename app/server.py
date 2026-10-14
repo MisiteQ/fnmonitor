@@ -60,12 +60,6 @@ def _read_manifest_version():
 
 VERSION = _read_manifest_version() or "2.18.3"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
-# CSRF：本机回环来源（127.x / ::1）默认直接信任——飞牛官方手机 app 的面板经官方远程
-# 域名（office.app.5ddd.com 等）+ fnOS 本机代理组件转发到本服务（来源 ::1），其请求的
-# Origin 是官方域名、与被代理改写后的 Host 不一致，会撞上公网跨站拒绝规则。回环来源由
-# 内核网络栈决定，外部浏览器跨站请求不可能表现为本服务主机的回环地址，无伪造面。
-# 测试套件统一从 127.0.0.1 发起请求，设 FNM_TRUST_LOOPBACK=0 关闭该信任以保持 CSRF 断言有效
-_TRUST_LOOPBACK = os.environ.get("FNM_TRUST_LOOPBACK", "1") != "0"
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
@@ -6101,9 +6095,9 @@ class MonitorApp:
         #    localhost / 单标签主机名 / .local .lan .home .internal .localdomain 等局域网
         #    后缀，否则 403（API 返回 JSON，页面返回中文说明页）；启用口令后任意 Host 均可。
         # 2) CSRF：所有改变状态的接口只接受 POST，且必须同时满足
-        #    Content-Type: application/json、请求头 X-FNM-Request: 1；若带 Origin 头，
-        #    其 host:port 必须与请求 Host 一致（忽略协议），否则 403 JSON。
-        #    自定义请求头会强制跨站请求走 CORS 预检，而本服务从不放行 CORS。
+        #    Content-Type: application/json、请求头 X-FNM-Request: 1，否则 403 JSON。
+        #    自定义请求头会强制跨站请求走 CORS 预检，而本服务从不放行 CORS；不比对 Origin
+        #    （飞牛官方 app 与反向代理会改写 Host，见 _csrf_reject_reason）。
         #    GET 只用于读取（例外：/api/update/download?to=browser 仅流式回传已校验的安装包）。
         # 3) 资源上限：请求体 ≤ 1 MiB（超出 413，不读取）；空闲长连接 30 秒超时；
         #    并发连接（处理线程）总数与单 IP 数量有上限，超出直接 503（见 BoundedHTTPServerMixin）。
@@ -6453,50 +6447,22 @@ class MonitorApp:
                 print("[fnmonitor] POST 请求被 CSRF 检查拒绝（闸门 %s：%s，来源 %s，路径 %s）"
                       % (gate, detail, self.client_ip, urlparse(self.path).path))
 
-            def _csrf_ok(self):
-                # 本机回环来源直接信任（飞牛官方手机 app 经 fnOS 本机代理转发，来源 ::1）
-                if _TRUST_LOOPBACK:
-                    try:
-                        if ipaddress.ip_address(self.client_ip or "").is_loopback:
-                            return True
-                    except ValueError:
-                        pass
+            def _csrf_reject_reason(self):
+                """CSRF 检查：通过返回空串，否则返回被拒的闸门名（content_type / header）。
+
+                跨站防护只靠这两道闸：自定义请求头与 application/json 都会让浏览器的跨站请求
+                先走 CORS 预检，而本服务从不应答预检（没有 do_OPTIONS、不发 Access-Control-*），
+                跨站页面因此发不出这种请求。不比对 Origin：飞牛官方手机 app（FN Connect 远程 /
+                局域网模式）与反向代理都会改写 Host，Origin 是官方域名或 app 内部来源，比对只会
+                误伤；它也挡不住 DNS rebinding（由 Host 策略负责）。"""
                 ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
                 if ctype != "application/json":
                     self._csrf_log("content_type", ctype or "空")
-                    return False
+                    return "content_type"
                 if (self.headers.get("X-FNM-Request") or "").strip() != "1":
                     self._csrf_log("header", "缺少 X-FNM-Request")
-                    return False
-                origin = (self.headers.get("Origin") or "").strip()
-                if not origin:
-                    return True
-                try:
-                    o = urlparse(origin)
-                except Exception:
-                    return True
-                if o.scheme not in ("http", "https") or not o.hostname:
-                    # Origin: null / 自定义 scheme：飞牛官方手机 app 内嵌 WebView 的特征来源。
-                    # 浏览器跨站伪造仍会被上面 application/json 与 X-FNM-Request 两道闸拦住
-                    # （跨站无法携带自定义头，JSON 请求还会触发预检，本服务不应答预检）
-                    return True
-                oname = o.hostname.lower().rstrip(".")
-                hname = (split_host_port(self.headers.get("Host") or "")[0] or "").lower()
-                # 同主机名不限端口：官方 app 内嵌 WebView / 反向代理等会改写端口
-                if oname == hname:
-                    return True
-                # 局域网来源放行（私有 IP / localhost / 局域网主机名）：app 经本机代理打开
-                # 面板时 Origin 是 127.0.0.1 之类的地址
-                try:
-                    ai = ipaddress.ip_address(oname.split("%", 1)[0])
-                except ValueError:
-                    ai = None
-                if ai and ai.is_private:
-                    return True
-                if oname == "localhost" or "." not in oname or oname.endswith(LAN_HOST_SUFFIXES):
-                    return True
-                self._csrf_log("origin", origin)
-                return False
+                    return "header"
+                return ""
 
             def _read_body(self):
                 """读取并解析 JSON 请求体；超限 / 格式错误时已发送错误响应并返回 None。"""
@@ -6525,10 +6491,11 @@ class MonitorApp:
                 if not self._host_ok():
                     self._deny(403, "host_not_allowed", "通过域名访问前请先在局域网内开启登录口令", path)
                     return
-                if not self._csrf_ok():
+                gate = self._csrf_reject_reason()
+                if gate:
                     self._deny(403, "csrf_rejected",
-                               "请求被拒绝：缺少 X-FNM-Request 头、Content-Type 不是 application/json 或来源不一致",
-                               path)
+                               "请求被拒绝：缺少 X-FNM-Request 头或 Content-Type 不是 application/json"
+                               "（闸门 %s）" % gate, path)
                     return
                 data = self._read_body()
                 if data is None:

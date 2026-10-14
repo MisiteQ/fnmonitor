@@ -90,18 +90,23 @@ class NoAuthTest(ServerTestCase):
         self.assertEqual((st, j["error"]), (403, "csrf_rejected"))
         st, *_ = self.srv.request("POST", "/api/ui", '{"theme":"dark"}', {"Content-Type": "text/plain", "X-FNM-Request": "1"})
         self.assertEqual(st, 403)
-        # 公网跨站来源仍拒绝；null / 自定义 scheme 为手机 app WebView 特征来源，放行
-        # （浏览器跨站仍被 application/json + X-FNM-Request 两道闸挡住：无自定义头触发预检失败）
-        for origin in ("http://evil.example", "http://127.0.0.1.evil.com:%d" % self.srv.port,
-                       "http://8.8.8.8:9"):
-            st, *_ = self.post("/api/ui", {"theme": "dark"}, headers={"Origin": origin})
-            self.assertEqual(st, 403, origin)
-        # 局域网 / 本机 / 非标准来源放行（飞牛官方手机 app 经本机代理打开面板时 Origin 是 127.0.0.1 等）
+        # 不比对 Origin：飞牛官方 app（FN Connect 远程 / 局域网模式）与反向代理会改写 Host，
+        # Origin 是官方域名、局域网地址或 app 内部来源。跨站伪造由上面两道闸挡住
         cur = self.get("/api/ui")[1]["ui"]
-        for origin in ("http://127.0.0.1:9", "http://192.168.1.66:9999", "http://nas.local:1",
-                       "http://localhost:1", "null", "file://", "app://fnos"):
+        for origin in ("https://office.app.5ddd.com", "http://8.8.8.8:9", "http://127.0.0.1:9",
+                       "http://192.168.1.66:9999", "http://nas.local:1", "null", "app://fnos"):
             st, *_ = self.post("/api/ui", cur, headers={"Origin": origin})
             self.assertEqual(st, 200, origin)
+        st, j, _, _ = self.srv.request("POST", "/api/ui", cur, {"Content-Type": "application/json",
+                                                                "Origin": "https://office.app.5ddd.com"})
+        self.assertEqual((st, j["error"]), (403, "csrf_rejected"))
+        self.assertIn("header", j["message"])
+        # 两道闸成立的前提：本服务不应答 CORS 预检，跨站页面带不上自定义头
+        st, _, r, _ = self.srv.request("OPTIONS", "/api/ui", None, {
+            "Origin": "http://evil.example", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-fnm-request"})
+        self.assertGreaterEqual(st, 400)
+        self.assertIsNone(r.getheader("Access-Control-Allow-Origin"))
         st, *_ = self.srv.request("POST", "/api/auth/setup", '{"password":"abcdefgh"}',
                                   {"Content-Type": "text/plain", "Origin": "http://evil.example"})
         self.assertEqual(st, 403)
