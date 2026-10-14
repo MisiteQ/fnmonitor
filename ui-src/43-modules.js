@@ -297,7 +297,7 @@ const kvBare = rows => `<dl class="kv">${rows.map(([k, v]) => `<div><dt>${k}</dt
 const dash = v => v == null || v === '' ? '<span class="faint">—</span>' : esc(v);
 function hostRows(o) {
   const sy = o.system || {}, hw = o.hardware || {}, hc = hw.cpu || {}, b = hw.board || {}, cpu = o.cpu || {};
-  const sys = [['主机名', dash(sy.hostname)], ['系统', dash(sy.os_pretty)], ['内核', `<span class="mono">${dash(sy.kernel)}</span>`], ['架构', dash(sy.arch || hc.arch)], ['已运行', `<span data-ref="up">${esc(F.dur(o.uptime))}</span>`]];
+  const sys = [['主机名', dash(sy.hostname)], ...(sy.fnos_version ? [['系统', esc('fnOS ' + sy.fnos_version)]] : []), ['内核', `<span class="mono">${dash(sy.kernel)}</span>`], ['架构', dash(sy.arch || hc.arch)], ['已运行', `<span data-ref="up">${esc(F.dur(o.uptime))}</span>`]];
   const hwr = [['处理器', dash(hc.model || cpu.model || sy.cpu_model)], ['核心 / 线程', `${dash(hc.cores || cpu.cores)} / ${dash(hc.threads || cpu.threads)}`],
     ['主板', dash([b.sys_vendor || b.board_vendor, b.board_name || b.product_name].filter(Boolean).join(' ') || null)], ['BIOS', dash([b.bios_vendor, b.bios_version, b.bios_date].filter(Boolean).join(' ') || null)],
     ['显卡', dash((hw.gpu || []).join('、') || null)]];
@@ -311,7 +311,7 @@ defineModule({
     const { sys, hwr } = hostRows(o), sy = o.system || {};
     const ips = (sy.ips || []).map(p => [esc(p.iface), `<span class="mono">${esc((p.ipv4 || []).concat(p.ipv6 || []).join(' · ') || '—')}</span>${speedOf(o, p.iface) ? ' · ' + speedTxt(speedOf(o, p.iface)) : ''}`]);
     const items = memItems(o), mi = (o.memory && !Array.isArray(o.memory)) ? o.memory : {};
-    const sigA = JSON.stringify([sys.slice(0, 4), hwr, ips, items]);
+    const sigA = JSON.stringify([sys.slice(0, -1), hwr, ips, items]);   // 末行「已运行」每秒变化，单独刷新
     if (m.sigA !== sigA) {
       m.sigA = sigA;
       m.x.a.innerHTML = kvHTML(sys); m.x.b.innerHTML = kvHTML(hwr.concat(ips.length ? ips : [['网络', '<span class="faint">未读取到 IP</span>']]));
@@ -319,7 +319,7 @@ defineModule({
       m.up = m.x.a.querySelector('[data-ref="up"]');
     }
     setText(m.up, F.dur(o.uptime));
-    setHTML(m.r.dek, `${esc(String(sy.os_pretty || '').replace(/ \(.*\)/, '') || '系统')} · 内核 ${esc(sy.kernel || '--')}`);
+    setHTML(m.r.dek, `${sy.fnos_version ? esc('fnOS ' + sy.fnos_version) + ' · ' : ''}内核 ${esc(sy.kernel || '--')}`);
   },
 });
 
