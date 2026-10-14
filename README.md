@@ -140,7 +140,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 | v2.8.0 | 修复资源趋势历史数据不显示（打开即加载全部历史）；侧边栏支持收起 / 展开；界面美化 |
 | v2.7.1 | 修复小模块显示不全与平板竖屏适配 |
 
-完整日志见 [Releases](https://github.com/MisiteQ/fnmonitor/releases)。开发与贡献约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+完整日志见 [Releases](https://github.com/MisiteQ/fnmonitor/releases)。
 
 ## 📄 许可证
 
