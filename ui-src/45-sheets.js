@@ -215,9 +215,18 @@ const SHEETS = {
           + (hint ? `<tr><td colspan="3" class="faint" style="font-size:12px">${hint}</td></tr>` : ''));
         const extra = [];
         if (sas && sd.manufactured) extra.push(['生产周期', esc(sd.manufactured)]);
+        /* 实际硬盘位 = iDRAC 物理盘列表里的「插槽编号」，靠序列号对齐到 /dev/sdX。
+           槽位不会变，后端跟着 10 分钟才刷一次的明细一起读，不参与实时轮询。
+           对不上（iDRAC 没配 / 盘不在阵列卡下 / 序列号读不到）就显示 —，不猜一个
+           出来，免得照错的位置去拔盘。 */
+        const slotTip = '机箱里的物理槽位，取 iDRAC 物理盘列表的「插槽编号」（从 0 起）';
+        const slot = dd.slot == null
+          ? '<span class="faint" title="没读到槽位：iDRAC 未启用，或这块盘不在阵列卡下、序列号对不上">—</span>'
+          : `<b class="mono" title="${slotTip}，对照 iDRAC 物理盘列表第 ${F.int(dd.slot)} 项">插槽 ${F.int(dd.slot)}</b> <span class="faint">iDRAC</span>`;
         setHTML(x.info, kvHTML([['型号', dash(vendorModel(dd))], ['序列号', `<span class="mono">${dash(dd.serial)}</span>`],
           ['类型', KIND_TXT[diskKind(dd)]], ['硬盘容量', F.dsizeStr(dd.size)],
-          ['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`]].concat(extra)));
+          ['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`],
+          ['实际硬盘位', slot]].concat(extra)));
       };
       /* 休眠盘不发请求：smartctl -n standby 不会唤醒它，但省掉一次无意义的 IO */
       if (!sl) loadSmartDetail(a).then(() => paintSmart());

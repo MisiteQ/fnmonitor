@@ -3789,6 +3789,7 @@ _IDRAC_CACHE = {}
 _IDRAC_LOCK = threading.Lock()
 # 保存配置后立刻唤醒后台轮询，不用等下一个周期（用户刚填完就盼着看到数据）
 _IDRAC_WAKE = threading.Event()
+_IDRAC_SLOW_WAKE = threading.Event()
 
 IDRAC_DEFAULT = {"enabled": 0, "host": "", "user": "", "password": "",
                  "verify_tls": 0, "sel_alert": 1}
@@ -3858,6 +3859,7 @@ def idrac_save(data_dir, data):
             return cfg, "请填写 iDRAC 密码（红帽账号授权码那类不行，要 iDRAC 的登录密码）"
     write_json_secure(os.path.join(data_dir, IDRAC_FILE), cfg)
     _IDRAC_WAKE.set()          # 配置变了：让后台轮询立刻重读，不必等周期
+    _IDRAC_SLOW_WAKE.set()     # 慢组同样要立刻刷（换机器 / 刚填完地址时）
     return cfg, ""
 
 
@@ -4000,6 +4002,35 @@ def _idrac_bay(raw):
     return int(m.group(1)) if m else (str(raw or "")[-18:] or "?")
 
 
+_SERIAL_JUNK_RE = re.compile(r"[^0-9A-Z]")
+
+
+def _serial_norm(s):
+    """序列号归一：去空格 / 连字符 / 大小写差异。
+
+    iDRAC 的 SerialNumber 与 smartctl 的 Serial Number 绝大多数一致，但有的盘
+    带尾随空格、有的带连字符（SAS 的 "Z1Z0ABCD" vs "Z1Z0-ABCD"），直接字符串相等
+    会漏配，所以两边都过一遍这个函数。"""
+    return _SERIAL_JUNK_RE.sub("", str(s or "").upper())
+
+
+def idrac_slot_map():
+    """iDRAC 物理盘 → {归一序列号: 槽位号}。
+
+    用来把 /dev/sdX 映射到机箱的实际槽位：Linux 侧拿不到机箱槽位（HBA 直通时背板
+    通常不暴露 SES enclosure），iDRAC 侧又不知道设备名，只有序列号两边都有且唯一。
+    iDRAC 未配置 / 还没预热完成 / 盘不在阵列卡下时返回空 dict，前端就不显示槽位。"""
+    with _IDRAC_LOCK:
+        slow = dict(_IDRAC_CACHE.get("slow") or {})
+    out = {}
+    for d in (slow.get("disks") or []):
+        sn = _serial_norm(d.get("serial"))
+        bay = d.get("bay")
+        if sn and isinstance(bay, int):
+            out.setdefault(sn, bay)
+    return out
+
+
 def _idrac_temp_zh(raw):
     """iDRAC 的英文测点名翻成面板用语：Inlet Temp → 进风口。"""
     s = _idrac_name(raw)
@@ -4012,6 +4043,16 @@ def _idrac_temp_zh(raw):
     if m:
         return m.group(1).upper().replace(" ", "")
     return s
+
+
+def apply_idrac_slots(disks, slots):
+    """给 disks_detail 的每块盘补 slot（机箱实际槽位）；对不上的写 None。
+
+    None 而不是省略键：前端靠 d.slot == null 判断「这块盘没有槽位信息」，
+    iDRAC 中途被关掉时也要能把上一轮的值清掉，不能留着旧槽位骗人。"""
+    for d in (disks or []):
+        d["slot"] = (slots or {}).get(_serial_norm(d.get("serial")))
+    return disks
 
 
 def idrac_collect(cfg, force=False):
@@ -4121,8 +4162,12 @@ def idrac_collect_slow(cfg, force=False):
     now = time.time()
     with _IDRAC_LOCK:
         c = _IDRAC_CACHE.get("slow")
-        if not force and c and now - c.get("ts", 0) < IDRAC_SLOW_TTL:
-            return dict(c, cached=True)
+        # 部分失败（比如 Storage 那一步超时、一块盘都没拿到）不要按 10 分钟缓存，
+        # 否则槽位/物理盘表会空整整十分钟。partial 的 60 秒后就重试。
+        if not force and c:
+            ttl = 60.0 if c.get("partial") else IDRAC_SLOW_TTL
+            if now - c.get("ts", 0) < ttl:
+                return dict(c, cached=True)
     out = {"ok": False, "ts": now}
     exp = "$expand=*($levels=1)"
     got = 0
@@ -4239,6 +4284,7 @@ def idrac_collect_slow(cfg, force=False):
         out["vol_bad"] = sum(1 for x in vols if x["health"] and x["health"].upper() != "OK")
 
     out["ok"] = got > 0
+    out["partial"] = not disks        # 一块盘都没拿到 → 60 秒后重试，不干等 10 分钟
     if not out["ok"]:
         out["error"] = err or "iDRAC 明细读取失败"
     with _IDRAC_LOCK:
@@ -4407,11 +4453,14 @@ def idrac_snapshot(cfg, fast_only=False):
 
 
 class IdracPoller(threading.Thread):
-    """后台刷新 iDRAC 缓存。
+    """后台刷新 iDRAC「快组」缓存（机型 / 健康 / 风扇 / 温度 / 功耗 / SEL）。
 
-    iDRAC8 的 Redfish 每个请求要 4.5~6 秒，一次完整采集 8 个请求将近 45 秒。
-    放进采集主线程会让整个面板卡住，所以单开一条线程刷缓存，
-    主采集线程和页面都只读缓存（读缓存是内存操作，零延迟）。
+    iDRAC8 的 Redfish 每个请求要 4.5~6 秒，放进采集主线程会让整个面板卡住，
+    所以单开一条线程刷缓存，主采集线程和页面都只读缓存（内存操作，零延迟）。
+
+    慢组（CPU / 内存 / 阵列卡 / 物理盘 / 卷）**不在这条线程里**：14 块盘的明细
+    只能一个个取，一轮 1.5~3 分钟，同线程会把风扇/功耗的刷新整轮堵死。见
+    IdracSlowPoller。
     """
 
     def __init__(self, data_dir):
@@ -4434,7 +4483,6 @@ class IdracPoller(threading.Thread):
         try:
             fast = idrac_collect(cfg)
             if fast.get("ok"):
-                idrac_collect_slow(cfg)     # 10 分钟 TTL，内部自己判
                 idrac_sel(cfg)              # 60 秒 TTL
                 self.last_err = ""
             else:
@@ -4459,6 +4507,47 @@ class IdracPoller(threading.Thread):
             # （真正发不发请求由 TTL 决定）；保存配置会直接 set 立刻唤醒
             _IDRAC_WAKE.wait(20 if active else 30)
             _IDRAC_WAKE.clear()
+
+
+class IdracSlowPoller(threading.Thread):
+    """后台刷新 iDRAC「慢组」缓存（CPU / 内存条 / 阵列卡 / 物理盘 / 卷）。
+
+    单独一条线程的原因：iDRAC8 只认 `$expand=*($levels=1)`，`/Storage/Drives`
+    集合不存在、`$levels=2` 回 400，14 块物理盘只能逐个取——实测一轮 1.5~3 分钟。
+    和快组同线程时，这段时间里风扇、功耗、温度全部停更，观感像「卡住了」。
+    慢组自己 10 分钟刷一次（物理盘变化会同时进 SEL，那条线由快组盯着）。"""
+
+    def __init__(self, data_dir):
+        super().__init__(daemon=True, name="fnm-idrac-slow")
+        self.data_dir = data_dir
+        self._stop = threading.Event()
+        self.last_run = 0.0
+
+    def stop(self):
+        self._stop.set()
+
+    def _tick(self):
+        cfg = idrac_load(self.data_dir)
+        if not (cfg.get("enabled") and cfg.get("host") and cfg.get("user")
+                and cfg.get("password")):
+            return False
+        try:
+            slow = idrac_collect_slow(cfg)     # 10 分钟 TTL；partial 时 60 秒重试
+            return bool(slow.get("ok"))
+        except Exception as e:
+            print("[fnmonitor] iDRAC 明细采集异常：%s" % str(e)[:120])
+            return False
+
+    def run(self):
+        self._stop.wait(10)          # 排在快组后面一点，别和它的首个请求撞在一起
+        while not self._stop.is_set():
+            try:
+                self._tick()
+            except Exception:
+                pass
+            # 一轮本身就很长（1.5~3 分钟），这里再等 60 秒；实际是否发请求由 TTL 决定
+            _IDRAC_SLOW_WAKE.wait(60)
+            _IDRAC_SLOW_WAKE.clear()
 
 
 def read_net_dev():
@@ -7034,6 +7123,16 @@ class Collector(threading.Thread):
             return None
         return cache
 
+    def _idrac_slots(self):
+        """序列号 → 机箱槽位（读 iDRAC「慢组」缓存，同样不发请求）。
+
+        慢组 10 分钟才刷一次，且首次预热要跑 5 个请求（约 30 秒），所以启动后
+        头半分钟拿不到槽位是正常的，拿到会自动补上。iDRAC 没启用就永远返回 {}。"""
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return {}
+        return idrac_slot_map()
+
     def _reload_config(self):
         """检查配置文件是否变化，变化则重载。"""
         cfg_path = os.path.join(self._cfg_dir, "config.json")
@@ -7132,7 +7231,9 @@ class Collector(threading.Thread):
         if now - self._last_disks_detail_ts >= 60:
             self._last_disks_detail = collect_disks_detail(self._last_disks_detail)
             self._last_disks_detail_ts = now
-        snapshot["disks_detail"] = self._last_disks_detail
+        # ---- 机箱实际槽位（序列号对 iDRAC 物理盘；拿不到就是 None） ----
+        snapshot["disks_detail"] = apply_idrac_slots(self._last_disks_detail,
+                                                     self._idrac_slots())
         # ---- 网络 ----
         ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
         self._prev_net = read_net_dev()
@@ -10527,11 +10628,16 @@ def main():
     # 采集循环和页面都只读缓存（面板卡不卡，全看这条线程有没有隔开）
     idrac_poller = IdracPoller(app.collector.data_dir)
     idrac_poller.start()
+    # 慢组（CPU/内存/物理盘/卷）另起一条：14 块盘逐个取要 1.5~3 分钟，
+    # 同线程会把风扇和功耗的 20 秒刷新整轮堵住
+    idrac_slow = IdracSlowPoller(app.collector.data_dir)
+    idrac_slow.start()
 
     def shutdown(sig, frame):
         app.collector.stop()
         scanner.stop()
         idrac_poller.stop()
+        idrac_slow.stop()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
         sys.exit(0)
 

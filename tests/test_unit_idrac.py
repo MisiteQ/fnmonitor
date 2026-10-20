@@ -500,3 +500,55 @@ class SelPathFallbackTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlotMapTest(unittest.TestCase):
+    """序列号 → 机箱槽位：把 /dev/sdX 对上 iDRAC 的 Disk.Bay.N。
+
+    Linux 侧（HBA 直通、背板不暴露 SES）拿不到槽位，iDRAC 侧不知道设备名，
+    序列号是两边唯一的公共键，所以归一化规则要经得起大小写 / 空格 / 连字符差异。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def _put(self, disks):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": 0, "disks": disks}
+
+    def test_normalize(self):
+        self.assertEqual(srv._serial_norm(" wae0j50j "), "WAE0J50J")
+        self.assertEqual(srv._serial_norm("Z1Z0-ABCD"), "Z1Z0ABCD")
+        self.assertEqual(srv._serial_norm(None), "")
+        self.assertEqual(srv._serial_norm(""), "")
+
+    def test_map_hit(self):
+        self._put([{"bay": 5, "serial": "WAE06ENM"},
+                   {"bay": 7, "serial": "Z1Z0ABCD"},
+                   {"bay": 9, "serial": ""}])          # 无序列号：不参与映射
+        m = srv.idrac_slot_map()
+        self.assertEqual(m.get("WAE06ENM"), 5)
+        self.assertEqual(m.get("Z1Z0ABCD"), 7)
+        self.assertEqual(len(m), 2)
+
+    def test_map_empty_when_no_cache(self):
+        self.assertEqual(srv.idrac_slot_map(), {})
+
+    def test_map_skips_non_int_bay(self):
+        # _idrac_bay 解析失败时返回字符串，这种不能当槽位用
+        self._put([{"bay": "Enclosure.Internal.0-1", "serial": "WAE06ENM"}])
+        self.assertEqual(srv.idrac_slot_map(), {})
+
+    def test_map_duplicate_serial_keeps_first(self):
+        self._put([{"bay": 3, "serial": "DUP"}, {"bay": 8, "serial": "dup"}])
+        self.assertEqual(srv.idrac_slot_map(), {"DUP": 3})
+
+    def test_apply_slots_sets_and_clears(self):
+        disks = [{"name": "sda", "serial": " wae06enm"}, {"name": "sdb", "serial": "NOPE"}]
+        srv.apply_idrac_slots(disks, {"WAE06ENM": 5})
+        self.assertEqual(disks[0]["slot"], 5)
+        self.assertIsNone(disks[1]["slot"])
+        # iDRAC 被关掉（slots 为空）时要把上一轮的槽位清掉，不能留旧值
+        srv.apply_idrac_slots(disks, {})
+        self.assertIsNone(disks[0]["slot"])
