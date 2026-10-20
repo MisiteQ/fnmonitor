@@ -16,6 +16,7 @@ fnMonitor - 飞牛 fnOS 系统监控后端
 import argparse
 import base64
 import csv
+import functools
 import gzip
 import hashlib
 import hmac
@@ -3954,6 +3955,31 @@ def _idrac_try_fetch(cfg, m):
     return d if (not err and isinstance(d, dict)) else m
 
 
+def _idrac_parallel(cfg, items, workers=3):
+    """把一串「只剩 @odata.id 的引用」并发补全。
+
+    iDRAC8 的 `/Storage/.../Drives` 集合只回引用，14 块盘得一个个取；单请求固定
+    5 秒左右，串行要 70~170 秒，槽位就迟迟出不来。实测 3 路并发不会被限流
+    （再多就开始回连接超时，连快组都被带崩），一轮压到 40~60 秒。
+    已经展开过完整字段的条目不会再发请求。
+    """
+    items = [x for x in (items or [])]
+    todo = [i for i, m in enumerate(items)
+            if isinstance(m, dict) and len(m) <= 2 and m.get("@odata.id")]
+    if len(todo) < 2:
+        return [_idrac_try_fetch(cfg, m) for m in items]
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+    except Exception:                                  # 极端裁剪的解释器里退回串行
+        return [_idrac_try_fetch(cfg, m) for m in items]
+    out = list(items)
+    with ThreadPoolExecutor(max_workers=min(workers, len(todo))) as ex:
+        for i, doc in zip(todo, ex.map(lambda i: _idrac_try_fetch(cfg, items[i]), todo)):
+            if isinstance(doc, dict) and doc:
+                out[i] = doc
+    return out
+
+
 def _idrac_members(cfg, d, key):
     """取集合成员，兼容 iDRAC8 的三种形态。
 
@@ -4152,6 +4178,37 @@ def idrac_collect(cfg, force=False):
     return out
 
 
+def _slow_single_flight(fn):
+    """同一时刻只允许一轮明细在跑。
+
+    iDRAC8 不吃并发：实测 8 个同时进行的请求就开始回连接超时，连快组（风扇、功耗）
+    也一起断更，像整机掉线。常驻轮询线程、页面触发的兜底补读、"测试连接"三条路
+    都可能同时想刷明细，所以在这里串起来——撞上了就回缓存，不叠加请求。
+    force=True（用户点「测试连接」）时最多等 4 分钟，等不到才回忙。
+    """
+    running = threading.Lock()
+
+    @functools.wraps(fn)
+    def wrap(*a, **kw):
+        force = kw.get("force")
+        if force is None and len(a) > 1:
+            force = a[1]
+        got = running.acquire(timeout=240 if force else 0)
+        if not got:
+            with _IDRAC_LOCK:
+                c = _IDRAC_CACHE.get("slow")
+            if c:
+                return dict(c, busy=True)
+            return {"ok": False, "ts": time.time(), "busy": True,
+                    "error": "上一轮明细还在读取（iDRAC8 单个请求约 5 秒，一轮 40~60 秒），稍后自动刷新"}
+        try:
+            return fn(*a, **kw)
+        finally:
+            running.release()
+    return wrap
+
+
+@_slow_single_flight
 def idrac_collect_slow(cfg, force=False):
     """「慢组」明细（5 个请求，靠 $expand 把集合一次取全）：CPU / 内存条 / 盘 / 卷 / 固件。
 
@@ -4238,8 +4295,10 @@ def idrac_collect_slow(cfg, force=False):
                           "firmware": str(sc.get("FirmwareVersion") or ""),
                           "health": str((m.get("Status") or {}).get("Health") or ""),
                           "drives": len(drives)})
+            # 14 块盘 / 14 个卷都只有引用，并发补全（串行要 70~170 秒）
+            drives = _idrac_parallel(cfg, drives)
+            vols_raw = _idrac_parallel(cfg, vols_raw)
             for dv in drives:
-                dv = _idrac_try_fetch(cfg, dv)
                 cap = _nz(dv.get("CapacityBytes"))
                 stt = dv.get("Status") or {}
                 oem = (dv.get("Oem") or {}).get("Dell") or {}
@@ -4262,7 +4321,6 @@ def idrac_collect_slow(cfg, force=False):
                     "ctrl": cid,
                 })
             for vv in vols_raw:
-                vv = _idrac_try_fetch(cfg, vv)
                 vcap = _nz(vv.get("CapacityBytes"))
                 vs = vv.get("Status") or {}
                 vols.append({"name": str(vv.get("Name") or vv.get("Id") or "?"),
@@ -4290,6 +4348,83 @@ def idrac_collect_slow(cfg, force=False):
     with _IDRAC_LOCK:
         _IDRAC_CACHE["slow"] = dict(out, ts=now)
     return out
+
+
+# 慢组「兜底刷新」的在飞标记：0 表示没有正在跑的一轮
+_SLOW_LOCK = threading.Lock()
+_SLOW_INFLIGHT = [0.0]
+
+
+def idrac_ensure_slow_async(data_dir):
+    """慢组缓存空 / 过期时踢一轮后台刷新；已经有在跑的就不重复踢。
+
+    为什么不只靠 IdracSlowPoller：那条常驻线程一旦没起来（打包漏带、异常退出、
+    kill -9 后重启时机不对），槽位就永远是空的，而界面上跟「iDRAC 没配」长得
+    一模一样，排查很费劲。这里在读路径上兜一层——谁先发现过期谁踢一脚，
+    跑完写回缓存，下次自然就新鲜了。返回是否真的踢了新的一轮。
+    """
+    now = time.time()
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("slow") or {}
+        ttl = 60.0 if c.get("partial") else IDRAC_SLOW_TTL
+        if c and now - c.get("ts", 0) < ttl:
+            return False
+    # 常驻轮询线程活着就交给它：两边同时抓会把 iDRAC8 打爆（实测并发 8 个请求就
+    # 开始连接超时，风扇/功耗也跟着断更）。这条兜底只在「线程没了」时才顶上。
+    if any(t.name == "fnm-idrac-slow" and t.is_alive() for t in threading.enumerate()):
+        return False
+    with _SLOW_LOCK:
+        # 一轮最长也就 2~3 分钟，超过 5 分钟说明上一轮已经卡死，允许再踢
+        if _SLOW_INFLIGHT[0] and now - _SLOW_INFLIGHT[0] < 300:
+            return False
+        _SLOW_INFLIGHT[0] = now
+
+    def _work():
+        try:
+            cfg = idrac_load(data_dir)
+            if (cfg.get("enabled") and cfg.get("host")
+                    and cfg.get("user") and cfg.get("password")):
+                idrac_collect_slow(cfg)
+        except Exception as e:
+            print("[fnmonitor] iDRAC 明细后台刷新异常：%s" % str(e)[:120])
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
+
+    try:
+        threading.Thread(target=_work, daemon=True, name="fnm-idrac-slow-once").start()
+    except Exception as e:
+        print("[fnmonitor] iDRAC 明细补读线程启动失败：%s" % str(e)[:120])
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = 0.0
+        return False
+    return True
+
+
+def idrac_diag():
+    """/api/idrac 的排障块：缓存几秒前刷的、有没有慢组、线程在不在。
+
+    「槽位是空的」这类问题光看返回的空数组分不清是没配置、没跑起来还是没对上，
+    所以把年龄和线程名一起给出来。"""
+    now = time.time()
+    with _IDRAC_LOCK:
+        fast = dict(_IDRAC_CACHE.get("fast") or {})
+        slow = dict(_IDRAC_CACHE.get("slow") or {})
+        sel = dict(_IDRAC_CACHE.get("sel") or {})
+    names = sorted(t.name for t in threading.enumerate() if "idrac" in t.name)
+    return {
+        "fast_age": int(now - fast["ts"]) if fast.get("ts") else None,
+        "fast_ok": bool(fast.get("ok")),
+        "slow_age": int(now - slow["ts"]) if slow.get("ts") else None,
+        "slow_ok": bool(slow.get("ok")) if slow else None,
+        "slow_partial": bool(slow.get("partial")) if slow else None,
+        "slow_disks": len(slow.get("disks") or []),
+        "slow_dimms": len(slow.get("dimms") or []),
+        "slow_volumes": len(slow.get("volumes") or []),
+        "sel_age": int(now - sel["ts"]) if sel.get("ts") else None,
+        "slow_inflight": bool(_SLOW_INFLIGHT[0]),
+        "threads": names,
+    }
 
 
 def _sel_entry(m):
@@ -7133,6 +7268,16 @@ class Collector(threading.Thread):
             return {}
         return idrac_slot_map()
 
+    def _idrac_slot_state(self):
+        """槽位数据的三种状态，给前端区分「还没读到」和「对不上」：
+        off = iDRAC 没启用；warming = 明细还没跑完（首次 40~60 秒）；ready = 有盘了。"""
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return "off"
+        with _IDRAC_LOCK:
+            slow = _IDRAC_CACHE.get("slow") or {}
+        return "ready" if slow.get("disks") else "warming"
+
     def _reload_config(self):
         """检查配置文件是否变化，变化则重载。"""
         cfg_path = os.path.join(self._cfg_dir, "config.json")
@@ -7232,8 +7377,14 @@ class Collector(threading.Thread):
             self._last_disks_detail = collect_disks_detail(self._last_disks_detail)
             self._last_disks_detail_ts = now
         # ---- 机箱实际槽位（序列号对 iDRAC 物理盘；拿不到就是 None） ----
+        _slot_state = self._idrac_slot_state()
+        if _slot_state == "warming":
+            # 兜底：明细该读却一直没读到（常驻轮询线程没起来、异常退出），
+            # 这里顺手踢一轮，读路径自己就能把数据补齐
+            idrac_ensure_slow_async(self.data_dir)
         snapshot["disks_detail"] = apply_idrac_slots(self._last_disks_detail,
                                                      self._idrac_slots())
+        snapshot["idrac_slot_state"] = _slot_state
         # ---- 网络 ----
         ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
         self._prev_net = read_net_dev()
@@ -8674,6 +8825,10 @@ class MonitorApp:
             if k in slow:
                 d[k] = slow[k]
         d["problems"] = idrac_problems(d, slow)
+        if not slow.get("disks"):
+            # 明细空着就顺手补一轮（幂等，已经有一轮在跑会直接返回）
+            idrac_ensure_slow_async(self.data_dir)
+        d["diag"] = idrac_diag()
         d["configured"] = True
         d["config"] = pub
         if (query or {}).get("sel"):

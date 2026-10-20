@@ -182,6 +182,7 @@
   "fans": "list",
   "gpu": "list",
   "hardware": "dict",
+  "idrac_slot_state": "str",
   "interval": "number",
   "mem": {
    "available": "number",

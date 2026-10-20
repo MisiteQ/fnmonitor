@@ -552,3 +552,98 @@ class SlotMapTest(unittest.TestCase):
         # iDRAC 被关掉（slots 为空）时要把上一轮的槽位清掉，不能留旧值
         srv.apply_idrac_slots(disks, {})
         self.assertIsNone(disks[0]["slot"])
+
+
+class ParallelFetchTest(unittest.TestCase):
+    """14 块盘 / 14 个卷在 iDRAC8 上只回引用，必须逐个补请求。
+
+    串行是 70~170 秒（每请求 5 秒），槽位要等到那时候才出得来；并发后 40 秒上下。
+    已展开的条目不能再发请求——那等于把整个 Storage 又读一遍。
+    """
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def test_expanded_items_untouched(self):
+        items = [{"Id": "Disk.Bay.0", "SerialNumber": "A"},
+                 {"Id": "Disk.Bay.1", "SerialNumber": "B"}]
+        calls = []
+
+        def fake(cfg, path, timeout=None, query=None):
+            calls.append(path)
+            return {}, ""
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            out = srv._idrac_parallel({}, items)
+        self.assertEqual(out, items)
+        self.assertEqual(calls, [])
+
+    def test_refs_fetched_in_order(self):
+        refs = [{"@odata.id": "/redfish/v1/x/%d" % i} for i in range(6)]
+
+        def fake(cfg, path, timeout=None, query=None):
+            return {"Id": path}, ""
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            out = srv._idrac_parallel({}, refs)
+        # _idrac_try_fetch 会把 /redfish/v1 前缀削掉再请求，顺序必须与输入一致
+        self.assertEqual([x.get("Id") for x in out],
+                         ["/x/%d" % i for i in range(6)])
+
+    def test_failed_fetch_keeps_original(self):
+        refs = [{"@odata.id": "/a"}, {"@odata.id": "/b"}]
+
+        def fake(cfg, path, timeout=None, query=None):
+            return None, "HTTP 500"
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            out = srv._idrac_parallel({}, refs)
+        self.assertEqual(out, refs)      # 取不到就保留引用，不能变成 [None, None]
+
+    def test_empty_and_single(self):
+        self.assertEqual(srv._idrac_parallel({}, []), [])
+        one = [{"@odata.id": "/a"}]
+
+        def fake(cfg, path, timeout=None, query=None):
+            return {"Id": path}, ""
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            self.assertEqual(srv._idrac_parallel({}, one), [{"Id": "/a"}])
+
+
+class SlowEnsureTest(unittest.TestCase):
+    """兜底补读：缓存新鲜时不许重复发请求，过期了要踢一轮。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+        srv._SLOW_INFLIGHT[0] = 0.0
+        self.dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+        srv._SLOW_INFLIGHT[0] = 0.0
+
+    def test_fresh_cache_no_spawn(self):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time(), "disks": [{"bay": 1}]}
+        self.assertFalse(srv.idrac_ensure_slow_async(self.dir))
+
+    def test_stale_cache_spawns(self):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": 0, "disks": [{"bay": 1}]}
+        # 这个目录里没有 idrac.json → 线程拿到的配置是未启用，不会真的联网
+        self.assertTrue(srv.idrac_ensure_slow_async(self.dir))
+
+    def test_partial_uses_short_ttl(self):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time() - 90, "partial": True}
+        self.assertTrue(srv.idrac_ensure_slow_async(self.dir))
+
+    def test_diag_shape(self):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time() - 5,
+                                    "disks": [{}, {}], "dimms": [{}], "volumes": []}
+        d = srv.idrac_diag()
+        self.assertEqual(d["slow_disks"], 2)
+        self.assertEqual(d["slow_dimms"], 1)
+        self.assertIsInstance(d["slow_age"], int)
+        self.assertIsInstance(d["threads"], list)

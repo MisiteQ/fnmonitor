@@ -220,9 +220,14 @@ const SHEETS = {
            对不上（iDRAC 没配 / 盘不在阵列卡下 / 序列号读不到）就显示 —，不猜一个
            出来，免得照错的位置去拔盘。 */
         const slotTip = '机箱里的物理槽位，取 iDRAC 物理盘列表的「插槽编号」（从 0 起）';
-        const slot = dd.slot == null
-          ? '<span class="faint" title="没读到槽位：iDRAC 未启用，或这块盘不在阵列卡下、序列号对不上">—</span>'
-          : `<b class="mono" title="${slotTip}，对照 iDRAC 物理盘列表第 ${F.int(dd.slot)} 项">插槽 ${F.int(dd.slot)}</b> <span class="faint">iDRAC</span>`;
+        const slotState = (S.o && S.o.idrac_slot_state) || 'off';
+        const slot = dd.slot != null
+          ? `<b class="mono" title="${slotTip}，对照 iDRAC 物理盘列表第 ${F.int(dd.slot)} 项">插槽 ${F.int(dd.slot)}</b> <span class="faint">iDRAC</span>`
+          : slotState === 'warming'
+            ? '<span class="faint" title="iDRAC 明细正在后台读取，首次约 40~60 秒；读到后这里会自动出现槽位号，不用刷新">读取中…</span>'
+            : slotState === 'ready'
+              ? '<span class="faint" title="iDRAC 明细里没有这块盘：可能不在阵列卡下，或序列号对不上">—</span>'
+              : '<span class="faint" title="iDRAC 未启用，读不到机箱槽位（设置 → iDRAC 里填地址和账号即可）">—</span>';
         setHTML(x.info, kvHTML([['型号', dash(vendorModel(dd))], ['序列号', `<span class="mono">${dash(dd.serial)}</span>`],
           ['类型', KIND_TXT[diskKind(dd)]], ['硬盘容量', F.dsizeStr(dd.size)],
           ['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`],
