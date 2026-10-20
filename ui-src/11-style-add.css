@@ -39,6 +39,14 @@
 .set-row .hint a, .set-row .hint .mono { color: var(--ink-2); }
 .set-row .hint a { text-decoration: underline; text-underline-offset: 2px; }
 .auth-note { margin: var(--s5) 0 var(--s2); }
+/* 自定义设置卡片顶部的说明条：.set-card 只给了左右内边距，子元素的上外边距会「穿透」卡片
+   （margin 折叠），只把整张卡片往下推、说明条自己仍贴着卡片圆角。flow-root 建立 BFC 阻断折叠。 */
+.set-card { display: flow-root; }
+.set-card > .note:first-child { margin: var(--s5) 0 var(--s2); }
+.set-card > .note:first-child + .set-row { border-top: 0; }
+.notify-note { align-items: flex-start; }
+.notify-note > span { min-width: 0; }
+.notify-note b { color: var(--ink-1); font-weight: 600; }
 .pw-ctl { flex-wrap: wrap; }
 .update-card .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .update-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; }

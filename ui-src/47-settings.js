@@ -303,7 +303,7 @@ async function loadNotify(force) {
   return NB;
 }
 function renderNotify(card) {
-  card.innerHTML = `<div class="note info">巡检发现「新增故障 / 故障加重 / 已恢复」时推送一条消息，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。通知跟着「硬盘巡检」走，请先在 网络与硬盘 中打开巡检。改完点下面「保存」。</div>
+  card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>只在变化时推送</b>：新增故障 / 故障加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。消息跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检。</span></div>
     <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
     <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
     <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
