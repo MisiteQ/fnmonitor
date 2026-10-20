@@ -148,7 +148,8 @@ dd .diag-link { margin: 0; height: 24px; }
 /* ---------- iDRAC 实时概览（设置 → iDRAC）---------- */
 .idrac-live:empty { display: none; }
 .idrac-live { border-top: 1px solid var(--line); margin-top: var(--s2); }
-.idrac-head { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; padding: var(--s4) 0 var(--s3); font-size: 13px; color: var(--ink-2); }
+/* 用行内流而不是 flex：flex 会把「功耗 <b>214</b> W」拆成三个 flex item，换行时把 W 甩到下一行 */
+.idrac-head { display: block; line-height: 1.95; padding: var(--s4) 0 var(--s3); font-size: 13px; color: var(--ink-2); }
 .idrac-head b { color: var(--ink-1); font-weight: 600; }
 .idrac-head .h-ok { color: var(--health-ok); font-weight: 600; }
 .idrac-head .h-warn { color: var(--warn); font-weight: 600; }
