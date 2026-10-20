@@ -3,9 +3,9 @@
         "fnmonitor.Application": {
             "title": "飞牛监控",
             "icon": "images/icon-{0}.png",
-            "type": "iframe",
+            "type": "url",
             "protocol": "http",
-            "port": "8777",
+            "port": "8902",
             "url": "/",
             "allUsers": true
         }

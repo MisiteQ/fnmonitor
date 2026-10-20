@@ -4100,6 +4100,17 @@ cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开�
 cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
 cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
 cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
+{ k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
+hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
+run: async b => {
+b.disabled = true;
+try {
+const j = await API.post('/api/disk_scan/now', {});
+if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
+else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
+} catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+b.disabled = false;
+} },
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
 { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信。', custom: renderNotify },

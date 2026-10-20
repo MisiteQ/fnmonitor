@@ -2903,8 +2903,9 @@ def smart_detail(dev):
             d["grown_defects"] = grown
             d.setdefault("reallocated_sectors", grown)
         d["scsi_uncorrected"] = unc
-        if unc:
-            d.setdefault("uncorrectable", unc)
+        # 0 也是有意义的读数（盘干净），必须落键：否则盘位表里「不可纠正」永远显示 None，
+        # 看不出到底是 0 还是没读到。ATA 侧已给出 uncorrectable 时以 ATA 为准。
+        d.setdefault("uncorrectable", unc)
         if d.get("scsi_pending_defects") is not None:
             d.setdefault("pending_sectors", d["scsi_pending_defects"])
         if ecc_fast or ecc_delayed or rereads:
@@ -6985,7 +6986,8 @@ class MonitorApp:
         CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
                "img-src 'self' data:; connect-src 'self'; frame-ancestors *")
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
-                     "/api/vm/action", "/api/config/save", "/api/update/install"}
+                     "/api/vm/action", "/api/config/save", "/api/update/install",
+                     "/api/notify/save", "/api/notify/test", "/api/disk_scan/now"}
 
         class Handler(BaseHTTPRequestHandler):
             # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程；timeout 保证空闲连接
@@ -7438,6 +7440,9 @@ class MonitorApp:
                 if path == "/api/notify/test":
                     self._json(app.api_notify_test())
                     return
+                if path == "/api/disk_scan/now":
+                    self._json(app.api_disk_scan_now())
+                    return
                 if path == "/api/update/install":
                     self._json(app.api_update_install())
                     return
@@ -7496,6 +7501,18 @@ class MonitorApp:
         d["dev"] = dev
         d["ts"] = int(time.time())
         return d
+
+    def api_disk_scan_now(self):
+        """手动触发一轮巡检：立刻返回，不等结果（前端隔十几秒刷新盘位即可）。
+
+        换盘、调间隔、刚装完想马上看到分级都靠它，不用等下一个周期。"""
+        if disk_scan_interval_h(self.config) <= 0:
+            return {"ok": False, "error": "disabled", "message": "硬盘巡检已关闭，先在设置里打开"}
+        if _DISK_SCAN_LOCK.locked() or _disk_scan_state.get("running"):
+            return {"ok": False, "error": "busy", "message": "巡检正在进行中，稍等十几秒"}
+        threading.Thread(target=disk_scan_once, args=(self.collector.db, self.config),
+                         name="disk-scan-manual", daemon=True).start()
+        return {"ok": True, "started": True, "message": "已开始巡检，约 15–20 秒后刷新"}
 
     def api_disk_health(self):
         """盘位卡片的健康分级（只读巡检缓存，不触发任何 smartctl）。

@@ -183,6 +183,14 @@ class SasDetailTest(unittest.TestCase):
         text = SAS_OK.replace("Elements in grown defect list: 2", "Elements in grown defect list: 0")
         self.assertEqual(_detail(text).get("grown_defects"), 0)
 
+    def test_zero_uncorrected_is_kept(self):
+        # 真机（ST300MP0026）uncorrected 全 0：不能让「不可纠正」在盘位表里显示成 None，
+        # 否则 0 与「没读到」分不开（None 会渲染成空）。
+        text = SAS_OK.replace("    0.000           3", "    0.000           0")
+        d = _detail(text)
+        self.assertEqual(d.get("scsi_uncorrected"), 0)
+        self.assertEqual(d.get("uncorrectable"), 0)
+
     def test_pending_defects(self):
         # 部分 SAS 盘（如 ST4000NM019B）额外给出 Pending defects 计数
         text = SAS_OK.replace("Elements in grown defect list: 2",

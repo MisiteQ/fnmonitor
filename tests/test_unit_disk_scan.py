@@ -6,6 +6,7 @@
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -299,6 +300,42 @@ class ScanOnceTest(unittest.TestCase):
     def test_non_linux_is_rejected(self):
         with mock.patch.object(srv, "is_linux", return_value=False):
             self.assertFalse(srv.disk_scan_once(self.db, {})["ok"])
+
+    # ---- 手动「立即巡检」接口 ----
+    def make_app(self, config):
+        app = object.__new__(srv.MonitorApp)
+        app.config = config
+        app.collector = mock.Mock(db=self.db)
+        return app
+
+    def test_scan_now_starts_a_thread(self):
+        app = self.make_app({"disk_scan_enabled": 1, "disk_scan_interval_h": 6})
+        done = threading.Event()
+        with mock.patch.object(srv, "disk_scan_once", side_effect=lambda *a: done.set()):
+            out = app.api_disk_scan_now()
+            self.assertTrue(out["ok"])
+            self.assertTrue(done.wait(3), "后台线程没有真的执行巡检")
+        self.assertTrue(out["message"])
+
+    def test_scan_now_refuses_when_disabled(self):
+        app = self.make_app({"disk_scan_enabled": 0, "disk_scan_interval_h": 6})
+        with mock.patch.object(srv, "disk_scan_once") as once:
+            out = app.api_disk_scan_now()
+            once.assert_not_called()
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["error"], "disabled")
+
+    def test_scan_now_refuses_when_busy(self):
+        app = self.make_app({"disk_scan_enabled": 1, "disk_scan_interval_h": 6})
+        self.assertTrue(srv._DISK_SCAN_LOCK.acquire(False))
+        try:
+            with mock.patch.object(srv, "disk_scan_once") as once:
+                out = app.api_disk_scan_now()
+                once.assert_not_called()
+        finally:
+            srv._DISK_SCAN_LOCK.release()
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["error"], "busy")
 
 
 if __name__ == "__main__":
