@@ -113,7 +113,7 @@ class NotifyCfgTest(unittest.TestCase):
 
 
 class NotifyStateTest(unittest.TestCase):
-    """状态机：同一状态只发一次；失败不落状态；恢复补发一条。"""
+    """状态机：同一状态只发一次；同档计数上涨也发；失败不落状态；恢复补发一条。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -121,7 +121,13 @@ class NotifyStateTest(unittest.TestCase):
         self.db = FakeDB(self.dir)
         srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com",
                                    "password": "x"})
+        # 除首次静默那个用例，其余都从「已经建立过基线」开始
+        self.mark_inited()
         self.sent = []
+
+    def mark_inited(self):
+        srv.write_json_secure(os.path.join(self.dir, srv.NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": {}, "metrics": {}})
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -183,6 +189,44 @@ class NotifyStateTest(unittest.TestCase):
         n = len(self.sent)
         self.assertIsNone(self.scan([disk("sdk", "crit", standby=True)]))
         self.assertEqual(len(self.sent), n)
+        # 关键：休眠这一轮不能把已通知状态清掉，否则盘一醒又发一次「新增」
+        self.assertIsNone(self.scan([disk("sdk", "crit")]))
+        self.assertEqual(len(self.sent), n)
+
+    def test_first_scan_is_silent(self):
+        # 首次巡检只建基线不发信，否则刚配好就收到一封「一直都在」的清单
+        os.remove(os.path.join(self.dir, srv.NOTIFY_STATE_FILE))
+        r = self.scan([disk("sdk", "warn")])
+        self.assertTrue(r and r.get("silent"))
+        self.assertEqual(len(self.sent), 0)
+        # 基线已建立：同状态再跑不发，但计数上涨要发
+        self.assertIsNone(self.scan([disk("sdk", "warn")]))
+        r2 = self.scan([disk("sdk", "warn", defects=61)])
+        self.assertEqual(r2["acts"], ["worse"])
+        self.assertIn("增长缺陷 49 → 61", self.sent[-1][1])
+
+    def test_warn_growth_sends_worse(self):
+        # warn 内部的退化也要报，不能等到跨档才提醒
+        self.scan([disk("sdk", "warn")])
+        r = self.scan([disk("sdk", "warn", defects=53)])
+        self.assertEqual(r["acts"], ["worse"])
+        self.assertIn("增长缺陷 49 → 53", self.sent[-1][1])
+        # 没有继续增长就不再发
+        self.assertIsNone(self.scan([disk("sdk", "warn", defects=53)]))
+
+    def test_pending_growth_sends_worse(self):
+        self.scan([disk("sdk", "warn", pending_defects=0)])
+        r = self.scan([disk("sdk", "warn", pending_defects=2)])
+        self.assertEqual(r["acts"], ["worse"])
+        self.assertIn("待处理扇区 0 → 2", self.sent[-1][1])
+
+    def test_metrics_baseline_missing_is_silent(self):
+        # 老版本状态文件没有 metrics：这一轮只补基线，不能凭空判「恶化」
+        srv.write_json_secure(os.path.join(self.dir, srv.NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": {"sdk": "warn"}})
+        self.assertIsNone(self.scan([disk("sdk", "warn", defects=49)]))
+        r = self.scan([disk("sdk", "warn", defects=52)])
+        self.assertEqual(r["acts"], ["worse"])
 
     def test_unknown_grade_no_event(self):
         self.assertIsNone(self.scan([disk("sdz", "unknown")]))

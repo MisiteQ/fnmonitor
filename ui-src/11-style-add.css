@@ -144,3 +144,27 @@ dd .diag-link { margin: 0; height: 24px; }
 @media (max-width: 960px) {
   .ctr.vm { grid-template-columns: minmax(0, 1fr) auto; }
 }
+
+/* ---------- iDRAC 实时概览（设置 → iDRAC）---------- */
+.idrac-live:empty { display: none; }
+.idrac-live { border-top: 1px solid var(--line); margin-top: var(--s2); }
+.idrac-head { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; padding: var(--s4) 0 var(--s3); font-size: 13px; color: var(--ink-2); }
+.idrac-head b { color: var(--ink-1); font-weight: 600; }
+.idrac-head .h-ok { color: var(--health-ok); font-weight: 600; }
+.idrac-head .h-warn { color: var(--warn); font-weight: 600; }
+.idrac-head .h-crit { color: var(--crit); font-weight: 600; }
+.idrac-fans { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding-bottom: var(--s3); }
+.idrac-fan { padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--ink-1) 4%, transparent); font-size: 13px; font-variant-numeric: tabular-nums; }
+.idrac-fan b { display: block; font-size: 11px; font-weight: 600; color: var(--ink-3); margin-bottom: 1px; }
+.idrac-fan small { font-size: 10px; color: var(--ink-3); margin-left: 3px; }
+.idrac-fan.bad { box-shadow: inset 0 0 0 1px var(--crit); }
+.idrac-temps { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); padding-bottom: var(--s3); }
+.idrac-temps b { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+.idrac-sel { display: flex; flex-direction: column; gap: 3px; font-size: 12px; padding-bottom: var(--s3); }
+.idrac-sel .e { display: flex; gap: 8px; align-items: baseline; }
+.idrac-sel .t { color: var(--ink-3); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.idrac-sel .s { flex: 0 0 auto; font-weight: 600; min-width: 52px; }
+.idrac-sel .s.Critical { color: var(--crit); }
+.idrac-sel .s.Warning { color: var(--warn); }
+.idrac-sel .s.OK { color: var(--ink-3); }
+.idrac-sel .m { min-width: 0; color: var(--ink-2); }

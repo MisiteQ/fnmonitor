@@ -1234,6 +1234,28 @@ dd .diag-link{margin:0;height:24px}
 }
 @media (max-width: 960px){.ctr.vm{grid-template-columns:minmax(0,1fr) auto}
 }
+.idrac-live:empty{display:none}
+.idrac-live{border-top:1px solid var(--line);margin-top:var(--s2)}
+.idrac-head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding:var(--s4) 0 var(--s3);font-size:13px;color:var(--ink-2)}
+.idrac-head b{color:var(--ink-1);font-weight:600}
+.idrac-head .h-ok{color:var(--health-ok);font-weight:600}
+.idrac-head .h-warn{color:var(--warn);font-weight:600}
+.idrac-head .h-crit{color:var(--crit);font-weight:600}
+.idrac-fans{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px;padding-bottom:var(--s3)}
+.idrac-fan{padding:6px 8px;border-radius:6px;background:color-mix(in srgb,var(--ink-1) 4%,transparent);font-size:13px;font-variant-numeric:tabular-nums}
+.idrac-fan b{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:1px}
+.idrac-fan small{font-size:10px;color:var(--ink-3);margin-left:3px}
+.idrac-fan.bad{box-shadow:inset 0 0 0 1px var(--crit)}
+.idrac-temps{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--ink-2);padding-bottom:var(--s3)}
+.idrac-temps b{color:var(--ink-1);font-variant-numeric:tabular-nums}
+.idrac-sel{display:flex;flex-direction:column;gap:3px;font-size:12px;padding-bottom:var(--s3)}
+.idrac-sel .e{display:flex;gap:8px;align-items:baseline}
+.idrac-sel .t{color:var(--ink-3);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.idrac-sel .s{flex:0 0 auto;font-weight:600;min-width:52px}
+.idrac-sel .s.Critical{color:var(--crit)}
+.idrac-sel .s.Warning{color:var(--warn)}
+.idrac-sel .s.OK{color:var(--ink-3)}
+.idrac-sel .m{min-width:0;color:var(--ink-2)}
 </style>
 </head>
 <body>
@@ -4125,6 +4147,7 @@ b.disabled = false;
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
 { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
+{ id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
 { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
 { id: 'look', title: '外观', icon: 'palette', items: [
 uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
@@ -4338,6 +4361,121 @@ loadNotify().then(() => {
 const n = NB || {};
 Object.keys(f).forEach(k => { if (n[k] !== undefined && k !== 'password' && k !== 'sct_key') f[k] = n[k]; });
 f.password = ''; f.sct_key = '';
+sync();
+});
+sync();
+}
+let IB = null;
+async function loadIdrac(force) {
+if (IB && !force) return IB;
+try { IB = await API.get('/api/idrac?sel=1' + (force ? '&refresh=1' : '')); }
+catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
+return IB;
+}
+function renderIdrac(card) {
+card.innerHTML = `<div class="note info notify-note">${ic('server')}<span><b>只读</b>：通过 Redfish 直连 iDRAC 读取风扇转速、温度、功耗与硬件日志，不会改动服务器任何设置。密码单独存 <span class="mono">idrac.json</span>（0600），接口只回「是否已填」。自签证书需要关闭校验，仅建议在内网使用。</span></div>
+<div class="set-row inline"><div><div class="lbl">iDRAC</div><div class="hint" data-ref="hOn"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swOn" aria-label="启用 iDRAC"></button></div></div>
+<div class="set-row"><div><div class="lbl">地址</div><div class="hint">iDRAC 管理口 IP 或主机名，只填地址，不要带 https://</div></div><div class="ctl"><input class="textfield mono" data-ref="host" placeholder="192.168.1.120" spellcheck="false" aria-label="iDRAC 地址"></div></div>
+<div class="set-row"><div><div class="lbl">用户名</div><div class="hint">建议在 iDRAC 里单建一个只读账号</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="root" spellcheck="false" autocomplete="username" aria-label="iDRAC 用户名"></div></div>
+<div class="set-row"><div><div class="lbl">密码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="iDRAC 登录密码" autocomplete="new-password" aria-label="iDRAC 密码"></div></div>
+<div class="set-row inline"><div><div class="lbl">跳过证书校验</div><div class="hint">iDRAC 出厂是自签证书，内网访问需要关闭校验</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swTls" aria-label="跳过证书校验"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">硬件日志纳入告警</div><div class="hint">SEL 出现新的 Critical / Warning 时，跟硬盘告警一起推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swSel" aria-label="硬件日志纳入告警"></button></div></div>
+<div class="set-row"><div><div class="lbl">连接与保存</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" data-ref="test">测试连接</button><button class="btn primary" type="button" data-ref="save">保存</button></div></div>
+<div class="idrac-live" data-ref="live"></div>`;
+const x = collect(card);
+const f = { enabled: 0, host: '', user: '', password: '', verify_tls: 0, sel_alert: 1 };
+const bind = (el, k) => el.addEventListener('input', () => { f[k] = el.value; });
+bind(x.host, 'host'); bind(x.user, 'user'); bind(x.pw, 'password');
+const setSw = (el, k, invert) => el.addEventListener('click', () => {
+const on = el.getAttribute('aria-checked') !== 'true';
+el.setAttribute('aria-checked', String(on));
+f[k] = (invert ? !on : on) ? 1 : 0;
+sync();
+});
+setSw(x.swOn, 'enabled'); setSw(x.swTls, 'verify_tls', true); setSw(x.swSel, 'sel_alert');
+const hcls = h => /crit/i.test(h) ? 'h-crit' : /warn/i.test(h) ? 'h-warn' : 'h-ok';
+const when = s => { try { return new Date(s).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(s || ''); } };
+function renderLive() {
+const d = IB || {};
+if (!d.configured) { x.live.innerHTML = ''; return; }
+if (!d.ok) {
+x.live.innerHTML = `<div class="idrac-head"><span class="h-crit">读取失败</span><span>${esc(d.error || '未知错误')}</span></div>`;
+return;
+}
+const fs = d.fan_summary || {};
+const head = [
+`<b>${esc(d.model || 'Dell 服务器')}</b>`,
+d.service_tag ? `服务标签 ${esc(d.service_tag)}` : '',
+`整机 <span class="${hcls(d.health || '')}">${esc(d.health || '未知')}</span>`,
+d.power_state ? (d.power_state === 'On' ? '已开机' : esc(d.power_state)) : '',
+d.power_watts != null ? `功耗 <b>${esc(String(d.power_watts))}</b> W` : '',
+fs.count ? `风扇 ${fs.count} 颗 · ${fs.min}–${fs.max} RPM · 均 ${fs.avg}` : '',
+d.bios ? `BIOS ${esc(d.bios)}` : ''
+].filter(Boolean).join(' · ');
+const fans = (d.fans || []).map(v => `<div class="idrac-fan${v.health && v.health.toUpperCase() !== 'OK' ? ' bad' : ''}"><b>${esc(v.name)}</b>${esc(String(v.rpm))}<small>RPM</small></div>`).join('');
+const temps = (d.temps || []).slice(0, 8).map(t => `<span>${esc(String(t.name).replace(/^System Board\s*/i, ''))} <b>${esc(String(t.c))}</b>°C</span>`).join('');
+const sel = (d.sel && d.sel.entries) || [];
+const selHtml = sel.length ? `<div class="idrac-sel">${sel.map(e => `<div class="e"><span class="t">${esc(when(e.created))}</span><span class="s ${esc(e.severity)}">${esc(e.severity || '-')}</span><span class="m">${esc(e.message)}</span></div>`).join('')}</div>` : '';
+x.live.innerHTML = `<div class="idrac-head">${head}</div>`
++ (fans ? `<div class="idrac-fans">${fans}</div>` : '')
++ (temps ? `<div class="idrac-temps">${temps}</div>` : '')
++ selHtml;
+}
+function sync() {
+const n = (IB && IB.config) || {};
+x.swOn.setAttribute('aria-checked', String(!!+f.enabled));
+x.swTls.setAttribute('aria-checked', String(!+f.verify_tls));
+x.swSel.setAttribute('aria-checked', String(!!+f.sel_alert));
+if (document.activeElement !== x.host) x.host.value = f.host || '';
+if (document.activeElement !== x.user) x.user.value = f.user || '';
+x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : 'iDRAC 登录密码';
+setText(x.hPw, n.password_set ? '已保存过密码，留空表示不修改' : 'iDRAC 的登录密码（就是打开 iDRAC 网页时用的那个）');
+setText(x.hOn, +f.enabled ? (+f.host && n.password_set && f.user ? '已启用：巡检时一并读取整机硬件状态' : '已启用，保存前请补全地址、用户名与密码') : '关闭：不读取 iDRAC');
+if (document.activeElement !== x.host && !x.hMsg.textContent) {
+setText(x.hMsg, (IB && IB.ok) ? '最近一次读取成功 · 打开设置页会自动刷新状态' : ((IB && IB.error) || '填好地址与账号后点「测试连接」'));
+}
+renderLive();
+}
+async function doSave() {
+x.save.disabled = true;
+const body = { enabled: f.enabled, host: f.host, user: f.user, verify_tls: f.verify_tls, sel_alert: f.sel_alert };
+if (f.password) body.password = f.password;
+try {
+const j = await API.post('/api/idrac/save', body);
+if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+f.password = ''; x.pw.value = '';
+IB = await loadIdrac(true);
+toast('iDRAC 配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+setText(x.hMsg, (IB && IB.ok) ? '已保存并读取成功' : ('已保存 · ' + ((IB && IB.error) || '尚未读取到数据')));
+} catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+x.save.disabled = false; sync();
+}
+x.save.onclick = doSave;
+x.test.onclick = async () => {
+x.test.disabled = true; setText(x.hMsg, '正在连接 iDRAC…');
+const body = { host: f.host, user: f.user };
+if (f.password) body.password = f.password;
+try {
+const j = await API.post('/api/idrac/test', body);
+const steps = (j && j.steps) || [];
+const bad = steps.find(s => !s.ok);
+if (j && j.ok) {
+const ov = j.overview || {};
+setText(x.hMsg, `连接成功 · ${ov.model || 'Dell'} · 服务标签 ${j.service_tag || ov.service_tag || '-'} · 风扇 ${(ov.fan_summary || {}).count || 0} 颗 · 硬件日志 ${(j.sel || {}).count || 0} 条`);
+toast('iDRAC 连接成功', { icon: 'check', ms: 4000 });
+} else {
+setText(x.hMsg, '连接失败：' + String((bad && (bad.error || bad.detail)) || (j && j.error) || '未知错误'));
+toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 });
+}
+IB = await loadIdrac(true); sync();
+} catch (e) { setText(x.hMsg, '连接失败：' + String(e.message).slice(0, 80)); toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 }); }
+x.test.disabled = false;
+};
+card._sync = sync;
+loadIdrac().then(() => {
+const c = (IB && IB.config) || {};
+['enabled', 'host', 'user', 'verify_tls', 'sel_alert'].forEach(k => { if (c[k] !== undefined) f[k] = c[k]; });
+f.password = '';
 sync();
 });
 sync();

@@ -29,6 +29,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import ssl
 import subprocess
 import sys
 import threading
@@ -3438,19 +3439,24 @@ def notify_build(events, ts, port=8777):
     worse = [e for e in events if e["act"] == "worse"]
     rec = [e for e in events if e["act"] == "recovered"]
     bad = len(new) + len(worse)
+    has_idrac = any((e.get("d") or {}).get("kind") == "idrac" for e in events)
+    title = "硬件告警" if has_idrac else "硬盘告警"
     if bad:
-        subject = "[飞牛监控] 硬盘告警 · %d 块异常" % bad
+        subject = "[飞牛监控] %s · %d %s异常" % (title, bad, "项" if has_idrac else "块")
     else:
-        subject = "[飞牛监控] 硬盘告警解除 · %d 块恢复" % len(rec)
+        subject = "[飞牛监控] %s解除 · %d %s恢复" % (title, len(rec), "项" if has_idrac else "块")
     lines = ["检测时间：%s" % time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)), ""]
 
     def section(title, group):
         lines.append("【%s】" % title)
         for e in group:
             d = e["d"] or {}
-            lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
-                                                d.get("serial") or "无序列号",
-                                                GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
+            if d.get("kind") == "idrac":
+                lines.append("iDRAC · 硬件日志 · %s" % GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-"))
+            else:
+                lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
+                                                    d.get("serial") or "无序列号",
+                                                    GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
             lines.append("  %s" % (e.get("text") or ""))
             bits = []
             if d.get("defects") is not None:
@@ -3503,8 +3509,44 @@ def notify_send_all(cfg, subject, body):
     return ok_all, res
 
 
+DISK_METRIC_KEYS = (("defects", "增长缺陷"), ("pending_defects", "待处理扇区"),
+                    ("uncorr", "不可纠正"))
+
+
+def _disk_metrics(item):
+    """同档内比较用的恶化指标：只取计数，不取温度 / 通电时长这类自然变量。"""
+    out = {}
+    for key, _label in DISK_METRIC_KEYS:
+        v = _nz(item.get(key))
+        if v is not None:
+            out[key] = int(v)
+    return out
+
+
+def _disk_metrics_worse(cur, old):
+    """同档内的恶化：任一计数比上次大就算，返回 [(标签, 上次, 本次)]。"""
+    out = []
+    for key, label in DISK_METRIC_KEYS:
+        a, b = old.get(key), cur.get(key)
+        if a is None or b is None:
+            continue
+        if int(b) > int(a):
+            out.append((label, int(a), int(b)))
+    return out
+
+
 def notify_after_scan(items, ts, db, config=None):
-    """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。"""
+    """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。
+
+    判定口径：
+      · 首次巡检（state 里还没有基线）只落状态、不发信 —— 否则刚配好通知就会收到
+        一封「一直都在」的故障清单；
+      · 新增故障 / 升级 / 同档内计数上涨 / 恢复 才发；
+      · 同一状态且计数没变，不重复发；
+      · crit → warn 降级静默（只更新状态），避免刚处理完又响一次；
+      · 发送失败不落「已通知」，下一轮重新判定同一批事件；
+      · 休眠盘沿用上次分级，不参与判定。
+    """
     try:
         data_dir = os.path.dirname(getattr(db, "db_path", "") or "")
         if not data_dir:
@@ -3514,31 +3556,95 @@ def notify_after_scan(items, ts, db, config=None):
             return None
         st = notify_state_load(data_dir)
         notified = dict(st.get("notified") or {})
-        cur = {}
-        events = []
+        old_metrics = dict(st.get("metrics") or {})
+        cur, cur_metrics, events = {}, {}, []
         for it in items or []:
             dev = str(it.get("dev") or "")
-            if not dev or it.get("standby"):
-                continue                      # 休眠盘沿用旧分级，不参与判定
+            if not dev:
+                continue
+            if it.get("standby"):
+                # 休眠盘沿用上次分级，不参与判定。这里必须把旧状态原样带进 cur，
+                # 否则本轮 cur 里少了它，会被当成「已恢复」而清掉已通知标记，
+                # 盘一醒又判一次「新增」——同一块盘重复通知。
+                if dev in notified:
+                    cur[dev] = notified[dev]
+                    if dev in old_metrics:
+                        cur_metrics[dev] = old_metrics[dev]
+                continue
             grade = str(it.get("grade") or "")
+            met = _disk_metrics(it)
             if grade in ("warn", "crit"):
                 cur[dev] = grade
+                cur_metrics[dev] = met
             old = str(notified.get(dev) or "")
-            if grade in ("warn", "crit"):
-                if old == grade:
-                    continue
-                if old == "crit" and grade == "warn":
-                    continue                  # 降级单独提醒太吵，静默更新状态
-                events.append({"act": "worse" if old == "warn" else "new",
-                               "dev": dev, "d": it,
+            if grade not in ("warn", "crit"):
+                if grade == "ok" and old in ("warn", "crit"):
+                    events.append({"act": "recovered", "dev": dev, "d": it,
+                                   "text": "故障消失，SMART 通过"})
+                continue
+            if not old:
+                events.append({"act": "new", "dev": dev, "d": it,
                                "text": it.get("detail") or GRADE_LABEL.get(grade, grade)})
-            elif grade == "ok" and old in ("warn", "crit"):
-                events.append({"act": "recovered", "dev": dev, "d": it,
-                               "text": "故障消失，SMART 通过"})
+                continue
+            if old == "crit" and grade == "warn":
+                continue                      # 降级单独提醒太吵，静默更新状态
+            if old == "warn" and grade == "crit":
+                events.append({"act": "worse", "dev": dev, "d": it,
+                               "text": "等级由「留意」升为「故障」：%s"
+                                       % (it.get("detail") or "")})
+                continue
+            # 同档：计数上涨也算恶化，不该等到跨档才提醒
+            grew = _disk_metrics_worse(met, old_metrics.get(dev) or {})
+            if grew:
+                events.append({"act": "worse", "dev": dev, "d": it,
+                               "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
+        # iDRAC 硬件日志：活跃告警按「指纹」（消息号 + 传感器）增量对比，
+        # 同一条告警只发一次；消失时补一条恢复。iDRAC 不通不影响硬盘判定。
+        idrac_prev = st.get("idrac_active") or {}
+        if isinstance(idrac_prev, list):          # 兼容早期纯列表格式
+            idrac_prev = {k: {} for k in idrac_prev}
+        idrac_cur = dict(idrac_prev)
+        icfg = idrac_load(data_dir)
+        if icfg.get("enabled") and icfg.get("sel_alert"):
+            snap = idrac_snapshot(icfg)
+            if snap.get("ok"):
+                idrac_cur = {}
+                for a in snap.get("active") or []:
+                    fp = "%s|%s" % (a.get("msg_id") or a.get("id") or "", a.get("sensor") or "")
+                    if fp == "|":
+                        continue
+                    idrac_cur[fp] = {"message": a.get("message") or "",
+                                     "sensor": a.get("sensor") or "", "severity": a.get("severity") or ""}
+                for fp, a in idrac_cur.items():
+                    if fp in idrac_prev:
+                        continue
+                    sev = str(a.get("severity") or "")
+                    events.append({"act": "new", "dev": "iDRAC",
+                                   "d": {"dev": "iDRAC", "kind": "idrac", "model": a.get("sensor") or "硬件日志",
+                                         "grade": "crit" if sev.lower() == "critical" else "warn",
+                                         "detail": a.get("message") or ""},
+                                   "text": a.get("message") or ""})
+                for fp, a in idrac_prev.items():
+                    if fp in idrac_cur:
+                        continue
+                    events.append({"act": "recovered", "dev": "iDRAC",
+                                   "d": {"dev": "iDRAC", "kind": "idrac", "grade": "ok",
+                                         "model": a.get("sensor") or "硬件日志"},
+                                   "text": "已解除：%s" % (a.get("message") or fp)})
+        # 首次：只记基线不发信（老版本状态文件没有 inited，但 notified 非空说明早已在工作）
+        if not (st.get("inited") or notified):
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": cur, "metrics": cur_metrics,
+                               "idrac_active": idrac_cur, "ts": ts})
+            print("[fnmonitor] 硬盘巡检首次记录基线，本轮不发通知")
+            return {"ok": True, "inited": True, "silent": True, "notified": cur}
         if not events:
-            if cur != notified:
-                write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
-                                  {"notified": cur, "ts": ts})
+            if cur != notified or cur_metrics != old_metrics or idrac_cur != idrac_prev:
+                keep = {"inited": 1, "notified": cur, "metrics": cur_metrics,
+                        "idrac_active": idrac_cur, "ts": ts}
+                if st.get("last"):
+                    keep["last"] = st["last"]
+                write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE), keep)
             return None
         try:
             port = int((config or {}).get("port") or 0) or 8777
@@ -3550,11 +3656,14 @@ def notify_after_scan(items, ts, db, config=None):
                    "acts": [e["act"] for e in events], "channels": res}
         if ok:
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
-                              {"notified": cur, "ts": ts, "last": summary})
+                              {"inited": 1, "notified": cur, "metrics": cur_metrics,
+                               "idrac_active": idrac_cur, "ts": ts, "last": summary})
         else:
-            # 发送失败：保留旧状态，下一轮巡检重试同一批事件
+            # 发送失败：保留旧状态与旧指标，下一轮巡检重试同一批事件
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
-                              {"notified": notified, "ts": st.get("ts") or 0, "last": summary})
+                              {"inited": 1, "notified": notified, "metrics": old_metrics,
+                               "idrac_active": idrac_prev, "ts": st.get("ts") or 0,
+                               "last": summary})
             print("[fnmonitor] 硬盘告警通知发送失败：%s" % res)
         return summary
     except Exception:
@@ -3601,6 +3710,299 @@ def notify_test(data_dir, channel="all"):
     return {"ok": ok, "channels": res, "channel": ch,
             "error": "" if ok else "；".join(
                 "%s：%s" % (label[k], v.get("err")) for k, v in res.items() if v and not v.get("ok"))}
+
+
+# ---------------------------------------------------------------------------
+# iDRAC（Dell PowerEdge 带外管理）：Redfish 读风扇转速 / 温度 / 功耗 / 硬件日志
+# ---------------------------------------------------------------------------
+# 只依赖标准库 urllib。R730/R740 这一代的 iDRAC8 固件 ≥ 2.40 自带 Redfish 1.x。
+# 密码存独立文件 idrac.json（0600），GET /api/idrac 只回 password_set，明文不出网络
+# —— 和 notify.json 同一套口径。
+IDRAC_FILE = "idrac.json"
+IDRAC_TTL = 60.0                   # 概览缓存：页面刷新不打爆 iDRAC
+IDRAC_SEL_LIMIT = 20               # 只取最近 N 条硬件日志
+IDRAC_TIMEOUT = 8
+_IDRAC_CACHE = {}
+_IDRAC_LOCK = threading.Lock()
+
+IDRAC_DEFAULT = {"enabled": 0, "host": "", "user": "", "password": "",
+                 "verify_tls": 0, "sel_alert": 1}
+
+# iDRAC8 的 SEL 在 OEM 的 Logs 下，iDRAC9 走标准 LogServices；两个都试
+IDRAC_SEL_PATHS = ("/Managers/iDRAC.Embedded.1/LogServices/Sel/Entries",
+                   "/Managers/iDRAC.Embedded.1/Logs/Sel")
+
+
+def idrac_load(data_dir):
+    """读 idrac.json；缺字段回落默认值，格式错误不影响其余字段。"""
+    cfg = dict(IDRAC_DEFAULT)
+    if not data_dir:
+        return cfg
+    try:
+        with open(os.path.join(data_dir, IDRAC_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            user = json.load(f)
+        if not isinstance(user, dict):
+            user = {}
+    except Exception:
+        user = {}
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "verify_tls", "sel_alert"):
+        if k in user:
+            cfg[k] = onoff(user[k])
+    for k in ("host", "user", "password"):
+        if k in user:
+            cfg[k] = str(user[k] or "")
+    return cfg
+
+
+def idrac_public(cfg):
+    """对外可见的配置：只回「密码是否已填」，明文不出网络。"""
+    return {"enabled": cfg.get("enabled") or 0,
+            "host": cfg.get("host") or "",
+            "user": cfg.get("user") or "",
+            "verify_tls": cfg.get("verify_tls") or 0,
+            "sel_alert": cfg.get("sel_alert") or 0,
+            "password_set": bool(str(cfg.get("password") or "").strip())}
+
+
+def idrac_save(data_dir, data):
+    """合并保存。password 传空串 = 不修改（占位符提示「留空不改」）。"""
+    cfg = idrac_load(data_dir)
+    data = data or {}
+    if "host" in data:
+        host = str(data.get("host") or "").strip()
+        host = re.sub(r"^https?://", "", host).split("/")[0]
+        cfg["host"] = clean_text(host, 64)
+    if "user" in data:
+        cfg["user"] = clean_text(str(data.get("user") or ""), 64)
+    pw = str(data.get("password") or "")
+    if pw:
+        cfg["password"] = pw
+    if data.get("clear_password"):
+        cfg["password"] = ""
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "verify_tls", "sel_alert"):
+        if k in data:
+            cfg[k] = onoff(data[k])
+    if cfg["enabled"]:
+        if not cfg["host"]:
+            return cfg, "请填写 iDRAC 地址"
+        if not cfg["user"]:
+            return cfg, "请填写 iDRAC 用户名"
+        if not cfg["password"]:
+            return cfg, "请填写 iDRAC 密码（红帽账号授权码那类不行，要 iDRAC 的登录密码）"
+    write_json_secure(os.path.join(data_dir, IDRAC_FILE), cfg)
+    return cfg, ""
+
+
+def idrac_short_err(e):
+    """把 urllib / socket 的原始报错翻成人话。"""
+    s = str(getattr(e, "reason", None) or e or "")
+    low = s.lower()
+    if "timed out" in low or "timeout" in low:
+        return "连接超时（地址或网络不通）"
+    if "certificate" in low or "ssl" in low or "tls" in low:
+        return "TLS 握手失败（可尝试关闭证书校验）"
+    if "name or service not known" in low or "getaddrinfo" in low or "nodename" in low:
+        return "无法解析 iDRAC 地址"
+    if "connection refused" in low:
+        return "iDRAC 拒绝连接（443 端口未开放）"
+    if "network is unreachable" in low or "no route" in low:
+        return "网络不可达（网段或路由问题）"
+    return "连接失败：%s" % s[:120]
+
+
+def _idrac_request(cfg, path, timeout=IDRAC_TIMEOUT):
+    """GET 一个 Redfish 路径（path 相对 /redfish/v1）。返回 (json 或 None, 错误文案)。"""
+    host = str(cfg.get("host") or "").strip()
+    if not host:
+        return None, "未配置 iDRAC 地址"
+    if not re.match(r"^[A-Za-z0-9_.\-:]+$", host):
+        return None, "iDRAC 地址格式不对（只填 IP 或主机名，不要带路径）"
+    url = "https://%s/redfish/v1%s" % (host, path)
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    token = base64.b64encode(("%s:%s" % (cfg.get("user") or "", cfg.get("password") or "")
+                              ).encode("utf-8")).decode("ascii")
+    req.add_header("Authorization", "Basic " + token)
+    ctx = None if cfg.get("verify_tls") else ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        return (json.loads(body) if body.strip() else {}), ""
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, "认证失败（用户名或密码错误）"
+        if e.code == 403:
+            return None, "权限不足（建议用管理员或只读管理员账号）"
+        if e.code == 404:
+            return None, "该机型/固件不支持此接口（HTTP 404）"
+        return None, "iDRAC 返回 HTTP %s" % e.code
+    except urllib.error.URLError as e:
+        return None, idrac_short_err(e)
+    except Exception as e:
+        return None, idrac_short_err(e)
+
+
+def _idrac_name(s):
+    """'System Board Fan1A' / 'System Board Fan6 RPM' → 'Fan1A' / 'Fan6'。"""
+    s = str(s or "").strip()
+    s = re.sub(r"^(System Board|System)\s+", "", s, flags=re.I)
+    s = re.sub(r"\s+RPM$", "", s, flags=re.I)
+    return s or "?"
+
+
+def _idrac_fan_sort(name):
+    m = re.search(r"(\d+)([A-Za-z]?)", name or "")
+    return (int(m.group(1)) if m else 99, (m.group(2) or "").upper())
+
+
+def idrac_collect(cfg, force=False):
+    """拉一次概览：机型 / 整机健康 / 风扇 / 温度 / 功耗。带 60 秒缓存。"""
+    now = time.time()
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("v")
+        if not force and c and now - c.get("ts", 0) < IDRAC_TTL:
+            return dict(c, cached=True)
+    out = {"ok": False, "host": cfg.get("host") or "", "ts": now}
+
+    sysd, err = _idrac_request(cfg, "/Systems/System.Embedded.1")
+    if err:
+        out["error"] = err
+        with _IDRAC_LOCK:
+            _IDRAC_CACHE["v"] = dict(out, ts=now)
+        return out
+    st = sysd.get("Status") or {}
+    out.update({
+        "model": str(sysd.get("Model") or ""),
+        "service_tag": str(sysd.get("SKU") or ""),
+        "bios": str(sysd.get("BiosVersion") or ""),
+        "health": str(st.get("Health") or ""),
+        "health_rollup": str(st.get("HealthRollup") or ""),
+        "power_state": str(sysd.get("PowerState") or ""),
+        "mem_gib": _nz((sysd.get("MemorySummary") or {}).get("TotalSystemMemoryGiB")),
+        "cpu": (sysd.get("ProcessorSummary") or {}).get("Count"),
+    })
+
+    th, err_th = _idrac_request(cfg, "/Chassis/System.Embedded.1/Thermal")
+    fans, temps = [], []
+    if not err_th:
+        for f in th.get("Fans") or []:
+            rpm = _nz(f.get("Reading"))
+            if rpm is None:
+                continue
+            fs = f.get("Status") or {}
+            fans.append({"name": _idrac_name(f.get("Name") or f.get("FanName")),
+                         "rpm": int(rpm),
+                         "health": str(fs.get("Health") or ""),
+                         "state": str(fs.get("State") or ""),
+                         "min": _nz(f.get("LowerThresholdCritical"))})
+        fans.sort(key=lambda x: _idrac_fan_sort(x["name"]))
+        for t in th.get("Temperatures") or []:
+            cel = _nz(t.get("ReadingCelsius"))
+            if cel is None:
+                continue
+            ts_ = t.get("Status") or {}
+            temps.append({"name": str(t.get("Name") or "?"),
+                          "c": int(cel),
+                          "health": str(ts_.get("Health") or ""),
+                          "crit": _nz(t.get("UpperThresholdCritical"))})
+        temps.sort(key=lambda x: x["name"])
+    out["fans"] = fans
+    out["temps"] = temps
+    if fans:
+        rpms = [f["rpm"] for f in fans]
+        out["fan_summary"] = {"count": len(rpms), "min": min(rpms), "max": max(rpms),
+                              "avg": int(sum(rpms) / len(rpms)),
+                              "bad": sum(1 for f in fans
+                                         if f["health"] and f["health"].upper() != "OK")}
+    if err_th:
+        out["thermal_error"] = err_th
+
+    pw, err_pw = _idrac_request(cfg, "/Chassis/System.Embedded.1/Power")
+    if not err_pw:
+        pc = (pw.get("PowerControl") or [{}])[0]
+        out["power_watts"] = _nz(pc.get("PowerConsumedWatts"))
+        psu = []
+        for p in pw.get("PowerSupplies") or []:
+            ps = p.get("Status") or {}
+            psu.append({"name": str(p.get("Name") or p.get("MemberId") or "?"),
+                        "health": str(ps.get("Health") or ""),
+                        "state": str(ps.get("State") or ""),
+                        "watts": _nz(p.get("LastPowerOutputWatts"))})
+        out["psu"] = psu
+
+    out["ok"] = True
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["v"] = dict(out, ts=now)
+    return out
+
+
+def _sel_entry(m):
+    code = m.get("EntryCode")
+    if isinstance(code, list):
+        code = (code[0] or {}).get("Member") if code and isinstance(code[0], dict) else ""
+    elif isinstance(code, dict):
+        code = code.get("Member") or ""
+    code = str(code or "")
+    sev = str(m.get("Severity") or "")
+    return {"id": str(m.get("Id") or m.get("RecordId") or ""),
+            "created": str(m.get("Created") or ""),
+            "severity": sev,
+            "message": str(m.get("Message") or m.get("Description") or "").strip(),
+            "code": code,
+            "assert": code.lower() != "deassert",
+            "sensor": str(m.get("SensorType") or ""),
+            "msg_id": str(m.get("MessageId") or "")}
+
+
+def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT):
+    """最近的硬件日志（SEL）。iDRAC8 在 Logs/Sel，iDRAC9 在 LogServices/Sel。"""
+    last_err = ""
+    for path in IDRAC_SEL_PATHS:
+        d, err = _idrac_request(cfg, path)
+        if err:
+            last_err = err
+            continue
+        members = d.get("Members") or []
+        # 部分固件只回 @odata.id，得逐条取详情
+        if members and not (members[0].get("Message") or members[0].get("Created")):
+            detailed = []
+            for m in members[:limit]:
+                oid = str(m.get("@odata.id") or "")
+                if not oid:
+                    continue
+                dd, e2 = _idrac_request(cfg, oid.replace("/redfish/v1", "", 1))
+                if not e2 and dd:
+                    detailed.append(dd)
+            if detailed:
+                members = detailed
+        rows = [_sel_entry(m) for m in members]
+        rows.sort(key=lambda x: (x["created"], x["id"]), reverse=True)
+        rows = rows[:limit]
+        active = [r for r in rows
+                  if r["assert"] and r["severity"].lower() in ("critical", "warning")]
+        return {"ok": True, "entries": rows, "active": active,
+                "count": int(d.get("Members@odata.count") or len(members)),
+                "path": path, "ts": time.time()}
+    return {"ok": False, "entries": [], "active": [], "count": 0, "error": last_err}
+
+
+def idrac_snapshot(cfg):
+    """给巡检用的轻量快照：整机健康 + 硬件日志里的活跃告警。异常不外抛。"""
+    try:
+        ov = idrac_collect(cfg, force=True)
+        if not ov.get("ok"):
+            return {"ok": False, "error": ov.get("error") or "iDRAC 读取失败"}
+        sel = idrac_sel(cfg)
+        return {"ok": True, "health": ov.get("health") or "",
+                "fan_bad": (ov.get("fan_summary") or {}).get("bad") or 0,
+                "fan_min": (ov.get("fan_summary") or {}).get("min"),
+                "power_watts": ov.get("power_watts"),
+                "active": sel.get("active") or [],
+                "sel_count": sel.get("count") or 0,
+                "sel_error": sel.get("error") or ""}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
 
 
 def read_net_dev():
@@ -7009,7 +7411,8 @@ class MonitorApp:
                "img-src 'self' data:; connect-src 'self'; frame-ancestors *")
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
                      "/api/vm/action", "/api/config/save", "/api/update/install",
-                     "/api/notify/save", "/api/notify/test", "/api/disk_scan/now"}
+                     "/api/notify/save", "/api/notify/test", "/api/disk_scan/now",
+                     "/api/idrac/save", "/api/idrac/test"}
 
         class Handler(BaseHTTPRequestHandler):
             # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程；timeout 保证空闲连接
@@ -7225,6 +7628,12 @@ class MonitorApp:
                     return
                 if path == "/api/notify":
                     self._json(app.api_notify_get())
+                    return
+                if path == "/api/idrac":
+                    self._json(app.api_idrac_get(qs))
+                    return
+                if path == "/api/idrac/sel":
+                    self._json(app.api_idrac_sel(qs))
                     return
                 if path == "/api/docker":
                     self._json(app.api_docker())
@@ -7462,6 +7871,12 @@ class MonitorApp:
                 if path == "/api/notify/test":
                     self._json(app.api_notify_test(data))
                     return
+                if path == "/api/idrac/save":
+                    self._json(app.api_idrac_save(data))
+                    return
+                if path == "/api/idrac/test":
+                    self._json(app.api_idrac_test(data))
+                    return
                 if path == "/api/disk_scan/now":
                     self._json(app.api_disk_scan_now())
                     return
@@ -7613,6 +8028,85 @@ class MonitorApp:
         """
         ch = data.get("channel") if isinstance(data, dict) else ""
         return notify_test(self.data_dir, ch)
+
+    def api_idrac_get(self, query=None):
+        """iDRAC 概览：机型 / 整机健康 / 风扇转速 / 温度 / 功耗（60 秒缓存）。
+
+        query 带 refresh=1 强制重读。没配置时不报错，回 ok=False + 默认配置，
+        设置页据此渲染「未配置」状态。"""
+        cfg = idrac_load(self.data_dir)
+        pub = idrac_public(cfg)
+        if not pub["host"]:
+            return {"ok": False, "configured": False, "error": "", "config": pub,
+                    "fans": [], "temps": [], "psu": []}
+        force = bool((query or {}).get("refresh"))
+        d = idrac_collect(cfg, force=force)
+        d["configured"] = True
+        d["config"] = pub
+        if (query or {}).get("sel"):
+            d["sel"] = idrac_sel(cfg, 5)
+        return d
+
+    def api_idrac_save(self, data):
+        cfg, err = idrac_save(self.data_dir, data if isinstance(data, dict) else {})
+        if err:
+            return {"ok": False, "error": err, "config": idrac_public(cfg)}
+        print("[fnmonitor] iDRAC 配置已更新：%s 地址=%s"
+              % ("开" if cfg.get("enabled") else "关", cfg.get("host") or "-"))
+        return {"ok": True, "error": "", "config": idrac_public(cfg),
+                "message": "已保存" if cfg.get("enabled") else "已保存（iDRAC 未启用）"}
+
+    def api_idrac_test(self, data):
+        """设置页「测试连接」：真连一次，把每一步的结果原样回给前端排障用。"""
+        cfg = idrac_load(self.data_dir)
+        data = data if isinstance(data, dict) else {}
+        # 允许用页面上还没保存的值直接试（密码留空则用已存的那份）
+        if data.get("host"):
+            cfg["host"] = str(data["host"]).strip()
+        if data.get("user"):
+            cfg["user"] = str(data["user"])
+        if data.get("password"):
+            cfg["password"] = str(data["password"])
+        if not cfg.get("host"):
+            return {"ok": False, "error": "请先填写 iDRAC 地址"}
+        root, err = _idrac_request(cfg, "", timeout=6)
+        out = {"ok": False, "host": cfg.get("host"), "steps": []}
+        if err:
+            out["error"] = err
+            out["steps"].append({"name": "服务根 /redfish/v1", "ok": False, "error": err})
+            return out
+        out["steps"].append({"name": "服务根 /redfish/v1", "ok": True,
+                             "detail": "Redfish %s" % (root.get("RedfishVersion") or "?")})
+        out["redfish"] = str(root.get("RedfishVersion") or "")
+        out["service_tag"] = str(((root.get("Oem") or {}).get("Dell") or {}).get("ServiceTag") or "")
+        ov = idrac_collect(cfg, force=True)
+        out["steps"].append({"name": "整机信息 /Systems", "ok": bool(ov.get("ok")),
+                             "error": ov.get("error") or ""})
+        out["overview"] = {k: ov.get(k) for k in
+                           ("model", "service_tag", "bios", "health", "power_state",
+                            "power_watts", "mem_gib", "fan_summary")}
+        sel = idrac_sel(cfg)
+        out["steps"].append({"name": "硬件日志 SEL", "ok": bool(sel.get("ok")),
+                             "detail": "共 %s 条，活跃告警 %s 条" % (sel.get("count") or 0,
+                                                                  len(sel.get("active") or [])),
+                             "error": sel.get("error") or ""})
+        out["sel"] = {"count": sel.get("count") or 0,
+                      "active": (sel.get("active") or [])[:5],
+                      "error": sel.get("error") or ""}
+        out["ok"] = bool(ov.get("ok"))
+        out["error"] = "" if out["ok"] else (ov.get("error") or "读取失败")
+        return out
+
+    def api_idrac_sel(self, query=None):
+        """硬件日志（SEL）最近若干条，含 Assert/Deassert 与活跃告警。"""
+        cfg = idrac_load(self.data_dir)
+        if not idrac_public(cfg)["host"]:
+            return {"ok": False, "error": "未配置 iDRAC", "entries": [], "active": []}
+        try:
+            limit = int((query or {}).get("limit") or IDRAC_SEL_LIMIT)
+        except Exception:
+            limit = IDRAC_SEL_LIMIT
+        return idrac_sel(cfg, limit=max(1, min(limit, 100)))
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
