@@ -76,6 +76,8 @@ const S = {
   online: null, fails: 0, lastOk: 0, cpuHigh: 0,
   live: { cpu: [], mem: [], temp: [], tempMb: [], power: [], rx: [], tx: [], dr: [], dw: [], fan: [], disk: [], load: [] },
   ctrBuf: {}, vmBuf: {}, diskBuf: {}, visible: new Set(),
+  /** 单盘 SMART 明细（按需拉取）：dev → {at, data, loading} */
+  smartDetail: {},
 };
 const BUF_N = 60;
 const push = (a, v, n = BUF_N) => { a.push(v); if (a.length > n) a.shift(); };
@@ -215,6 +217,21 @@ const API = {
   /** 所有写操作统一走这里：POST + JSON + CSRF 标记头 */
   post(url, body) { return this.req(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body || {}) }); },
 };
+/** 单盘 SMART 明细：只在详情面板打开时按需拉取，后端另有 5 分钟缓存；同一盘在途请求合并 */
+const SMART_DETAIL_TTL = 300000;
+const smartDetailOf = dev => (S.smartDetail[dev] || {}).data || null;
+function loadSmartDetail(dev) {
+  const c = S.smartDetail[dev];
+  if (c && c.loading) return c.p;
+  if (c && c.data && Date.now() - c.at < SMART_DETAIL_TTL) return Promise.resolve(c.data);
+  const slot = S.smartDetail[dev] = { at: Date.now(), data: null, loading: true };
+  slot.p = API.get('/api/smart?dev=' + encodeURIComponent(dev)).then(d => {
+    slot.data = d; slot.loading = false; return d;
+  }, e => {
+    slot.data = { error: String((e && e.message) || e) }; slot.loading = false; return slot.data;
+  });
+  return slot.p;
+}
 /** 轮询调度：一个 1s 心跳驱动所有任务；document.hidden 时整体暂停 */
 const Poll = {
   jobs: {},

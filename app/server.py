@@ -2912,6 +2912,33 @@ def smart_detail(dev):
     return d
 
 
+_SMART_CACHE = {}
+_SMART_TTL = 300.0
+# /api/smart 只接受内核设备名，避免把任意字符串拼进 smartctl 的 argv
+_DEV_NAME_RE = re.compile(r"^(?:sd[a-z]{1,3}|nvme\d+n\d+|hd[a-z]{1,3}|vd[a-z]{1,3})$")
+
+
+def smart_detail_cached(dev):
+    """按需读取单盘 SMART 明细（详情面板打开时才调用），5 分钟内复用上次结果。
+
+    与 60 秒后台采集循环解耦：后台只做 lsblk / sysfs 这类轻量采集，
+    重量级的 smartctl 留到用户真正打开详情时再跑，避免每轮扫全部硬盘。
+    休眠保护由 smart_detail 的 -n standby 保证：命中休眠盘直接返回 standby，
+    不会为了读详情把它唤醒。
+    """
+    now = time.time()
+    hit = _SMART_CACHE.get(dev)
+    if hit and now - hit[0] < _SMART_TTL:
+        d = dict(hit[1])
+        d["cached"] = True
+        return d
+    data = smart_detail(dev) or {}
+    _SMART_CACHE[dev] = (now, data)
+    d = dict(data)
+    d["cached"] = False
+    return d
+
+
 def read_net_dev():
     """读取 /proc/net/dev，返回接口累计字节。"""
     out = {}
@@ -6416,6 +6443,10 @@ class MonitorApp:
                 if path == "/api/overview":
                     self._send_bytes(app.api_overview())
                     return
+                if path == "/api/smart":
+                    # 按需读取单盘 SMART 明细：只在详情面板打开时由前端调用
+                    self._json(app.api_smart((qs.get("dev") or [""])[0]))
+                    return
                 if path == "/api/docker":
                     self._json(app.api_docker())
                     return
@@ -6688,6 +6719,22 @@ class MonitorApp:
         c = public_config(self.config)
         c["auth_has_password"] = c["auth_password_set"]
         return c
+
+    def api_smart(self, dev):
+        """按需读取单块硬盘的 SMART 明细（详情面板打开时才调用，5 分钟内复用缓存）。
+
+        只接受内核设备名形式的参数（sda / nvme0n1 / vda），避免把任意路径拼进
+        smartctl 的 argv；返回值直接透出 smart_detail 的解析结果，前端按协议取用。
+        """
+        dev = str(dev or "")
+        if not _DEV_NAME_RE.match(dev):
+            return {"error": "invalid device"}
+        if not is_linux():
+            return {"error": "unsupported platform"}
+        d = smart_detail_cached(dev)
+        d["dev"] = dev
+        d["ts"] = int(time.time())
+        return d
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。

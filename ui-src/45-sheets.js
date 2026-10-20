@@ -177,6 +177,50 @@ const SHEETS = {
       const x = collect(b);
       if (x.sp) x.sp.append(makeSpark());
       void sm0;
+      /* 单盘 SMART 明细按需读取：只有打开这个面板才会请求，不参与 60 秒循环。
+         后端另有一层 5 分钟缓存，重复点开不会反复跑 smartctl。 */
+      const paintSmart = () => {
+        const dd = disksOf(S.o).find(z => z.name === a); if (!dd) return;
+        const slp = isSleep(dd), sd = smartDetailOf(a), sas = !!(sd && sd.scsi);
+        const val = k => (sd && sd[k] != null ? sd[k] : dd[k]);
+        const temp = (sd && sd.temp_c != null) ? sd.temp_c : dd.temp;
+        const num = v => ok(v) ? esc(Number(v).toLocaleString()) : '<span class="faint">—</span>';
+        const flag = v => (+v > 0 ? 'warn' : true);
+        let rows = [['整体评估', dd.health ? esc(/PASS/i.test(dd.health) ? '通过' : dd.health) : '<span class="faint">未读取到</span>',
+          /FAIL/i.test(dd.health || '') ? 'crit' : /PASS|OK/i.test(dd.health || '') ? true : null]];
+        if (sas) {
+          // SAS/SCSI 没有 ATA 属性表：看增长缺陷表与错误计数器，ECC 计数会回绕只能参考
+          rows = rows.concat([
+            ['增长缺陷表', num(sd.grown_defects), sd.grown_defects != null ? flag(sd.grown_defects) : null],
+            ['待定缺陷', num(sd.scsi_pending_defects), sd.scsi_pending_defects != null ? flag(sd.scsi_pending_defects) : null],
+            ['不可纠正错误', num(sd.scsi_uncorrected), flag(sd.scsi_uncorrected || 0)],
+            ['ECC 纠正次数', num(sd.scsi_ecc) + ' <span class="faint">计数器会回绕</span>', null],
+            ['重读 / 重写', num(sd.scsi_rereads), null],
+            ['已处理数据', ok(sd.scsi_gb) ? esc(F.dsizeStr(sd.scsi_gb * 1e9)) : '<span class="faint">—</span>', null],
+          ]);
+        } else {
+          const cnt = SMART_KEYS.filter(([k]) => val(k) != null && val(k) !== '');
+          rows = rows.concat(cnt.map(([k, l]) => [l, esc(val(k)), flag(val(k))]));
+        }
+        rows = rows.concat([
+          ['通电时间', val('power_on_hours') ? `${esc(Number(val('power_on_hours')).toLocaleString())} 小时（${F.hours(val('power_on_hours'))}）` : '<span class="faint">—</span>', null],
+          ['温度', ok(temp) ? `${F.int(temp)}℃` : '<span class="faint">—</span>', ok(temp) && !slp ? (LV.dtemp(temp) || true) : null],
+          ['转速', val('rpm') ? esc(val('rpm')) : '<span class="faint">—</span>', null]]);
+        let hint = '';
+        if (sas) hint = slp ? '休眠中，明细待硬盘唤醒后读取' : '';
+        else if (!rows.some(r => r[2] === 'warn' || r[2] === 'crit') && !SMART_KEYS.some(([k]) => val(k) != null && val(k) !== '')) {
+          hint = slp ? '休眠中，扇区计数待硬盘唤醒后读取' : (sd && sd.error ? `SMART 明细读取失败：${esc(sd.error)}` : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）');
+        }
+        setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${slp && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
+          + (hint ? `<tr><td colspan="3" class="faint" style="font-size:12px">${hint}</td></tr>` : ''));
+        const extra = [];
+        if (sas && sd.manufactured) extra.push(['生产周期', esc(sd.manufactured)]);
+        setHTML(x.info, kvHTML([['型号', dash(vendorModel(dd))], ['序列号', `<span class="mono">${dash(dd.serial)}</span>`],
+          ['类型', KIND_TXT[diskKind(dd)]], ['硬盘容量', F.dsizeStr(dd.size)],
+          ['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`]].concat(extra)));
+      };
+      /* 休眠盘不发请求：smartctl -n standby 不会唤醒它，但省掉一次无意义的 IO */
+      if (!sl) loadSmartDetail(a).then(() => paintSmart());
       return o => {
         const d = disksOf(o).find(z => z.name === a); if (!d) return;
         const sm = smartState(d), sl2 = isSleep(d), hc = +d.total > 0;
@@ -186,15 +230,7 @@ const SHEETS = {
         setHTML(x.notes, (sl2 ? `<div class="note sleep">${ic('moon')}<span>这块硬盘已停转休眠。飞牛监控不会主动唤醒它：容量与温度为休眠前的最后读数，SMART 会在它下次被系统唤醒时更新。</span></div>` : '')
           + (sm.lv === 'warn' || sm.lv === 'crit' ? `<div class="note warn">${ic('alert')}<span><b>${esc(sm.text)}。</b>建议确认 ${esc((d.mounts || []).join('、') || '该盘上的数据')} 有备份，并留意数值是否继续增长。</span></div>` : '')
           + (!sl2 && LV.dtemp(d.temp) ? `<div class="note warn">${ic('temp')}<span>温度 ${F.int(d.temp)}℃，已超过${LV.dtemp(d.temp) === 'crit' ? '严重' : '警告'}阈值（${LV.dtemp(d.temp) === 'crit' ? TH.diskTempCrit : TH.diskTempWarn}℃）。</span></div>` : ''));
-        const cnt = SMART_KEYS.filter(([k]) => d[k] != null && d[k] !== '');
-        const rows = [['整体评估', d.health ? esc(/PASS/i.test(d.health) ? '通过' : d.health) : '<span class="faint">未读取到</span>', /FAIL/i.test(d.health || '') ? 'crit' : /PASS|OK/i.test(d.health || '') ? true : null]]
-          .concat(cnt.map(([k, l]) => [l, esc(d[k]), +d[k] > 0 ? 'warn' : true]))
-          .concat([['通电时间', d.power_on_hours ? `${esc(Number(d.power_on_hours).toLocaleString())} 小时（${F.hours(d.power_on_hours)}）` : '<span class="faint">—</span>', null],
-            ['温度', ok(d.temp) ? `${F.int(d.temp)}℃` : '<span class="faint">—</span>', ok(d.temp) && !sl2 ? (LV.dtemp(d.temp) || true) : null],
-            ['转速', d.rpm ? esc(d.rpm) : '<span class="faint">—</span>', null]]);
-        setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${sl2 && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
-          + (cnt.length ? '' : `<tr><td colspan="3" class="faint" style="font-size:12px">${sl2 ? '休眠中，扇区计数待硬盘唤醒后读取' : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）'}</td></tr>`));
-        setHTML(x.info, kvHTML([['型号', dash(vendorModel(d))], ['序列号', `<span class="mono">${dash(d.serial)}</span>`], ['类型', KIND_TXT[diskKind(d)]], ['硬盘容量', F.dsizeStr(d.size)], ['挂载点', `<span class="mono">${dash((d.mounts || []).join(', '))}</span>`]]));
+        paintSmart();
         if (x.sp) { const bb = S.diskBuf[d.name]; if (bb && bb.r.length > 1) x.sp.firstChild.set([{ values: bb.r }, { values: bb.w }], { min: 0 }); const io = ioOf(o, d.name); setText(x.rv, io ? F.rateStr(io.read_rate) : '--'); setText(x.wv, io ? F.rateStr(io.write_rate) : '--'); }
       };
     },

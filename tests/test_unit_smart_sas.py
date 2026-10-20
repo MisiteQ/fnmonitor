@@ -7,6 +7,7 @@ SAS 盘的 smartctl 输出字段名与 ATA/NVMe 完全不同（`Serial number` �
 
 纯 fixture（不需要真实 SAS 盘）。测试通过 mock run_cmd 喂入 smartctl 文本。
 """
+import time
 import unittest
 from unittest import mock
 
@@ -267,3 +268,49 @@ class SmartctlTempTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceNameWhitelistTest(unittest.TestCase):
+    """/api/smart 的设备名白名单：绝不能把任意字符串拼进 smartctl 的 argv。"""
+
+    GOOD = ("sda", "sdb", "sdz", "nvme0n1", "nvme12n3", "hda", "vda", "sdaa")
+    BAD = ("", "../etc/passwd", "/dev/sda", "sda/../x", "sda;rm -rf /", "sda ", "sd1", "nvme0", "sd")
+
+    def test_accepts_kernel_device_names(self):
+        for d in self.GOOD:
+            self.assertIsNotNone(srv._DEV_NAME_RE.match(d), d)
+
+    def test_rejects_injection_attempts(self):
+        for d in self.BAD:
+            self.assertIsNone(srv._DEV_NAME_RE.match(d), d)
+
+
+class SmartDetailCacheTest(unittest.TestCase):
+    """按需读取的两个承诺：5 分钟内不重复跑 smartctl；休眠盘结果不被缓存污染。"""
+
+    def test_second_call_hits_cache(self):
+        with mock.patch.object(srv, "is_linux", return_value=True), \
+                mock.patch.object(srv, "run_cmd", return_value=(SAS_OK, 0)) as rc:
+            srv._SMART_CACHE.clear()
+            a = srv.smart_detail_cached("sdz")
+            b = srv.smart_detail_cached("sdz")
+            self.assertEqual(rc.call_count, 1)
+            self.assertFalse(a.get("cached"))
+            self.assertTrue(b.get("cached"))
+
+    def test_expired_cache_refetches(self):
+        with mock.patch.object(srv, "is_linux", return_value=True), \
+                mock.patch.object(srv, "run_cmd", return_value=(SAS_OK, 0)) as rc:
+            srv._SMART_CACHE.clear()
+            srv.smart_detail_cached("sdz")
+            srv._SMART_CACHE["sdz"] = (time.time() - srv._SMART_TTL - 1, srv._SMART_CACHE["sdz"][1])
+            srv.smart_detail_cached("sdz")
+            self.assertEqual(rc.call_count, 2)
+
+    def test_cache_is_per_device(self):
+        with mock.patch.object(srv, "is_linux", return_value=True), \
+                mock.patch.object(srv, "run_cmd", return_value=(SAS_OK, 0)) as rc:
+            srv._SMART_CACHE.clear()
+            srv.smart_detail_cached("sdz")
+            srv.smart_detail_cached("sdy")
+            self.assertEqual(rc.call_count, 2)
