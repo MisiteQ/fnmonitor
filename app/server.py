@@ -2772,10 +2772,12 @@ def smart_detail(dev):
     # -n standby：盘处于 STANDBY 时 smartctl 直接 exit(2)、不执行任何命令，
     # 从而不会唤醒休眠硬盘；此处明确返回 standby 标记供调用方复用上一次结果
     out, rc = run_cmd(["smartctl", "-n", "standby", "-i", "-H", "-A", "/dev/" + dev], timeout=8)
-    if not out.strip():
-        return {}
+    # 先判 exit(2)：smartctl -n standby 命中休眠盘时执行 exit(2)，stdout 可能完全为空，
+    # 若先判空输出就会把「休眠」误判成「读取失败」
     if rc == 2 or "STANDBY" in out.upper() or "SLEEP" in out.upper():
         return {"standby": True}
+    if not out.strip():
+        return {}
     if rc != 0:
         return {}
     d = {"health": "未知"}
@@ -2787,9 +2789,10 @@ def smart_detail(dev):
         k, v = k.strip(), v.strip()
         if k == "SMART overall-health self-assessment test result" or k == "SMART Health Status":
             d["health"] = v
-        elif k == "Device Model" or k == "Model Number":
+        elif k == "Device Model" or k == "Model Number" or k == "Product":
             d["model2"] = v
-        elif k == "Serial Number":
+        elif k.lower() == "serial number":
+            # SAS 设备写 "Serial number"（小写 n），SATA/NVMe 写 "Serial Number"
             d["serial"] = v
         elif k == "Rotation Rate":
             d["rpm"] = v
@@ -2798,6 +2801,11 @@ def smart_detail(dev):
                 d["temp_c"] = int(v.split()[0])
             except Exception:
                 pass
+        elif k == "Current Drive Temperature" or k == "Drive Temperature":
+            # SAS/SCSI 温度写法：Current Drive Temperature:     33 C
+            m = re.search(r"(-?\d+)", v)
+            if m:
+                d["temp_c"] = int(m.group(1))
         elif k == "SMART/Health Information" or k == "SMART Attributes":
             pass
     # ATA 告警计数（硬盘 SMART 健康：Reallocated / Pending / Uncorrectable / UDMA CRC）
@@ -2830,6 +2838,67 @@ def smart_detail(dev):
                 d["temp_c"] = int(s.split()[1])
             except Exception:
                 pass
+    # SAS/SCSI：没有 ATA 属性表，健康数据在 grown defect list 与 Error counter log 里。
+    # 前端 SMART_KEYS 只认 ATA 键名，所以同时给出 SAS 原始键和映射键——不改前端也能判红黄绿：
+    #   grown_defects    -> reallocated_sectors（增长缺陷表，语义最接近 ATA 重映射）
+    #   scsi_uncorrected -> uncorrectable（read/write/verify 三向不可纠正错误合计）
+    scsi = False
+    grown = None
+    power_on = None
+    ecc_fast = ecc_delayed = rereads = corrected = algo = unc = 0
+    gigabytes = 0.0
+    in_err_log = False
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("Error counter log"):
+            in_err_log, scsi = True, True
+            continue
+        if in_err_log and not s:
+            in_err_log = False
+            continue
+        m = re.match(r"Elements in grown defect list:\s*(\d+)", s)
+        if m:
+            grown, scsi = int(m.group(1)), True
+            continue
+        m = re.match(r"Accumulated power on time,\s*hours:minutes\s+(\d+):(\d+)", s)
+        if m:
+            # SAS 写法：Accumulated power on time, hours:minutes 21456:23（含冒号，不能用 partition）
+            power_on, scsi = int(m.group(1)), True
+            continue
+        m = re.match(r"Manufactured in week\s+(\d+)\s+of year\s+(\d+)", s)
+        if m:
+            # SAS 写法：Manufactured in week 15 of year 2019
+            d["manufactured"] = "%s-W%s" % (m.group(2), m.group(1).zfill(2))
+            continue
+        if in_err_log:
+            m = re.match(r"(read|write|verify):\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)", s)
+            if m:
+                ecc_fast += int(m.group(2))
+                ecc_delayed += int(m.group(3))
+                rereads += int(m.group(4))
+                corrected += int(m.group(5))
+                algo += int(m.group(6))
+                try:
+                    gigabytes += float(m.group(7))
+                except Exception:
+                    pass
+                unc += int(m.group(8))
+    if scsi:
+        d["scsi"] = True
+        if grown is not None:
+            d["grown_defects"] = grown
+            d.setdefault("reallocated_sectors", grown)
+        d["scsi_uncorrected"] = unc
+        if unc:
+            d.setdefault("uncorrectable", unc)
+        if ecc_fast or ecc_delayed or rereads:
+            d["scsi_ecc"] = ecc_fast + ecc_delayed
+            d["scsi_rereads"] = rereads
+        if corrected or algo or gigabytes:
+            d["scsi_corrected"] = corrected
+            d["scsi_gb"] = round(gigabytes, 3)
+        if power_on is not None:
+            d["power_on_hours"] = str(power_on)
     return d
 
 
@@ -2967,18 +3036,25 @@ def smartctl_temp(dev):
         return None
     for line in out.splitlines():
         if "Temperature_Celsius" in line:
+            # 标准列序：ID# NAME FLAG VALUE WORST THRESH TYPE UPDATED WHEN_FAILED RAW_VALUE
+            # RAW_VALUE 位于第 10 列（parts[9]），且可能是 "42 (Min/Max 20/50)" 这种形式
             parts = line.split()
-            if len(parts) >= 8:
-                try:
-                    return int(parts[7])  # ATA raw 值
-                except Exception:
-                    pass
+            if len(parts) >= 10:
+                m = re.match(r"(\d+)", parts[9])
+                if m:
+                    return int(m.group(1))
         if line.strip().startswith("Temperature:"):
             parts = line.split()
             try:
                 return int(parts[1])  # NVMe 格式
             except Exception:
                 pass
+        st = line.strip()
+        if st.startswith("Current Drive Temperature:") or st.startswith("Drive Temperature:"):
+            # SAS/SCSI 格式：Current Drive Temperature:     33 C
+            m = re.search(r"(-?\d+)\s*C", st)
+            if m:
+                return int(m.group(1))
     return None
 
 
