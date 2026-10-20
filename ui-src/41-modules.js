@@ -157,19 +157,13 @@ defineModule({
           <div class="ch-top"><span class="pwr" title="电源"><i></i></span><span data-ref="chName"></span><span class="vent"></span><span data-ref="chModel">NAS</span></div>
           <div class="bays" data-ref="bays"></div>
         </div>
-        <div class="nas-foot"><span><i class="led-key"></i>读写活动</span><span><i class="led-key warn"></i>需要留意</span><span>${ic('moon')}休眠中</span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
+        <div class="nas-foot"><span><i class="led-key"></i>正常</span><span><i class="led-key warn"></i>留意</span><span><i class="led-key crit"></i>故障</span><span><i class="led-key off"></i>休眠 / 未巡检</span><span class="faint scan-ago" data-ref="scanAgo"></span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
       </div>
       <div data-ref="raid"></div>`;
     m.x = collect(body); m.bays = {}; m.io = {};
-    // 活动指示灯：闪烁概率 ∝ log(IO 速率)；仅在总览可见、版块在视口内时运行
-    setInterval(() => {
-      if (S.page !== 'overview' || document.hidden || !m.vis || S.editing) return;
-      for (const name in m.bays) {
-        const el = m.bays[name], led = el._r.led, rate = m.io[name] || 0;
-        const on = el.dataset.st !== 'standby' && rate > 0 && (reduced() ? true : Math.random() < clamp(Math.log10(1 + rate / 65536) / 3.2, 0.05, 0.92));
-        if (led._on !== on) { led._on = on; led.classList.toggle('on', on); }
-      }
-    }, 220);
+    /* 原来这里有一个 220ms 的 setInterval，按 /proc/diskstats 的读写速率抖动盘位
+       指示灯——面板常开时每秒 4 次遍历全部盘位改 class。改为巡检分级后指示灯只表示
+       健康状态（颜色），不再表示活动，这个定时器整体删除。 */
   },
   buildBays(dd, m) {
     m.x.bays.innerHTML = ''; m.bays = {};
@@ -209,21 +203,26 @@ defineModule({
     m.io = {}; (o.diskio || []).forEach(z => { m.io[z.name] = (+z.read_rate || 0) + (+z.write_rate || 0); });
     dd.forEach(d => {
       const el = m.bays[d.name]; if (!el) return; const r = el._r;
-      const sm = smartState(d), sl = isSleep(d), warn = sm.lv === 'warn' || sm.lv === 'crit';
-      const stt = sl ? 'standby' : warn ? 'warn' : 'ok';
-      if (el.dataset.st !== stt) el.dataset.st = stt;
+      // 健康分级只读巡检缓存（/api/disk_health），不再每轮算 SMART、也不跑 smartctl
+      const bs = bayState(d), sl = bs.lv === 'standby';
+      if (el.dataset.st !== bs.lv) el.dataset.st = bs.lv;
       setText(r.t, sl || !ok(d.temp) ? '--' : F.int(d.temp)); inkTo(r.t, sl || !ok(d.temp) ? '' : rampInk(+d.temp, 'dtemp'));
       const hasCap = +d.total > 0;
-      el._g.set(hasCap ? +d.percent / 100 : 0, LV.cap(d.percent) || (warn ? 'warn' : ''), 'cap');
+      el._g.set(hasCap ? +d.percent / 100 : 0, bs.lv === 'crit' ? 'crit' : bs.lv === 'warn' ? 'warn' : (LV.cap(d.percent) || ''), 'cap');
       setText(r.cap, hasCap ? `${F.int(d.percent)}% · ${F.dsizeStr(d.used)} / ${F.dsizeStr(d.total)}` : `${F.dsizeStr(d.size)} · 未挂载`);
-      el.title = sl ? `${d.name} 已停转，监控不会唤醒它` : `${d.name} · ${sm.text}`;
+      el.title = sl ? `${d.name} 已停转，监控不会唤醒它`
+        : `${d.name} · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
     });
+    const ago = scanAgo();
+    if (x.scanAgo) setText(x.scanAgo, S.diskHealth ? (ago ? `巡检于 ${ago}` : '尚未巡检') : '');
     // 阵列（mdadm / 阵列卡）概要
     const raid = o.raid || [], rc = o.raidcard || {};
     setHTML(x.raid, raid.length || (rc.type && rc.type !== 'none') ? `<div class="card pad raid-sum tap" data-sheet="storage" role="button" tabindex="0"><div class="label">${ic('server')}阵列<span class="faint" style="margin-left:auto;font-weight:400">${esc(rc.label || '')}</span></div><div class="raid-chips">${raid.map(r => `<span class="pill ${(r.members || []).some(z => /\(F\)/.test(z)) ? 'crit' : 'ok'}"><span class="dot"></span>${esc(r.device)} · ${esc(r.status)}</span>`).join('')}${(rc.controllers || []).map(c => (c.vd || []).map(v => `<span class="pill ${v.badge === 'off' ? 'crit' : v.badge === 'on' ? 'ok' : ''}"><span class="dot"></span>VD${esc(v.vd)} ${esc(v.type || '')} · ${esc(v.state_label || v.state || '--')}</span>`).join('')).join('')}${rc.type && rc.type !== 'none' && !(rc.controllers || []).length ? `<span class="pill">${esc(rc.detail || rc.error || '未读取到阵列卡详情')}</span>` : ''}</div></div>` : '');
-    const warnD = dd.filter(d => ['warn', 'crit'].includes(smartState(d).lv)), sleepD = dd.filter(isSleep);
+    const warnD = dd.filter(d => ['warn', 'crit'].includes(bayState(d).lv)), sleepD = dd.filter(isSleep);
     let dek = !dd.length ? '未检测到物理硬盘。' : `${dd.length} 块硬盘${has ? `，存储池共 <b>${F.dsizeStr(o.disk_size)}</b>，已用 ${F.int(o.disk_total)}%` : ''}。`;
-    if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(smartState(warnD[0]).text)}</span>，建议确认备份。`;
+    const unknownD = dd.filter(d => bayState(d).lv === 'unknown');
+    if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(bayState(warnD[0]).text)}${bayState(warnD[0]).detail ? ' · ' + esc(bayState(warnD[0]).detail) : ''}</span>，建议确认备份。`;
+    if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
     if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
     setHTML(m.r.dek, dek);
   },

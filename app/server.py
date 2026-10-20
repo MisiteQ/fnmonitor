@@ -63,7 +63,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -346,6 +346,9 @@ VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "
 # 开启后容量 statvfs / SMART / 温度 / 历史库写入 / 应用目录扫描等磁盘访问
 # 对已 STANDBY 的硬盘一律跳过或走缓存，避免周期性轮询把机械硬盘唤醒
 RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10}
+# 巡检结果的内存副本：dev → 与 smart_detail 同形状的 dict。
+# 60 秒采集循环与详情面板都从这里取，避免反复跑 smartctl（真正的读盘只发生在后台巡检线程）。
+_DISK_HEALTH_MEM = {}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -770,10 +773,14 @@ def collect_disks_detail(prev=None):
         # 未知（NVMe / 读取失败）为 None
         for _k in SMART_COUNTER_KEYS:
             entry[_k] = old.get(_k)
-        # SMART 健康 / 转速 / 通电时长（最多对前 8 块盘读取；休眠盘跳过，
-        # smartctl -n standby 虽不唤醒盘，但此时直接复用上一次活跃值即可）
-        if state != "standby" and len(result) < 8:
-            sd = smart_detail(name)
+        # SMART 健康 / 转速 / 通电时长 / 各类计数：优先取巡检缓存（后台线程每 6 小时
+        # 全盘扫一次），这样 60 秒采集循环对任何盘数都不再跑 smartctl——原来「只读前
+        # 8 块盘」的上限就是为了压制这个开销，缓存到位后上限没有存在意义，直接解掉。
+        # 巡检还没覆盖到的盘（首装的前 60 秒）沿用旧行为：最多补读 8 块，避免首屏空白。
+        if state != "standby":
+            sd = _DISK_HEALTH_MEM.get(name)
+            if sd is None:
+                sd = smart_detail(name) if len(result) < 8 else {}
             if sd.get("standby"):
                 entry["state"] = "standby"
                 entry["standby"] = True
@@ -2897,6 +2904,8 @@ def smart_detail(dev):
         d["scsi_uncorrected"] = unc
         if unc:
             d.setdefault("uncorrectable", unc)
+        if d.get("scsi_pending_defects") is not None:
+            d.setdefault("pending_sectors", d["scsi_pending_defects"])
         if ecc_fast or ecc_delayed or rereads:
             # 注意：errors_corrected_by_eccfast 是 32 位计数器，会回绕到 40 亿量级，
             # 只反映设备读过多少数据、不反映盘的健康度——真机实测同型号三块盘分别为
@@ -2937,6 +2946,263 @@ def smart_detail_cached(dev):
     d = dict(data)
     d["cached"] = False
     return d
+
+
+# ===========================================================================
+# 硬盘巡检：后台定时全盘扫 SMART → 分级入库 → 盘位卡片只读缓存
+# ===========================================================================
+# 为什么必须做成后台线程（而不是像 sashealth 那样在 /api/data 里懒触发）：
+#   sashealth 的自动快照写在 collect() 内部，由页面请求驱动，没人打开页面就永不
+#   检测——在它自己是「手动打开查看」的工具，问题不大；合进常驻监控面板后，这个
+#   懒触发会直接让告警失效。所以巡检独立成线程，看数据按需、发告警定时。
+#
+# 分级口径（SAS / ATA 统一）：
+#   crit     SMART 自检 FAIL / 不可纠正错误 > 0 / 缺陷较上次增长 ≥ 10
+#   warn     增长缺陷 > 0 或待处理扇区 > 0（含小幅增长）
+#   ok       计数全 0 且 SMART 给出 PASSED
+#   unknown  读不到（休眠未唤醒、盘不支持 SMART、smartctl 不可用）
+# 注意 ECC 计数（scsi_ecc）不参与判定：它是 32 位计数器会回绕，只反映读过多少数据。
+DISK_SCAN_PRESETS_H = (6, 12, 24, 72, 168)   # 与 sashealth 自动快照档位一致
+DISK_SCAN_GROWTH_CRIT = 10                   # 一次巡检内缺陷增长到这个数就判故障
+_disk_scan_state = {"running": False, "last_ts": 0.0, "summary": {}, "error": ""}
+_DISK_SCAN_LOCK = threading.Lock()
+
+
+def disk_scan_interval_h(config):
+    """巡检间隔（小时），0 表示关闭。非法值就近取档位，最小 6 小时。"""
+    try:
+        if int((config or {}).get("disk_scan_enabled", DEFAULT_CONFIG["disk_scan_enabled"])) == 0:
+            return 0
+        raw = int((config or {}).get("disk_scan_interval_h", DEFAULT_CONFIG["disk_scan_interval_h"]))
+    except Exception:
+        raw = DEFAULT_CONFIG["disk_scan_interval_h"]
+    if raw <= 0:
+        return 0
+    return min(DISK_SCAN_PRESETS_H, key=lambda x: abs(x - raw))
+
+
+def _nz(v):
+    """把计数归一成 int / None，避免 0 与 None 在「有无变化」比较里来回跳。"""
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(v))
+    except Exception:
+        return None
+
+
+def grade_disk(rec, prev=None):
+    """给单盘定级，返回 (grade, reasons)。rec 为 smart_detail() 结果。
+
+    prev 是上一次巡检记录（disk_health 行），用于判定缺陷增长。"""
+    if not rec:
+        return "unknown", ["未读取到 SMART"]
+    if rec.get("error"):
+        return "unknown", ["读取失败：%s" % rec["error"]]
+    health = str(rec.get("health") or "").strip()
+    unc = _nz(rec.get("uncorrectable")) or 0
+    reall = _nz(rec.get("reallocated_sectors"))
+    pend = _nz(rec.get("pending_sectors")) or 0
+    if re.search(r"FAIL", health, re.I):
+        return "crit", ["SMART 自检未通过"]
+    if unc > 0:
+        return "crit", ["不可纠正错误 %d 个" % unc]
+    delta = None
+    if reall is not None and prev is not None:
+        old = _nz(prev.get("defects"))
+        if old is not None:
+            delta = reall - old
+    if delta is not None and delta >= DISK_SCAN_GROWTH_CRIT:
+        return "crit", ["缺陷增长 %+d 个（%d → %d）" % (delta, reall - delta, reall)]
+    reasons = []
+    if reall:
+        reasons.append("增长缺陷 %d 个" % reall)
+    if pend:
+        reasons.append("待处理扇区 %d 个" % pend)
+    if delta and delta > 0:
+        reasons.append("较上次 +%d" % delta)
+    if reasons:
+        # 有计数但没给总体评估时也按计数判，不要因为缺 PASSED 就退回 unknown
+        return "warn", reasons
+    if not health:
+        return "unknown", ["SMART 未提供总体评估"]
+    return "ok", ["SMART 通过"]
+
+
+def disk_scan_devices():
+    """要巡检的物理盘：lsblk -d 只列整盘，排除分区 / loop / 只读 / 可移动介质。"""
+    out, rc = run_cmd(["lsblk", "-b", "-J", "-d", "-o", "NAME,TYPE,SIZE,RO,RM,MODEL"], timeout=10)
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        data = json.loads(out)
+    except Exception:
+        return []
+    devs = []
+    for b in data.get("blockdevices", []) or []:
+        name = str(b.get("name") or "")
+        if str(b.get("type") or "").lower() != "disk":
+            continue
+        if str(b.get("ro")) in ("1", "True", "true") or str(b.get("rm")) in ("1", "True", "true"):
+            continue
+        if not _DEV_NAME_RE.match(name):
+            continue
+        devs.append({"dev": name, "size": _nz(b.get("size")) or 0, "model": str(b.get("model") or "").strip()})
+    return devs
+
+
+def _health_row_rec(r):
+    """disk_health 行 → smart_detail 同形状的 dict，供采集循环与详情面板复用。"""
+    hrs = r.get("power_on_hours")
+    return {
+        "health": r.get("health") or "",
+        "serial": r.get("serial") or "",
+        "model2": r.get("model") or "",
+        "temp_c": r.get("temp_c"),
+        "power_on_hours": "" if hrs is None else str(hrs),
+        "rpm": r.get("rpm") or "",
+        "manufactured": r.get("manufactured") or "",
+        "reallocated_sectors": r.get("defects"),
+        "pending_sectors": r.get("pending_defects"),
+        "uncorrectable": r.get("uncorr"),
+        "scsi": (r.get("proto") or "") == "SAS",
+    }
+
+
+def disk_scan_once(db, config=None):
+    """执行一次全盘巡检并入库。返回摘要，异常不外抛（线程里靠它活命）。"""
+    if not is_linux():
+        return {"ok": False, "error": "仅支持 Linux"}
+    if not _DISK_SCAN_LOCK.acquire(False):
+        return {"ok": False, "error": "已有巡检正在进行"}
+    try:
+        ts = time.time()
+        _disk_scan_state["running"] = True
+        try:
+            prev = db.disk_health_read() if db else {}
+        except Exception:
+            prev = {}
+        items, skipped, errors = [], [], []
+        for d in disk_scan_devices():
+            dev = d["dev"]
+            try:
+                rec = smart_detail(dev) or {}
+            except Exception as e:
+                errors.append("%s 读取异常：%s" % (dev, e))
+                continue
+            # 顺手刷新按需读的缓存：巡检刚读到的数据，详情面板不必再跑一次 smartctl
+            if rec and not rec.get("standby"):
+                _SMART_CACHE[dev] = (ts, rec)
+                _DISK_HEALTH_MEM[dev] = rec
+            old = prev.get(dev) or {}
+            if rec.get("standby"):
+                # 休眠盘不唤醒：沿用上次分级与计数，只标记状态
+                if old:
+                    item = dict(old)
+                    item.update({"dev": dev, "standby": True})
+                    items.append(item)
+                else:
+                    items.append({"dev": dev, "standby": True, "grade": "unknown",
+                                  "scan_ts": ts, "detail": "休眠中，尚未读取过"})
+                skipped.append(dev)
+                continue
+            grade, reasons = grade_disk(rec, old if old else None)
+            items.append({
+                "dev": dev,
+                "serial": rec.get("serial") or "",
+                "model": rec.get("model2") or d.get("model") or "",
+                "proto": "SAS" if rec.get("scsi") else "",
+                "health": str(rec.get("health") or ""),
+                "grade": grade,
+                "defects": _nz(rec.get("reallocated_sectors")),
+                "pending_defects": _nz(rec.get("pending_sectors")),
+                "uncorr": _nz(rec.get("uncorrectable")),
+                "temp_c": _nz(rec.get("temp_c")),
+                "power_on_hours": _nz(rec.get("power_on_hours")),
+                "rpm": str(rec.get("rpm") or ""),
+                "manufactured": str(rec.get("manufactured") or ""),
+                "standby": False,
+                "scan_ts": ts,
+                "detail": "；".join(reasons),
+            })
+        changed = []
+        if db:
+            try:
+                changed = db.disk_health_save(items, prev)
+            except Exception as e:
+                errors.append("写库失败：%s" % e)
+        summary = {
+            "ok": True, "ts": ts, "total": len(items), "changed": changed,
+            "skipped_standby": skipped, "errors": errors,
+            "counts": {g: sum(1 for i in items if i.get("grade") == g) for g in ("ok", "warn", "crit", "unknown")},
+        }
+        _disk_scan_state.update({"last_ts": ts, "summary": summary, "error": ""})
+        return summary
+    except Exception as e:
+        traceback.print_exc()
+        _disk_scan_state["error"] = str(e)
+        return {"ok": False, "error": str(e)}
+    finally:
+        _disk_scan_state["running"] = False
+        _DISK_SCAN_LOCK.release()
+
+
+class DiskScanner(threading.Thread):
+    """巡检线程：按配置间隔全盘扫一遍，首次上电 60 秒后先补扫一次。
+
+    60 秒延迟是刻意的：别让人刚装完/刚重启就看到一片「未巡检」，也不必等满一个周期。
+    """
+
+    STARTUP_DELAY = 60
+
+    def __init__(self, db, config):
+        super().__init__(daemon=True, name="fnmonitor-disk-scan")
+        self.db = db
+        self.config = config
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        # 重启后沿用库里上一次的巡检时间与结果：否则每次重启都会重新全盘扫一遍，
+        # 而且首屏会退回到「只有前 8 块盘有 SMART」
+        try:
+            rows = self.db.disk_health_read() if self.db else {}
+            last = max([float(r.get("scan_ts") or 0) for r in rows.values()] or [0])
+            if last:
+                _disk_scan_state["last_ts"] = last
+            for dev, r in (rows or {}).items():
+                if not r.get("standby") and dev not in _DISK_HEALTH_MEM:
+                    _DISK_HEALTH_MEM[dev] = _health_row_rec(r)
+        except Exception:
+            pass
+        startup = self.STARTUP_DELAY
+        while not self._stop.is_set():
+            try:
+                hours = disk_scan_interval_h(self.config)
+                if hours <= 0:
+                    if self._stop.wait(60):
+                        return
+                    continue
+                last = float(_disk_scan_state.get("last_ts") or 0)
+                if last:
+                    remain = last + hours * 3600 - time.time()
+                    if remain > 0:
+                        # 分段睡，配置改了（间隔调短/关闭）能很快生效
+                        if self._stop.wait(min(remain, 300)):
+                            return
+                        continue
+                elif startup:
+                    if self._stop.wait(startup):
+                        return
+                    startup = 0
+                    continue
+                disk_scan_once(self.db, self.config)
+            except Exception:
+                traceback.print_exc()
+                if self._stop.wait(300):
+                    return
 
 
 def read_net_dev():
@@ -4662,6 +4928,19 @@ class History:
                 conn.execute("""CREATE TABLE IF NOT EXISTS daily_summary (
                     day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL,
                     PRIMARY KEY (day, metric))""")
+                # 硬盘巡检：最新结果（盘位卡片只读这里，不触发任何 smartctl）
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_health (
+                    dev TEXT PRIMARY KEY,
+                    serial TEXT, model TEXT, proto TEXT, health TEXT, grade TEXT,
+                    defects INTEGER, pending_defects INTEGER, uncorr INTEGER,
+                    temp_c INTEGER, power_on_hours INTEGER, rpm TEXT, manufactured TEXT,
+                    standby INTEGER DEFAULT 0, scan_ts REAL, changed_ts REAL, detail TEXT)""")
+                # 巡检历史：只有「等级或计数发生变化」才落一行，避免 14 盘 × 每天 4 次
+                # 把趋势表撑爆；无变化的巡检只更新 disk_health 的 scan_ts
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_health_hist (
+                    ts REAL NOT NULL, dev TEXT NOT NULL, grade TEXT,
+                    defects INTEGER, pending_defects INTEGER, uncorr INTEGER)""")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_dhh ON disk_health_hist(dev, ts)")
                 # 自愈：v2.8.0 前的历史写入曾把 (指标名, 时间戳) 两列互换（ts 列存了文本），
                 # 这些脏行永远查不出来还会拖慢查询，启动时一次性清除
                 conn.execute("DELETE FROM metrics WHERE typeof(ts) != 'real'")
@@ -4670,6 +4949,100 @@ class History:
                 conn.close()
         except Exception:
             traceback.print_exc()
+
+    def disk_health_read(self):
+        """全部硬盘的最新巡检结果（dev -> dict）。
+
+        休眠时返回上一次的缓存，不为了显示盘位分级去 SELECT 把机械盘唤醒。"""
+        if self._asleep():
+            got = self._memo("disk_health", None)
+            return got if isinstance(got, dict) else {}
+        rows = {}
+        try:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                for r in conn.execute("SELECT * FROM disk_health").fetchall():
+                    d = dict(r)
+                    dev = d.get("dev")
+                    if dev:
+                        rows[dev] = d
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        self._memo("disk_health", rows)
+        return rows
+
+    def disk_health_save(self, items, prev):
+        """写入本次巡检结果；仅当等级或计数变化时补一条历史。
+
+        items: [{dev, serial, model, proto, health, grade, defects, pending_defects,
+                 uncorr, temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, detail}]
+        返回发生变化的 dev 列表（供通知使用）。"""
+        changed = []
+        for it in items or []:
+            old = prev.get(it["dev"]) or {}
+            sig = ("grade", "defects", "pending_defects", "uncorr")
+            if any(old.get(k) != it.get(k) for k in sig):
+                changed.append(it["dev"])
+        try:
+            conn = self._connect(write=True)
+            try:
+                conn.executemany(
+                    """INSERT INTO disk_health
+                       (dev, serial, model, proto, health, grade, defects, pending_defects, uncorr,
+                        temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, changed_ts, detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(dev) DO UPDATE SET
+                         serial=excluded.serial, model=excluded.model, proto=excluded.proto,
+                         health=excluded.health, grade=excluded.grade, defects=excluded.defects,
+                         pending_defects=excluded.pending_defects, uncorr=excluded.uncorr,
+                         temp_c=excluded.temp_c, power_on_hours=excluded.power_on_hours,
+                         rpm=excluded.rpm, manufactured=excluded.manufactured,
+                         standby=excluded.standby, scan_ts=excluded.scan_ts,
+                         changed_ts=COALESCE(disk_health.changed_ts, excluded.changed_ts),
+                         detail=excluded.detail""",
+                    [(it.get("dev"), it.get("serial"), it.get("model"), it.get("proto"),
+                      it.get("health"), it.get("grade"), it.get("defects"), it.get("pending_defects"),
+                      it.get("uncorr"), it.get("temp_c"), it.get("power_on_hours"), it.get("rpm"),
+                      it.get("manufactured"), 1 if it.get("standby") else 0, it.get("scan_ts"),
+                      it.get("scan_ts"), it.get("detail")) for it in items])
+                hist = [(it.get("scan_ts"), it.get("dev"), it.get("grade"), it.get("defects"),
+                         it.get("pending_defects"), it.get("uncorr"))
+                        for it in items if it["dev"] in changed and not it.get("standby")]
+                if hist:
+                    conn.executemany(
+                        "INSERT INTO disk_health_hist(ts, dev, grade, defects, pending_defects, uncorr)"
+                        " VALUES (?,?,?,?,?,?)", hist)
+                # 历史只留最近 400 天，够看一年趋势又不会无限增长
+                conn.execute("DELETE FROM disk_health_hist WHERE ts < ?", (time.time() - 400 * 86400,))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        # 有新结果：清掉休眠读缓存，下次面板轮询读到的是最新一份
+        with self._memo_lock:
+            self._read_memo.pop("disk_health", None)
+        return changed
+
+    def disk_health_hist(self, dev, limit=60):
+        """单盘巡检历史（新→旧），用于详情面板显示「较上次 +N」。"""
+        if self._asleep():
+            return []
+        try:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute(
+                    "SELECT * FROM disk_health_hist WHERE dev=? ORDER BY ts DESC LIMIT ?",
+                    (dev, int(limit)))
+                return [dict(r) for r in cur.fetchall()]
+            finally:
+                conn.close()
+        except Exception:
+            return []
 
     def write(self, rows):
         if not rows:
@@ -6447,6 +6820,10 @@ class MonitorApp:
                     # 按需读取单盘 SMART 明细：只在详情面板打开时由前端调用
                     self._json(app.api_smart((qs.get("dev") or [""])[0]))
                     return
+                if path == "/api/disk_health":
+                    # 盘位健康分级：只读巡检缓存，不触发 smartctl
+                    self._json(app.api_disk_health())
+                    return
                 if path == "/api/docker":
                     self._json(app.api_docker())
                     return
@@ -6735,6 +7112,55 @@ class MonitorApp:
         d["dev"] = dev
         d["ts"] = int(time.time())
         return d
+
+    def api_disk_health(self):
+        """盘位卡片的健康分级（只读巡检缓存，不触发任何 smartctl）。
+
+        首装 / 缓存为空时全部为 unknown —— 绝不能显示「正常」，那是在骗人。"""
+        now = time.time()
+        rows = {}
+        try:
+            rows = self.collector.db.disk_health_read() or {}
+        except Exception:
+            rows = {}
+        hours = disk_scan_interval_h(self.config)
+        items, last = {}, 0.0
+        for dev, r in rows.items():
+            ts = float(r.get("scan_ts") or 0)
+            last = max(last, ts)
+            items[dev] = {
+                "dev": dev,
+                "grade": r.get("grade") or "unknown",
+                "detail": r.get("detail") or "",
+                "health": r.get("health") or "",
+                "serial": r.get("serial") or "",
+                "model": r.get("model") or "",
+                "proto": r.get("proto") or "",
+                "defects": r.get("defects"),
+                "pending_defects": r.get("pending_defects"),
+                "uncorr": r.get("uncorr"),
+                "temp_c": r.get("temp_c"),
+                "power_on_hours": r.get("power_on_hours"),
+                "rpm": r.get("rpm") or "",
+                "manufactured": r.get("manufactured") or "",
+                "standby": bool(r.get("standby")),
+                "scan_ts": ts,
+                "age": int(now - ts) if ts else None,
+            }
+        state = dict(_disk_scan_state)
+        return {
+            "ok": True,
+            "enabled": hours > 0,
+            "interval_h": hours,
+            "presets": list(DISK_SCAN_PRESETS_H),
+            "last_ts": last or state.get("last_ts") or 0,
+            "next_ts": ((last or state.get("last_ts") or 0) + hours * 3600) if hours else 0,
+            "scanning": bool(state.get("running")),
+            "summary": state.get("summary") or {},
+            "error": state.get("error") or "",
+            "items": items,
+            "now": now,
+        }
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
@@ -7321,9 +7747,18 @@ class MonitorApp:
             self._weather_cache = None  # 位置变化后清缓存
         onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
-                  "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe"):
+                  "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
+                  "disk_scan_enabled"):
             if k in data:
                 updates[k] = onoff(data[k])
+        # 硬盘巡检间隔：0 = 关闭；其余就近取档位（6/12/24/72/168 小时）
+        if "disk_scan_interval_h" in data:
+            try:
+                h = int(data["disk_scan_interval_h"])
+            except Exception:
+                h = DEFAULT_CONFIG["disk_scan_interval_h"]
+            updates["disk_scan_interval_h"] = 0 if h <= 0 else min(
+                DISK_SCAN_PRESETS_H, key=lambda x: abs(x - h))
         for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
                   "power_rate_yuan", "power_base_w"):
             if k in data:
@@ -8305,11 +8740,17 @@ def load_config(data_dir):
                 cfg[k] = int(user[k])
             except Exception:
                 pass
-    # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测）必须随配置恢复
+    # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测 / 硬盘巡检）必须随配置恢复
     for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
-              "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe"):
+              "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
+              "disk_scan_enabled"):
         if k in user:
             cfg[k] = onoff(user[k])
+    if "disk_scan_interval_h" in user:
+        try:
+            cfg["disk_scan_interval_h"] = int(user["disk_scan_interval_h"])
+        except Exception:
+            pass
     for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
               "power_rate_yuan", "power_base_w"):
         if k in user:
@@ -8583,9 +9024,13 @@ def main():
     except Exception as e:
         print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
     app.collector.start()
+    # 硬盘巡检独立线程：与采集循环解耦，全盘 smartctl 不再拖慢 10 秒采样
+    scanner = DiskScanner(app.collector.db, config)
+    scanner.start()
 
     def shutdown(sig, frame):
         app.collector.stop()
+        scanner.stop()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
         sys.exit(0)
 

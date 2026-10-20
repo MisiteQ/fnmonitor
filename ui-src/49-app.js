@@ -119,6 +119,11 @@ Poll.add('overview', async () => {
     if (S.online === false || !S.o) { if (S.fails >= 2) S.online = false; setStatus(); renderNow(); }
   }
 }, () => S.online === false ? Math.min(30000, 3000 * Math.pow(1.6, S.fails)) : S.page === 'overview' ? 5000 : 15000);
+/* 巡检结果：盘位卡片的健康分级来源。60 秒拉一次（后端只读缓存，不会触发 smartctl）；
+   总线别接口不受影响，失败时保留上一次结果，不把分级清空成「未巡检」。 */
+Poll.add('diskhealth', async () => {
+  try { S.diskHealth = await API.get('/api/disk_health'); renderNow(); } catch (e) { /* 保留旧值 */ }
+}, 60000, () => S.page === 'overview' || sheetIs('disk'));
 Poll.add('docker', async () => { S.docker = await API.get('/api/docker'); dockerAt = Date.now(); feedDocker(S.docker); renderNow(); }, 10000, () => S.page === 'docker' || sheetIs('ctr'));
 Poll.add('vms', async () => {
   S.vms = await API.get('/api/vms'); feedVms(S.vms); if (S.vms.installed) setVmTab(true);
@@ -137,7 +142,7 @@ Poll.add('config', async () => { await loadConfig(); syncSettings(); }, 1800000)
 function onPageChange(p) {
   if (p === 'docker') Poll.runAll(['docker', 'ports', 'apps']);
   if (p === 'vms') Poll.run('vms');
-  if (p === 'overview') Poll.runAll(['overview']);
+  if (p === 'overview') Poll.runAll(['overview', 'diskhealth']);
 }
 function globalRefresh() {
   const b = $('#btnRefresh'); b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 800);

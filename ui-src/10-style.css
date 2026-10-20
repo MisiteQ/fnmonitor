@@ -1233,6 +1233,12 @@ a { color: var(--ink-1); }
 .bay-warn { display: none; color: var(--warn-fill); }
 .bay-warn .i { width: 13px; height: 13px; }
 .bay[data-st="warn"] .bay-warn { display: inline-flex; }
+/* 巡检分级：故障（crit）与未巡检（unknown）——之前只有 ok/warn/standby 三态 */
+.bay[data-st="crit"] .bay-warn { display: inline-flex; color: var(--crit); }
+.bay[data-st="crit"] .bay-led { background: var(--crit); box-shadow: 0 0 7px var(--crit); }
+.bay[data-st="crit"] .bay-led.on { background: var(--crit); box-shadow: 0 0 9px var(--crit); }
+.bay[data-st="unknown"] .bay-led { background: var(--led-off); box-shadow: none; }
+.bay[data-st="unknown"] .bay-cap { opacity: .75; }
 .bay-body { position: relative; flex: 1; display: flex; gap: 12px; min-height: 0; }
 .bay-gauge { width: 40px; flex: none; display: flex; }
 .bay[data-type="nvme"] .bay-gauge { width: 32px; }
@@ -1261,6 +1267,9 @@ a { color: var(--ink-1); }
 .nas-foot .i { width: 13px; height: 13px; }
 .nas-foot .led-key { width: 7px; height: 7px; border-radius: 50%; background: var(--led-on); box-shadow: 0 0 5px var(--led-glow); }
 .nas-foot .led-key.warn { background: var(--warn-fill); box-shadow: none; }
+.nas-foot .led-key.crit { background: var(--crit); box-shadow: none; }
+.nas-foot .led-key.off { background: var(--led-off); box-shadow: none; }
+.nas-foot .scan-ago { margin-left: auto; }
 .nas-foot .faint { margin-left: auto; color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) { .bay-zz .dm { animation: none !important; } }
 .reduce-motion .bay-zz .dm { animation: none !important; }

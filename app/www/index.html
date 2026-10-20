@@ -1002,6 +1002,11 @@ a{color:var(--ink-1)}
 .bay-warn{display:none;color:var(--warn-fill)}
 .bay-warn .i{width:13px;height:13px}
 .bay[data-st="warn"] .bay-warn{display:inline-flex}
+.bay[data-st="crit"] .bay-warn{display:inline-flex;color:var(--crit)}
+.bay[data-st="crit"] .bay-led{background:var(--crit);box-shadow:0 0 7px var(--crit)}
+.bay[data-st="crit"] .bay-led.on{background:var(--crit);box-shadow:0 0 9px var(--crit)}
+.bay[data-st="unknown"] .bay-led{background:var(--led-off);box-shadow:none}
+.bay[data-st="unknown"] .bay-cap{opacity:.75}
 .bay-body{position:relative;flex:1;display:flex;gap:12px;min-height:0}
 .bay-gauge{width:40px;flex:none;display:flex}
 .bay[data-type="nvme"] .bay-gauge{width:32px}
@@ -1031,6 +1036,9 @@ a{color:var(--ink-1)}
 .nas-foot .i{width:13px;height:13px}
 .nas-foot .led-key{width:7px;height:7px;border-radius:50%;background:var(--led-on);box-shadow:0 0 5px var(--led-glow)}
 .nas-foot .led-key.warn{background:var(--warn-fill);box-shadow:none}
+.nas-foot .led-key.crit{background:var(--crit);box-shadow:none}
+.nas-foot .led-key.off{background:var(--led-off);box-shadow:none}
+.nas-foot .scan-ago{margin-left:auto}
 .nas-foot .faint{margin-left:auto;color:var(--ink-3)}
 @media (prefers-reduced-motion: reduce){.bay-zz .dm{animation:none !important}
 }
@@ -2003,6 +2011,7 @@ online: null, fails: 0, lastOk: 0, cpuHigh: 0,
 live: { cpu: [], mem: [], temp: [], tempMb: [], power: [], rx: [], tx: [], dr: [], dw: [], fan: [], disk: [], load: [] },
 ctrBuf: {}, vmBuf: {}, diskBuf: {}, visible: new Set(),
 smartDetail: {},
+diskHealth: null,
 };
 const BUF_N = 60;
 const push = (a, v, n = BUF_N) => { a.push(v); if (a.length > n) a.shift(); };
@@ -2026,8 +2035,28 @@ if (bad.length) return { lv: 'warn', text: bad.map(([k, l]) => `${l} ${d[k]}`).j
 if (/PASS|OK/.test(h)) return { lv: '', text: 'SMART 通过' };
 return { lv: 'none', text: d.health && d.health !== '未知' ? d.health : '未读取到 SMART' };
 }
-const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;
-const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
+const DISK_GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+const diskHealthOf = name => (S.diskHealth && S.diskHealth.items && S.diskHealth.items[name]) || null;
+function bayState(d) {
+if (isSleep(d)) return { lv: 'standby', text: '休眠中', detail: '' };
+const h = diskHealthOf(d.name);
+if (!h) {
+const sm = smartState(d);
+if (sm.lv === 'crit' || sm.lv === 'warn') return { lv: sm.lv, text: sm.text, detail: '' };
+return { lv: 'unknown', text: '未巡检', detail: '' };
+}
+return { lv: h.grade || 'unknown', text: DISK_GRADE_TXT[h.grade] || '未巡检', detail: h.detail || '' };
+}
+function scanAgo() {
+const t = S.diskHealth && S.diskHealth.last_ts;
+if (!t) return '';
+const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+if (s < 90) return '刚刚';
+if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
+return `${Math.round(s / 86400)} 天前`;
+}
+const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
 const diskTemps = o => disksOf(o).filter(d => ok(d.temp) && !isSleep(d));
 const memParts = m => { const T = +m.total || 0, app = +m.used || 0, cache = +m.cached || 0, buf = +m.buffers || 0; return { app, cache, buf, free: Math.max(0, T - app - cache - buf) }; };
 const gb = b => ok(b) ? (b / GiB).toFixed(1) : '--';
@@ -2507,18 +2536,10 @@ body.innerHTML = `<div class="card pool">
 <div class="ch-top"><span class="pwr" title="电源"><i></i></span><span data-ref="chName"></span><span class="vent"></span><span data-ref="chModel">NAS</span></div>
 <div class="bays" data-ref="bays"></div>
 </div>
-<div class="nas-foot"><span><i class="led-key"></i>读写活动</span><span><i class="led-key warn"></i>需要留意</span><span>${ic('moon')}休眠中</span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
+<div class="nas-foot"><span><i class="led-key"></i>正常</span><span><i class="led-key warn"></i>留意</span><span><i class="led-key crit"></i>故障</span><span><i class="led-key off"></i>休眠 / 未巡检</span><span class="faint scan-ago" data-ref="scanAgo"></span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
 </div>
 <div data-ref="raid"></div>`;
 m.x = collect(body); m.bays = {}; m.io = {};
-setInterval(() => {
-if (S.page !== 'overview' || document.hidden || !m.vis || S.editing) return;
-for (const name in m.bays) {
-const el = m.bays[name], led = el._r.led, rate = m.io[name] || 0;
-const on = el.dataset.st !== 'standby' && rate > 0 && (reduced() ? true : Math.random() < clamp(Math.log10(1 + rate / 65536) / 3.2, 0.05, 0.92));
-if (led._on !== on) { led._on = on; led.classList.toggle('on', on); }
-}
-}, 220);
 },
 buildBays(dd, m) {
 m.x.bays.innerHTML = ''; m.bays = {};
@@ -2558,20 +2579,24 @@ if (m.sig !== sig) { m.sig = sig; this.buildBays(dd, m); }
 m.io = {}; (o.diskio || []).forEach(z => { m.io[z.name] = (+z.read_rate || 0) + (+z.write_rate || 0); });
 dd.forEach(d => {
 const el = m.bays[d.name]; if (!el) return; const r = el._r;
-const sm = smartState(d), sl = isSleep(d), warn = sm.lv === 'warn' || sm.lv === 'crit';
-const stt = sl ? 'standby' : warn ? 'warn' : 'ok';
-if (el.dataset.st !== stt) el.dataset.st = stt;
+const bs = bayState(d), sl = bs.lv === 'standby';
+if (el.dataset.st !== bs.lv) el.dataset.st = bs.lv;
 setText(r.t, sl || !ok(d.temp) ? '--' : F.int(d.temp)); inkTo(r.t, sl || !ok(d.temp) ? '' : rampInk(+d.temp, 'dtemp'));
 const hasCap = +d.total > 0;
-el._g.set(hasCap ? +d.percent / 100 : 0, LV.cap(d.percent) || (warn ? 'warn' : ''), 'cap');
+el._g.set(hasCap ? +d.percent / 100 : 0, bs.lv === 'crit' ? 'crit' : bs.lv === 'warn' ? 'warn' : (LV.cap(d.percent) || ''), 'cap');
 setText(r.cap, hasCap ? `${F.int(d.percent)}% · ${F.dsizeStr(d.used)} / ${F.dsizeStr(d.total)}` : `${F.dsizeStr(d.size)} · 未挂载`);
-el.title = sl ? `${d.name} 已停转，监控不会唤醒它` : `${d.name} · ${sm.text}`;
+el.title = sl ? `${d.name} 已停转，监控不会唤醒它`
+: `${d.name} · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
 });
+const ago = scanAgo();
+if (x.scanAgo) setText(x.scanAgo, S.diskHealth ? (ago ? `巡检于 ${ago}` : '尚未巡检') : '');
 const raid = o.raid || [], rc = o.raidcard || {};
 setHTML(x.raid, raid.length || (rc.type && rc.type !== 'none') ? `<div class="card pad raid-sum tap" data-sheet="storage" role="button" tabindex="0"><div class="label">${ic('server')}阵列<span class="faint" style="margin-left:auto;font-weight:400">${esc(rc.label || '')}</span></div><div class="raid-chips">${raid.map(r => `<span class="pill ${(r.members || []).some(z => /\(F\)/.test(z)) ? 'crit' : 'ok'}"><span class="dot"></span>${esc(r.device)} · ${esc(r.status)}</span>`).join('')}${(rc.controllers || []).map(c => (c.vd || []).map(v => `<span class="pill ${v.badge === 'off' ? 'crit' : v.badge === 'on' ? 'ok' : ''}"><span class="dot"></span>VD${esc(v.vd)} ${esc(v.type || '')} · ${esc(v.state_label || v.state || '--')}</span>`).join('')).join('')}${rc.type && rc.type !== 'none' && !(rc.controllers || []).length ? `<span class="pill">${esc(rc.detail || rc.error || '未读取到阵列卡详情')}</span>` : ''}</div></div>` : '');
-const warnD = dd.filter(d => ['warn', 'crit'].includes(smartState(d).lv)), sleepD = dd.filter(isSleep);
+const warnD = dd.filter(d => ['warn', 'crit'].includes(bayState(d).lv)), sleepD = dd.filter(isSleep);
 let dek = !dd.length ? '未检测到物理硬盘。' : `${dd.length} 块硬盘${has ? `，存储池共 <b>${F.dsizeStr(o.disk_size)}</b>，已用 ${F.int(o.disk_total)}%` : ''}。`;
-if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(smartState(warnD[0]).text)}</span>，建议确认备份。`;
+const unknownD = dd.filter(d => bayState(d).lv === 'unknown');
+if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(bayState(warnD[0]).text)}${bayState(warnD[0]).detail ? ' · ' + esc(bayState(warnD[0]).detail) : ''}</span>，建议确认备份。`;
+if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
 if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
 setHTML(m.r.dek, dek);
 },
@@ -4072,6 +4097,8 @@ cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0
 { id: 'disk', title: '网络与硬盘', icon: 'net', items: [
 cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
 cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
+cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
+cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
 { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
@@ -4631,6 +4658,9 @@ if (S.online !== false && S.fails >= 2) { S.online = false; toast('与 NAS 的�
 if (S.online === false || !S.o) { if (S.fails >= 2) S.online = false; setStatus(); renderNow(); }
 }
 }, () => S.online === false ? Math.min(30000, 3000 * Math.pow(1.6, S.fails)) : S.page === 'overview' ? 5000 : 15000);
+Poll.add('diskhealth', async () => {
+try { S.diskHealth = await API.get('/api/disk_health'); renderNow(); } catch (e) { /* 保留旧值 */ }
+}, 60000, () => S.page === 'overview' || sheetIs('disk'));
 Poll.add('docker', async () => { S.docker = await API.get('/api/docker'); dockerAt = Date.now(); feedDocker(S.docker); renderNow(); }, 10000, () => S.page === 'docker' || sheetIs('ctr'));
 Poll.add('vms', async () => {
 S.vms = await API.get('/api/vms'); feedVms(S.vms); if (S.vms.installed) setVmTab(true);
@@ -4649,7 +4679,7 @@ Poll.add('config', async () => { await loadConfig(); syncSettings(); }, 1800000)
 function onPageChange(p) {
 if (p === 'docker') Poll.runAll(['docker', 'ports', 'apps']);
 if (p === 'vms') Poll.run('vms');
-if (p === 'overview') Poll.runAll(['overview']);
+if (p === 'overview') Poll.runAll(['overview', 'diskhealth']);
 }
 function globalRefresh() {
 const b = $('#btnRefresh'); b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 800);

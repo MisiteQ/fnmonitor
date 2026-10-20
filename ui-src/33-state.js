@@ -78,6 +78,8 @@ const S = {
   ctrBuf: {}, vmBuf: {}, diskBuf: {}, visible: new Set(),
   /** 单盘 SMART 明细（按需拉取）：dev → {at, data, loading} */
   smartDetail: {},
+  /** 巡检缓存：/api/disk_health 的结果（盘位卡片的健康分级只读它，不触发 smartctl） */
+  diskHealth: null,
 };
 const BUF_N = 60;
 const push = (a, v, n = BUF_N) => { a.push(v); if (a.length > n) a.shift(); };
@@ -104,8 +106,34 @@ function smartState(d) {
   if (/PASS|OK/.test(h)) return { lv: '', text: 'SMART 通过' };
   return { lv: 'none', text: d.health && d.health !== '未知' ? d.health : '未读取到 SMART' };
 }
-const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;
-const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
+/* ---- 巡检分级（/api/disk_health）----
+   盘位卡片只读巡检缓存：open 页面时不跑 smartctl，分级来自后台定时巡检。
+   没有缓存时（首装 / 刚重启）一律 unknown，绝不能默认显示「正常」。 */
+const DISK_GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+const diskHealthOf = name => (S.diskHealth && S.diskHealth.items && S.diskHealth.items[name]) || null;
+/** 盘位卡片用的分级状态：休眠 > 巡检结论 > 未巡检 */
+function bayState(d) {
+  if (isSleep(d)) return { lv: 'standby', text: '休眠中', detail: '' };
+  const h = diskHealthOf(d.name);
+  if (!h) {
+    // 巡检还没跑过：用按需拿到的 SMART 兜底，但明确标注未巡检
+    const sm = smartState(d);
+    if (sm.lv === 'crit' || sm.lv === 'warn') return { lv: sm.lv, text: sm.text, detail: '' };
+    return { lv: 'unknown', text: '未巡检', detail: '' };
+  }
+  return { lv: h.grade || 'unknown', text: DISK_GRADE_TXT[h.grade] || '未巡检', detail: h.detail || '' };
+}
+/** 巡检时间描述：「巡检于 3 小时前」 */
+function scanAgo() {
+  const t = S.diskHealth && S.diskHealth.last_ts;
+  if (!t) return '';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (s < 90) return '刚刚';
+  if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
+  return `${Math.round(s / 86400)} 天前`;
+}
+const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
 const diskTemps = o => disksOf(o).filter(d => ok(d.temp) && !isSleep(d));
 const memParts = m => { const T = +m.total || 0, app = +m.used || 0, cache = +m.cached || 0, buf = +m.buffers || 0; return { app, cache, buf, free: Math.max(0, T - app - cache - buf) }; };
 const gb = b => ok(b) ? (b / GiB).toFixed(1) : '--';
