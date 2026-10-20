@@ -171,7 +171,7 @@ const SET_SCHEMA = [
       } },
     cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
   ] },
-  { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信。', custom: renderNotify },
+  { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
   { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
   { id: 'look', title: '外观', icon: 'palette', items: [
     uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
@@ -304,15 +304,15 @@ async function loadNotify(force) {
 }
 function renderNotify(card) {
   card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>只在变化时推送</b>：新增故障 / 故障加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。消息跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检。</span></div>
-    <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
     <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
     <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
     <div class="set-row"><div><div class="lbl">发件账号</div><div class="hint">完整邮箱地址，同时作为发件人</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="you@qq.com" spellcheck="false" autocomplete="username" aria-label="发件账号"></div></div>
     <div class="set-row"><div><div class="lbl">授权码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="邮箱授权码" autocomplete="new-password" aria-label="授权码"></div></div>
     <div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
-    <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
     <div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
-    <div class="set-row"><div><div class="lbl">保存与测试</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" type="button" data-ref="save">保存</button><button class="btn" type="button" data-ref="test">发送测试</button></div></div>`;
+    <div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
   const x = collect(card);
   const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
               password: '', sct_enabled: 0, sct_key: '' };
@@ -349,7 +349,7 @@ function renderNotify(card) {
     const last = n.last || {};
     setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
       ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
-      : '还没有推送记录：状态变化时才发消息，想现在确认配置可用请点「发送测试」');
+      : '还没有推送记录：状态变化时才发消息。想现在确认配置可用，先「保存」再点上方对应通道的「发送测试」');
   }
   async function doSave() {
     x.save.disabled = true;
@@ -367,15 +367,23 @@ function renderNotify(card) {
     x.save.disabled = false; sync();
   }
   x.save.onclick = doSave;
-  x.test.onclick = async () => {
-    x.test.disabled = true; setText(x.hMsg, '正在发送测试消息…');
+  // 每个通道一个测试按钮：点哪个只发哪个，不会顺带把另一个通道也触发
+  const testOne = async (kind, btn, msg, name) => {
+    btn.disabled = true; setText(msg, '发送中…');
     try {
-      const j = await API.post('/api/notify/test', {});
-      if (j && j.ok) { toast('测试消息已发出，请查看邮箱 / 微信', { icon: 'check', ms: 5000 }); setText(x.hMsg, '测试消息发送成功 · ' + stamp(Date.now() / 1000)); }
-      else { const err = (j && j.error) || '未知错误'; toast('测试失败 · ' + err, { icon: 'alert', ms: 6000 }); setText(x.hMsg, '测试失败：' + err); }
-    } catch (e) { toast('测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); setText(x.hMsg, '测试失败：' + e.message); }
-    x.test.disabled = false;
+      const j = await API.post('/api/notify/test', { channel: kind });
+      if (j && j.ok) {
+        setText(msg, '已发送');
+        toast(name + '测试消息已发出，请查看' + (kind === 'mail' ? '邮箱收件箱' : '「方糖」服务号消息'), { icon: 'check', ms: 5000 });
+      } else {
+        setText(msg, '');
+        toast(name + '测试失败 · ' + String(((j && j.error) || '未知错误')).slice(0, 100), { icon: 'alert', ms: 7000 });
+      }
+    } catch (e) { setText(msg, ''); toast(name + '测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 6000 }); }
+    btn.disabled = false;
   };
+  x.tMail.onclick = () => testOne('mail', x.tMail, x.mMail, '邮件');
+  x.tSct.onclick = () => testOne('sct', x.tSct, x.mSct, '微信');
   card._sync = sync;
   loadNotify().then(() => {
     const n = NB || {};

@@ -47,6 +47,9 @@
 .notify-note { align-items: flex-start; }
 .notify-note > span { min-width: 0; }
 .notify-note b { color: var(--ink-1); font-weight: 600; }
+.test-msg { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.set-row.inline .ctl { flex-wrap: wrap; row-gap: 8px; }
+@media (max-width: 560px) { .test-msg { display: none; } }
 .pw-ctl { flex-wrap: wrap; }
 .update-card .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .update-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; }

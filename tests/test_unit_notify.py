@@ -242,6 +242,47 @@ class NotifyTestEndpointTest(unittest.TestCase):
         self.assertTrue(m.called)
         self.assertIn("测试", m.call_args[0][1])
 
+    def _both(self):
+        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com", "password": "x",
+                                   "sct_enabled": 1, "sct_key": "SCT123"})
+
+    def test_channel_mail_only_sends_mail(self):
+        # 设置页每个通道一个按钮：点邮件的「发送测试」不能连带把微信也发出去
+        self._both()
+        with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")), \
+                mock.patch.object(srv, "notify_sct_send", return_value=(True, "")) as sct:
+            r = srv.notify_test(self.dir, "mail")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["channel"], "mail")
+        self.assertEqual(list(r["channels"]), ["mail"])
+        self.assertFalse(sct.called)
+
+    def test_channel_sct_only_sends_sct(self):
+        self._both()
+        with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")) as mail, \
+                mock.patch.object(srv, "notify_sct_send", return_value=(True, "")):
+            r = srv.notify_test(self.dir, "sct")
+        self.assertTrue(r["ok"])
+        self.assertEqual(list(r["channels"]), ["sct"])
+        self.assertFalse(mail.called)
+
+    def test_channel_disabled_is_rejected(self):
+        # 只开了邮件时点微信的测试：给出「微信通知当前是关闭的」，而不是悄悄发邮件
+        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com", "password": "x"})
+        with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")) as mail:
+            r = srv.notify_test(self.dir, "sct")
+        self.assertFalse(r["ok"])
+        self.assertIn("微信", r["error"])
+        self.assertIn("关闭", r["error"])
+        self.assertFalse(mail.called)
+
+    def test_unknown_channel_falls_back_to_all(self):
+        self._both()
+        with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")), \
+                mock.patch.object(srv, "notify_sct_send", return_value=(True, "")):
+            r = srv.notify_test(self.dir, "bogus")
+        self.assertEqual(sorted(r["channels"]), ["mail", "sct"])
+
 
 class DiskScanNotifyHookTest(unittest.TestCase):
     """巡检结束后必须调用通知判定，且通知异常不能影响巡检结果。"""

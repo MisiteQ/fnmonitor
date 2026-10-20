@@ -3562,23 +3562,45 @@ def notify_after_scan(items, ts, db, config=None):
         return None
 
 
-def notify_test(data_dir):
-    """设置页「发送测试」：用样例内容走一遍真实通道，返回每个通道的结果。"""
+def notify_test(data_dir, channel="all"):
+    """设置页「发送测试」：发一条样例消息验证单个通道（mail / sct）。
+
+    默认 all 只在巡检推送路径与旧前端上使用；设置页每个通道一个按钮，传 channel
+    就只发那一条，避免「点一次邮件测试、微信也跟着响」。
+    """
     cfg = notify_load(data_dir)
-    if not (cfg.get("enabled") or cfg.get("sct_enabled")):
-        return {"ok": False, "error": "请先开启邮件或微信通知并保存"}
+    ch = str(channel or "all").strip().lower()
+    if ch not in ("mail", "sct"):
+        ch = "all"
+    label = {"mail": "邮件", "sct": "微信"}
+    if ch == "all":
+        want = [c for c, k in (("mail", "enabled"), ("sct", "sct_enabled")) if cfg.get(k)]
+        if not want:
+            return {"ok": False, "error": "请先开启邮件或微信通知并保存", "channels": {}, "channel": ch}
+    else:
+        if not cfg.get("enabled" if ch == "mail" else "sct_enabled"):
+            return {"ok": False, "channels": {}, "channel": ch,
+                    "error": "%s通知当前是关闭的：先打开开关并「保存」，再点发送测试" % label[ch]}
+        want = [ch]
     sample = [{"dev": "sdz", "model": "ST300MP0026（示例）", "serial": "WAE0J50J", "grade": "warn",
                "detail": "增长缺陷 49 个；待处理扇区 0 个", "defects": 49, "pending_defects": 0,
                "uncorr": 0, "temp_c": 32, "power_on_hours": 52032}]
     subject, body = notify_build([{"act": "new", "dev": "sdz", "d": sample[0],
                                    "text": sample[0]["detail"]}], time.time())
     subject = "【测试】" + subject
-    body = "这是一封来自飞牛监控「设置 → 通知」的测试消息，收到即表示配置可用。\n\n" + body
-    ok, res = notify_send_all(cfg, subject, body)
-    return {"ok": ok, "channels": res,
+    body = "这是一条来自飞牛监控「设置 → 通知」的测试消息，收到即表示%s通道配置可用。\n\n" % (
+        "邮件" if ch == "mail" else "微信") + body
+    res = {}
+    for c in want:
+        if c == "mail":
+            ok, err = notify_mail_send(cfg, subject, body)
+        else:
+            ok, err = notify_sct_send(cfg, subject, body)
+        res[c] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+    ok = all(v.get("ok") for v in res.values())
+    return {"ok": ok, "channels": res, "channel": ch,
             "error": "" if ok else "；".join(
-                "%s：%s" % ("邮件" if k == "mail" else "微信", v.get("err"))
-                for k, v in res.items() if v and not v.get("ok"))}
+                "%s：%s" % (label[k], v.get("err")) for k, v in res.items() if v and not v.get("ok"))}
 
 
 def read_net_dev():
@@ -7438,7 +7460,7 @@ class MonitorApp:
                     self._json(app.api_notify_save(data))
                     return
                 if path == "/api/notify/test":
-                    self._json(app.api_notify_test())
+                    self._json(app.api_notify_test(data))
                     return
                 if path == "/api/disk_scan/now":
                     self._json(app.api_disk_scan_now())
@@ -7584,9 +7606,13 @@ class MonitorApp:
               % ("开" if cfg.get("enabled") else "关", "开" if cfg.get("sct_enabled") else "关"))
         return {"ok": True, "notify": notify_public(cfg)}
 
-    def api_notify_test(self):
-        """立刻发一条测试消息，用于确认服务器 / 授权码 / SendKey 是否可用。"""
-        return notify_test(self.data_dir)
+    def api_notify_test(self, data):
+        """立刻发一条测试消息。channel=mail / sct 只测一个通道，不传则两个都发。
+
+        设置页每个通道各有一个「发送测试」按钮，点哪个只发哪个。
+        """
+        ch = data.get("channel") if isinstance(data, dict) else ""
+        return notify_test(self.data_dir, ch)
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
