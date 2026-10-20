@@ -1278,6 +1278,7 @@ dd .diag-link{margin:0;height:24px}
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19v-8.5Z"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 3.6 1.5 5 1.5 5H5s1.5-1.4 1.5-5Z"/><path d="M10 18.2a2 2 0 0 0 4 0"/></symbol>
     <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3Z"/><circle cx="7.5" cy="11.5" r="1.1"/><circle cx="10.5" cy="7.5" r="1.1"/><circle cx="15" cy="7.8" r="1.1"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2.5h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11.5A8 8 0 0 0 5.6 7M4 12.5A8 8 0 0 0 18.4 17M5 3.5V7.5h4M19 20.5v-4h-4"/></symbol>
@@ -4101,6 +4102,7 @@ cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART
 cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
+{ id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信。', custom: renderNotify },
 { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
 { id: 'look', title: '外观', icon: 'palette', items: [
 uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
@@ -4217,6 +4219,99 @@ card._sync();
 };
 x.out.onclick = doLogout;
 card._sync();
+}
+let NB = null;
+const NOTIFY_PROVIDERS = [['qq', 'QQ 邮箱', 'smtp.qq.com', 465, 'ssl'], ['163', '163 邮箱', 'smtp.163.com', 465, 'ssl'],
+['126', '126 邮箱', 'smtp.126.com', 465, 'ssl'], ['exmail', '腾讯企业邮', 'smtp.exmail.qq.com', 465, 'ssl'],
+['outlook', 'Outlook', 'smtp.office365.com', 587, 'starttls'], ['custom', '自定义', '', 465, 'ssl']];
+async function loadNotify(force) {
+if (NB && !force) return NB;
+try { NB = await API.get('/api/notify'); }
+catch (e) { NB = Object.assign({}, NB || {}, { load_error: e.message || '读取失败' }); }
+return NB;
+}
+function renderNotify(card) {
+card.innerHTML = `<div class="note info">巡检发现「新增故障 / 故障加重 / 已恢复」时推送一条消息，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。通知跟着「硬盘巡检」走，请先在 网络与硬盘 中打开巡检。改完点下面「保存」。</div>
+<div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
+<div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
+<div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
+<div class="set-row"><div><div class="lbl">发件账号</div><div class="hint">完整邮箱地址，同时作为发件人</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="you@qq.com" spellcheck="false" autocomplete="username" aria-label="发件账号"></div></div>
+<div class="set-row"><div><div class="lbl">授权码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="邮箱授权码" autocomplete="new-password" aria-label="授权码"></div></div>
+<div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
+<div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
+<div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+<div class="set-row"><div><div class="lbl">保存与测试</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn primary" type="button" data-ref="save">保存</button><button class="btn" type="button" data-ref="test">发送测试</button></div></div>`;
+const x = collect(card);
+const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
+password: '', sct_enabled: 0, sct_key: '' };
+const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
+f.provider = v;
+const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
+if (pv && pv[2]) { f.host = pv[2]; f.port = pv[3]; f.secure = pv[4]; x.host.value = pv[2]; x.port.value = pv[3]; segSec.set(pv[4]); }
+}, 'sm');
+const segSec = makeSeg([['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不加密']], 'ssl', v => { f.secure = v; }, 'sm');
+x.segP.append(segP); x.segSec.append(segSec);
+const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
+bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
+bind(x.pw, 'password'); bind(x.sctkey, 'sct_key');
+const setSw = (el, k) => el.addEventListener('click', () => {
+const on = el.getAttribute('aria-checked') !== 'true';
+el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
+});
+setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled');
+const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
+function sync() {
+const n = NB || {};
+x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
+x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+segP.set(f.provider); segSec.set(f.secure);
+if (document.activeElement !== x.host) x.host.value = f.host || '';
+if (document.activeElement !== x.port) x.port.value = f.port || 465;
+if (document.activeElement !== x.user) x.user.value = f.user || '';
+if (document.activeElement !== x.to) x.to.value = f.to || '';
+x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
+x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
+setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
+setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
+setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+const last = n.last || {};
+setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
+? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
+: '还没有推送记录：状态变化时才发消息，想现在确认配置可用请点「发送测试」');
+}
+async function doSave() {
+x.save.disabled = true;
+const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
+user: f.user, to: f.to, sct_enabled: f.sct_enabled };
+if (f.password) body.password = f.password;
+if (f.sct_key) body.sct_key = f.sct_key;
+try {
+const j = await API.post('/api/notify/save', body);
+if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+NB = Object.assign(await loadNotify(true), { last: (NB || {}).last || {} });
+f.password = ''; f.sct_key = ''; x.pw.value = ''; x.sctkey.value = '';
+toast('通知配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+} catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+x.save.disabled = false; sync();
+}
+x.save.onclick = doSave;
+x.test.onclick = async () => {
+x.test.disabled = true; setText(x.hMsg, '正在发送测试消息…');
+try {
+const j = await API.post('/api/notify/test', {});
+if (j && j.ok) { toast('测试消息已发出，请查看邮箱 / 微信', { icon: 'check', ms: 5000 }); setText(x.hMsg, '测试消息发送成功 · ' + stamp(Date.now() / 1000)); }
+else { const err = (j && j.error) || '未知错误'; toast('测试失败 · ' + err, { icon: 'alert', ms: 6000 }); setText(x.hMsg, '测试失败：' + err); }
+} catch (e) { toast('测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); setText(x.hMsg, '测试失败：' + e.message); }
+x.test.disabled = false;
+};
+card._sync = sync;
+loadNotify().then(() => {
+const n = NB || {};
+Object.keys(f).forEach(k => { if (n[k] !== undefined && k !== 'password' && k !== 'sct_key') f[k] = n[k]; });
+f.password = ''; f.sct_key = '';
+sync();
+});
+sync();
 }
 async function doLogout() {
 try { await API.post('/api/auth/logout', {}); } catch (e) { /* 仍然跳转 */ }

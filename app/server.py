@@ -37,6 +37,7 @@ import traceback
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+import urllib.parse
 import urllib.request
 
 def _read_manifest_version():
@@ -3136,6 +3137,14 @@ def disk_scan_once(db, config=None):
             "skipped_standby": skipped, "errors": errors,
             "counts": {g: sum(1 for i in items if i.get("grade") == g) for g in ("ok", "warn", "crit", "unknown")},
         }
+        # 状态有变化才推送（新增 / 加重 / 恢复）；通知失败只记日志，不影响巡检结果
+        try:
+            note = notify_after_scan(items, ts, db, config)
+        except Exception:
+            traceback.print_exc()
+            note = None
+        if note:
+            summary["notify"] = note
         _disk_scan_state.update({"last_ts": ts, "summary": summary, "error": ""})
         return summary
     except Exception as e:
@@ -3203,6 +3212,372 @@ class DiskScanner(threading.Thread):
                 traceback.print_exc()
                 if self._stop.wait(300):
                     return
+
+
+# ---------------------------------------------------------------------------
+# 硬盘告警通知（SMTP 邮件 / Server酱，移植自 sashealth）
+# ---------------------------------------------------------------------------
+# 只在巡检发现状态变化时发一条：新增故障 / 故障加重 / 已恢复。同一块盘的同一
+# 状态不重复发；发送失败不落「已通知」状态，下一轮巡检自动重试。休眠盘（沿用
+# 上次分级）不参与判定，避免把「没读到」误报成故障。
+# 配置独立存放在 notify.json（0600），不进 config.json，也不经过 /api/config
+# 回传——授权码 / SendKey 只写不读，前端只知道「是否已填」。
+NOTIFY_FILE = "notify.json"
+NOTIFY_STATE_FILE = "notify_state.json"
+NOTIFY_PROVIDERS = (
+    ("qq", "QQ 邮箱", "smtp.qq.com", 465, "ssl"),
+    ("163", "163 邮箱", "smtp.163.com", 465, "ssl"),
+    ("126", "126 邮箱", "smtp.126.com", 465, "ssl"),
+    ("exmail", "腾讯企业邮", "smtp.exmail.qq.com", 465, "ssl"),
+    ("outlook", "Outlook / Office365", "smtp.office365.com", 587, "starttls"),
+    ("custom", "自定义", "", 465, "ssl"),
+)
+NOTIFY_DEFAULT = {"enabled": 0, "provider": "qq", "host": "smtp.qq.com", "port": 465,
+                  "secure": "ssl", "user": "", "password": "", "sender": "", "to": "",
+                  "sct_enabled": 0, "sct_key": ""}
+NOTIFY_SECRET_KEYS = ("password", "sct_key")
+GRADE_LABEL = {"ok": "正常", "warn": "留意", "crit": "故障", "unknown": "未知"}
+
+
+def notify_load(data_dir):
+    """读 notify.json；缺字段回落默认值，格式错误不影响其余字段。"""
+    cfg = dict(NOTIFY_DEFAULT)
+    if not data_dir:
+        return cfg
+    try:
+        with open(os.path.join(data_dir, NOTIFY_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            user = json.load(f)
+        if not isinstance(user, dict):
+            user = {}
+    except Exception:
+        user = {}
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "sct_enabled"):
+        if k in user:
+            cfg[k] = onoff(user[k])
+    if str(user.get("provider") or "") in [p[0] for p in NOTIFY_PROVIDERS]:
+        cfg["provider"] = str(user["provider"])
+    for k in ("host", "user", "sender", "to", "password", "sct_key"):
+        if k in user:
+            cfg[k] = str(user[k] or "")
+    if "port" in user:
+        try:
+            cfg["port"] = max(1, min(65535, int(user["port"])))
+        except Exception:
+            pass
+    if str(user.get("secure") or "").lower() in ("ssl", "starttls", "none"):
+        cfg["secure"] = str(user["secure"]).lower()
+    return cfg
+
+
+def notify_public(cfg):
+    """对外配置：授权码 / SendKey 换成「是否已填」，绝不回传明文。"""
+    out = {k: v for k, v in cfg.items() if k not in NOTIFY_SECRET_KEYS}
+    out["password_set"] = bool(cfg.get("password"))
+    out["sct_key_set"] = bool(cfg.get("sct_key"))
+    return out
+
+
+def notify_save(data_dir, data, cur=None):
+    """合并保存通知配置：空值 / 未提供的密码项保留原值，返回 (配置, 错误)。"""
+    cfg = dict(cur) if cur else notify_load(data_dir)
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "sct_enabled"):
+        if k in data:
+            cfg[k] = onoff(data[k])
+    if "provider" in data:
+        p = str(data["provider"] or "")
+        if p in [x[0] for x in NOTIFY_PROVIDERS]:
+            cfg["provider"] = p
+            for pid, _l, host, port, sec in NOTIFY_PROVIDERS:
+                if pid == p and host:      # 选预设就把服务器参数一起带过来
+                    cfg["host"], cfg["port"], cfg["secure"] = host, port, sec
+    if "host" in data:
+        cfg["host"] = clean_text(data["host"], 128)
+    if "port" in data:
+        try:
+            cfg["port"] = max(1, min(65535, int(data["port"])))
+        except Exception:
+            return cfg, "端口须为 1–65535 的整数"
+    if "secure" in data:
+        s = str(data["secure"] or "").lower()
+        if s in ("ssl", "starttls", "none"):
+            cfg["secure"] = s
+    for k, n in (("user", 128), ("sender", 128), ("to", 400)):
+        if k in data:
+            cfg[k] = clean_text(data[k], n)
+    # 密码 / SendKey：只有前端真的传了新值才覆盖；传空串按「不改」处理，
+    # 想清除请显式传 clear_password / clear_sct_key（前端未使用，保留 API 能力）
+    if str(data.get("password") or ""):
+        cfg["password"] = str(data["password"])[:256]
+    if str(data.get("sct_key") or ""):
+        cfg["sct_key"] = str(data["sct_key"])[:256]
+    if data.get("clear_password"):
+        cfg["password"] = ""
+    if data.get("clear_sct_key"):
+        cfg["sct_key"] = ""
+    if cfg.get("enabled"):
+        miss = [name for name, ok in (("SMTP 服务器", cfg.get("host")), ("发件账号", cfg.get("user")),
+                                      ("授权码", cfg.get("password")), ("收件人", cfg.get("to"))) if not ok]
+        if miss:
+            return cfg, "邮件通知缺少：%s" % "、".join(miss)
+    if cfg.get("sct_enabled") and not cfg.get("sct_key"):
+        return cfg, "微信通知缺少 SendKey"
+    write_json_secure(os.path.join(data_dir, NOTIFY_FILE), cfg)
+    return cfg, ""
+
+
+def notify_short_err(msg):
+    """把 SMTP / HTTP 的原始报错翻成一句能看懂的话。"""
+    m = (msg or "").strip().replace("\n", " ")
+    low = m.lower()
+    if "auth" in low or "535" in m or "username and password" in low:
+        return "认证失败（账号或授权码错误）"
+    if "timed out" in low or "timeout" in low:
+        return "连接超时"
+    if "getaddrinfo" in low or "name or service not known" in low or "11001" in m:
+        return "无法解析服务器地址"
+    if "refused" in low:
+        return "服务器拒绝连接"
+    if "550" in m or "recipient" in low:
+        return "收件人被拒"
+    if "ssl" in low or "certificate" in low:
+        return "SSL/TLS 握手失败"
+    if "unreachable" in low:
+        return "网络不可达"
+    if "400" in m or "bad request" in low or "404" in m:
+        return "请求被拒（SendKey 可能无效）"
+    if "证书" in m or "certificate" in m:
+        return "SSL/TLS 握手失败"
+    return (m[:60] + "…") if len(m) > 60 else (m or "未知错误")
+
+
+def notify_mail_send(cfg, subject, body):
+    """发一封纯文本邮件。返回 (成功, 错误描述)。"""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header
+    host = (cfg.get("host") or "").strip()
+    user = (cfg.get("user") or "").strip()
+    pwd = cfg.get("password") or ""
+    sender = (cfg.get("sender") or "").strip() or user
+    to = (cfg.get("to") or "").strip()
+    if not host or not user or not pwd or not to:
+        return False, "配置不完整（缺少服务器 / 账号 / 授权码 / 收件人）"
+    try:
+        port = int(cfg.get("port") or 465)
+    except Exception:
+        port = 465
+    sec = str(cfg.get("secure") or "ssl").lower()
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = sender
+    msg["To"] = to
+    srv = None
+    try:
+        if sec == "ssl":
+            srv = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            srv = smtplib.SMTP(host, port, timeout=15)
+            if sec == "starttls":
+                srv.starttls()
+        srv.login(user, pwd)
+        rcpts = [x.strip() for x in to.split(",") if x.strip()]
+        srv.sendmail(sender, rcpts, msg.as_string())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if srv is not None:
+            try:
+                srv.quit()
+            except Exception:
+                pass
+
+
+def notify_sct_send(cfg, title, desp):
+    """Server酱：POST https://sctapi.ftqq.com/<SendKey>.send。返回 (成功, 错误描述)。"""
+    key = (cfg.get("sct_key") or "").strip()
+    if not key:
+        return False, "未配置 SendKey"
+    url = "https://sctapi.ftqq.com/%s.send" % key
+    data = urllib.parse.urlencode({"title": title, "desp": desp}).encode()
+    try:
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        try:
+            j = json.loads(raw)
+        except Exception:
+            j = {}
+        if j.get("code") == 0:
+            return True, ""
+        return False, str(j.get("message") or raw[:80] or "未知错误")
+    except Exception as e:
+        return False, str(e)
+
+
+def notify_lan_ip():
+    """本机局域网 IP（UDP connect 不实际发包），用来在通知里放一行详情链接。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("223.5.5.5", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return ""
+
+
+def notify_build(events, ts, port=8777):
+    """生成通知标题与正文：按 新增 / 加重 / 恢复 分组。"""
+    new = [e for e in events if e["act"] == "new"]
+    worse = [e for e in events if e["act"] == "worse"]
+    rec = [e for e in events if e["act"] == "recovered"]
+    bad = len(new) + len(worse)
+    if bad:
+        subject = "[飞牛监控] 硬盘告警 · %d 块异常" % bad
+    else:
+        subject = "[飞牛监控] 硬盘告警解除 · %d 块恢复" % len(rec)
+    lines = ["检测时间：%s" % time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)), ""]
+
+    def section(title, group):
+        lines.append("【%s】" % title)
+        for e in group:
+            d = e["d"] or {}
+            lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
+                                                d.get("serial") or "无序列号",
+                                                GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
+            lines.append("  %s" % (e.get("text") or ""))
+            bits = []
+            if d.get("defects") is not None:
+                bits.append("增长缺陷 %s" % d["defects"])
+            if d.get("pending_defects"):
+                bits.append("待处理 %s" % d["pending_defects"])
+            if d.get("uncorr"):
+                bits.append("不可纠正 %s" % d["uncorr"])
+            if d.get("temp_c") is not None:
+                bits.append("%s°C" % d["temp_c"])
+            if d.get("power_on_hours"):
+                bits.append("通电 %s 小时" % d["power_on_hours"])
+            if bits:
+                lines.append("  " + " / ".join(bits))
+            lines.append("")
+
+    if new:
+        section("新增故障", new)
+    if worse:
+        section("故障加重", worse)
+    if rec:
+        section("已恢复", rec)
+    ip = notify_lan_ip()
+    if ip:
+        lines.append("详情：http://%s:%d" % (ip, port))
+    return subject, "\n".join(lines)
+
+
+def notify_state_load(data_dir):
+    try:
+        with open(os.path.join(data_dir, NOTIFY_STATE_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
+def notify_send_all(cfg, subject, body):
+    """按已启用的通道发送，任一失败即视为失败（下一轮重试）。返回 (全部成功, 明细)。"""
+    res = {"mail": None, "sct": None}
+    ok_all = True
+    if cfg.get("enabled"):
+        ok, err = notify_mail_send(cfg, subject, body)
+        res["mail"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+        ok_all = ok_all and ok
+    if cfg.get("sct_enabled"):
+        ok, err = notify_sct_send(cfg, subject, body)
+        res["sct"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+        ok_all = ok_all and ok
+    return ok_all, res
+
+
+def notify_after_scan(items, ts, db, config=None):
+    """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。"""
+    try:
+        data_dir = os.path.dirname(getattr(db, "db_path", "") or "")
+        if not data_dir:
+            return None
+        cfg = notify_load(data_dir)
+        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+            return None
+        st = notify_state_load(data_dir)
+        notified = dict(st.get("notified") or {})
+        cur = {}
+        events = []
+        for it in items or []:
+            dev = str(it.get("dev") or "")
+            if not dev or it.get("standby"):
+                continue                      # 休眠盘沿用旧分级，不参与判定
+            grade = str(it.get("grade") or "")
+            if grade in ("warn", "crit"):
+                cur[dev] = grade
+            old = str(notified.get(dev) or "")
+            if grade in ("warn", "crit"):
+                if old == grade:
+                    continue
+                if old == "crit" and grade == "warn":
+                    continue                  # 降级单独提醒太吵，静默更新状态
+                events.append({"act": "worse" if old == "warn" else "new",
+                               "dev": dev, "d": it,
+                               "text": it.get("detail") or GRADE_LABEL.get(grade, grade)})
+            elif grade == "ok" and old in ("warn", "crit"):
+                events.append({"act": "recovered", "dev": dev, "d": it,
+                               "text": "故障消失，SMART 通过"})
+        if not events:
+            if cur != notified:
+                write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                                  {"notified": cur, "ts": ts})
+            return None
+        try:
+            port = int((config or {}).get("port") or 0) or 8777
+        except Exception:
+            port = 8777
+        subject, body = notify_build(events, ts, port)
+        ok, res = notify_send_all(cfg, subject, body)
+        summary = {"ts": ts, "ok": ok, "subject": subject,
+                   "acts": [e["act"] for e in events], "channels": res}
+        if ok:
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"notified": cur, "ts": ts, "last": summary})
+        else:
+            # 发送失败：保留旧状态，下一轮巡检重试同一批事件
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"notified": notified, "ts": st.get("ts") or 0, "last": summary})
+            print("[fnmonitor] 硬盘告警通知发送失败：%s" % res)
+        return summary
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def notify_test(data_dir):
+    """设置页「发送测试」：用样例内容走一遍真实通道，返回每个通道的结果。"""
+    cfg = notify_load(data_dir)
+    if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+        return {"ok": False, "error": "请先开启邮件或微信通知并保存"}
+    sample = [{"dev": "sdz", "model": "ST300MP0026（示例）", "serial": "WAE0J50J", "grade": "warn",
+               "detail": "增长缺陷 49 个；待处理扇区 0 个", "defects": 49, "pending_defects": 0,
+               "uncorr": 0, "temp_c": 32, "power_on_hours": 52032}]
+    subject, body = notify_build([{"act": "new", "dev": "sdz", "d": sample[0],
+                                   "text": sample[0]["detail"]}], time.time())
+    subject = "【测试】" + subject
+    body = "这是一封来自飞牛监控「设置 → 通知」的测试消息，收到即表示配置可用。\n\n" + body
+    ok, res = notify_send_all(cfg, subject, body)
+    return {"ok": ok, "channels": res,
+            "error": "" if ok else "；".join(
+                "%s：%s" % ("邮件" if k == "mail" else "微信", v.get("err"))
+                for k, v in res.items() if v and not v.get("ok"))}
 
 
 def read_net_dev():
@@ -6824,6 +7199,9 @@ class MonitorApp:
                     # 盘位健康分级：只读巡检缓存，不触发 smartctl
                     self._json(app.api_disk_health())
                     return
+                if path == "/api/notify":
+                    self._json(app.api_notify_get())
+                    return
                 if path == "/api/docker":
                     self._json(app.api_docker())
                     return
@@ -7054,6 +7432,12 @@ class MonitorApp:
                     hdrs = [("Retry-After", str(resp.get("retry_after")))] if status == 429 else None
                     self._json(resp, status=status, cookie=cookie, headers=hdrs)
                     return
+                if path == "/api/notify/save":
+                    self._json(app.api_notify_save(data))
+                    return
+                if path == "/api/notify/test":
+                    self._json(app.api_notify_test())
+                    return
                 if path == "/api/update/install":
                     self._json(app.api_update_install())
                     return
@@ -7161,6 +7545,31 @@ class MonitorApp:
             "items": items,
             "now": now,
         }
+
+    def api_notify_get(self):
+        """通知配置（不回传授权码 / SendKey，只给「是否已填」与上次发送结果）。"""
+        cfg = notify_load(self.data_dir)
+        out = notify_public(cfg)
+        out["ok"] = True
+        out["providers"] = [{"id": p[0], "label": p[1], "host": p[2], "port": p[3], "secure": p[4]}
+                            for p in NOTIFY_PROVIDERS]
+        st = notify_state_load(self.data_dir)
+        out["last"] = st.get("last") or {}
+        out["notified"] = st.get("notified") or {}
+        return out
+
+    def api_notify_save(self, data):
+        """保存通知配置。空密码 / 空 SendKey 视为「不改」，需要清除时传 clear_* 开关。"""
+        cfg, err = notify_save(self.data_dir, data if isinstance(data, dict) else {})
+        if err:
+            return {"ok": False, "error": err, "notify": notify_public(cfg)}
+        print("[fnmonitor] 通知配置已更新：邮件=%s 微信=%s"
+              % ("开" if cfg.get("enabled") else "关", "开" if cfg.get("sct_enabled") else "关"))
+        return {"ok": True, "notify": notify_public(cfg)}
+
+    def api_notify_test(self):
+        """立刻发一条测试消息，用于确认服务器 / 授权码 / SendKey 是否可用。"""
+        return notify_test(self.data_dir)
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
