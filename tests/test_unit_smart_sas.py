@@ -182,6 +182,12 @@ class SasDetailTest(unittest.TestCase):
         text = SAS_OK.replace("Elements in grown defect list: 2", "Elements in grown defect list: 0")
         self.assertEqual(_detail(text).get("grown_defects"), 0)
 
+    def test_pending_defects(self):
+        # 部分 SAS 盘（如 ST4000NM019B）额外给出 Pending defects 计数
+        text = SAS_OK.replace("Elements in grown defect list: 2",
+                              "Elements in grown defect list: 2\nPending defects: 5")
+        self.assertEqual(_detail(text).get("scsi_pending_defects"), 5)
+
 
 class RegressionAtaTest(unittest.TestCase):
     """原有 ATA 解析不能被 SAS 分支影响。"""

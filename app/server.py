@@ -2860,6 +2860,12 @@ def smart_detail(dev):
         if m:
             grown, scsi = int(m.group(1)), True
             continue
+        m = re.match(r"Pending defects:\s*(\d+)", s)
+        if m:
+            # 部分 SAS 盘（如 ST4000NM019B）会额外给出待定缺陷计数
+            d["scsi_pending_defects"] = int(m.group(1))
+            scsi = True
+            continue
         m = re.match(r"Accumulated power on time,\s*hours:minutes\s+(\d+):(\d+)", s)
         if m:
             # SAS 写法：Accumulated power on time, hours:minutes 21456:23（含冒号，不能用 partition）
@@ -2892,6 +2898,10 @@ def smart_detail(dev):
         if unc:
             d.setdefault("uncorrectable", unc)
         if ecc_fast or ecc_delayed or rereads:
+            # 注意：errors_corrected_by_eccfast 是 32 位计数器，会回绕到 40 亿量级，
+            # 只反映设备读过多少数据、不反映盘的健康度——真机实测同型号三块盘分别为
+            # 41.6 亿 / 0.26 亿 / 14.7 亿，没有一块故障。所以它单独暴露为 scsi_ecc，
+            # 不映射到任何告警键；健康判定只看 grown_defects 与 scsi_uncorrected。
             d["scsi_ecc"] = ecc_fast + ecc_delayed
             d["scsi_rereads"] = rereads
         if corrected or algo or gigabytes:
