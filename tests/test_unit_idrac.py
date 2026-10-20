@@ -67,8 +67,11 @@ FULL = {
 
 
 def fake_req(mapping, calls=None):
-    """按路径返回预设 JSON，未命中按 404 处理（模拟固件不支持）。"""
-    def f(cfg, path, timeout=None):
+    """按路径返回预设 JSON，未命中按 404 处理（模拟固件不支持）。
+
+    query 参数是给 $expand 用的，mock 里忽略——测的是解析逻辑，不是 URL 拼装。
+    """
+    def f(cfg, path, timeout=None, query=None):
         if calls is not None:
             calls.append(path)
         if path in mapping:
@@ -180,11 +183,13 @@ class IdracCollectTest(unittest.TestCase):
         with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(FULL)):
             d = srv.idrac_collect(self.cfg, force=True)
         names = [t["name"] for t in d["temps"]]
-        self.assertIn("CPU1 Temp", names)
+        # 测点名统一翻成面板用语：CPU1 Temp → CPU1，System Board Inlet Temp → 进风口
+        self.assertIn("CPU1", names)
         self.assertNotIn("Absent Sensor", names)
-        inlet = [t for t in d["temps"] if "Inlet" in t["name"]][0]
+        inlet = [t for t in d["temps"] if t["name"] == "进风口"][0]
         self.assertEqual(inlet["c"], 22)
         self.assertEqual(inlet["crit"], 42)
+        self.assertEqual(d["temps"][0]["name"], "进风口")   # 进风口排第一
 
     def test_power_error_is_not_fatal(self):
         only = {k: v for k, v in FULL.items() if "Power" not in k}
@@ -276,6 +281,221 @@ class IdracErrTest(unittest.TestCase):
             d = srv.idrac_collect({"host": "h", "user": "u", "password": "p"}, force=True)
         self.assertEqual(d["fans"], [])
         self.assertEqual(d["temps"], [])
+
+
+# ---------------------------------------------------------------------------
+# 慢组：Storage / Memory / Processors（$expand 一次取全的形态）
+# ---------------------------------------------------------------------------
+DISK_FULL = {
+    "Id": "Disk.Bay.7:Enclosure.Internal.0-1:RAID.Integrated.1-1",
+    "Model": "ST4000NM019B", "SerialNumber": "WCC0ABCD", "CapacityBytes": 4000661504_000,
+    "MediaType": "HDD", "Protocol": "SAS", "RotationSpeedRPM": 7200, "Revision": "CSJA",
+    "NegotiatedSpeedGbs": 12, "FailurePredicted": False, "PredictedMediaLifeLeftPercent": None,
+    "HotspareType": "None", "EncryptionStatus": "Unencrypted",
+    "Status": {"Health": "OK", "State": "Enabled"},
+}
+DISK_BAD = dict(DISK_FULL, Id="Disk.Bay.9:Enclosure.Internal.0-1:RAID.Integrated.1-1",
+                Model="SQF SMSV2 128GCB", MediaType="SSD", FailurePredicted=True,
+                PredictedMediaLifeLeftPercent=7, Status={"Health": "Critical", "State": "Enabled"})
+
+SLOW_JSON = {
+    "/Managers/iDRAC.Embedded.1": {"FirmwareVersion": "2.86.86.86", "Model": "13G Monolithic",
+                                   "DateTime": "2026-10-20T16:18:27-05:00",
+                                   "DateTimeLocalOffset": "-05:00", "Status": {"Health": "OK"}},
+    "/Systems/System.Embedded.1/Processors": {"Members": [
+        {"Id": "CPU.Socket.1", "Model": "Intel Xeon E5-2682 v4", "TotalCores": 16,
+         "TotalThreads": 32, "MaxSpeedMHz": 4000, "Status": {"Health": "OK"}},
+        {"Id": "CPU.Socket.2", "Model": "Intel Xeon E5-2682 v4", "TotalCores": 16,
+         "TotalThreads": 32, "MaxSpeedMHz": 4000, "Status": {"Health": "Warning"}},
+    ]},
+    "/Systems/System.Embedded.1/Memory": {"Members": [
+        {"Id": "iDRAC.Embedded.1#DIMMSLOTB2", "CapacityMiB": 16384, "MemoryDeviceType": "DDR4",
+         "OperatingSpeedMhz": 2400, "Manufacturer": "Hynix Semiconductor",
+         "Status": {"Health": "OK"}},
+        {"Id": "iDRAC.Embedded.1#DIMMSLOTA1", "CapacityMiB": 16384, "MemoryDeviceType": "DDR4",
+         "OperatingSpeedMhz": 2400, "Manufacturer": "Hynix Semiconductor",
+         "Status": {"Health": "OK"}},
+        {"Id": "iDRAC.Embedded.1#DIMMSLOTA2", "Status": {"Health": "OK"}},   # 没有容量：空槽
+    ]},
+    "/Systems/System.Embedded.1/Storage": {"Members": [
+        {"Id": "RAID.Integrated.1-1", "Name": "PERC H330 Mini",
+         "StorageControllers": [{"Model": "PERC H330 Mini", "FirmwareVersion": "25.5.5.0005"}],
+         "Status": {"Health": "OK"},
+         "Drives": [DISK_FULL, DISK_BAD],
+         "Volumes": [{"Id": "Disk.Bay.7:Enclosure.Internal.0-1:RAID.Integrated.1-1",
+                      "Name": "Volume 7", "RAIDType": "None", "CapacityBytes": 4000661504000,
+                      "Status": {"Health": "OK"}},
+                     {"Id": "VD.0", "Name": "Volume 0", "RAIDType": "RAID1",
+                      "CapacityBytes": 299439751168, "Status": {"Health": "Degraded"}}]},
+    ]},
+}
+
+
+class IdracSlowTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = {"host": "h", "user": "u", "password": "p"}
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def test_disks_and_volumes(self):
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(SLOW_JSON)):
+            d = srv.idrac_collect_slow(self.cfg, force=True)
+        self.assertTrue(d["ok"])
+        self.assertEqual(len(d["disks"]), 2)
+        # 槽位号从 Id 里解析出来，并按槽位排序
+        self.assertEqual([x["bay"] for x in d["disks"]], [7, 9])
+        self.assertEqual(d["disks"][0]["cap_gb"], 4001)
+        self.assertEqual(d["disks"][0]["firmware"], "CSJA")
+        self.assertTrue(d["disks"][1]["fail_pred"])
+        self.assertEqual(d["disk_bad"], 1)
+        self.assertEqual(d["controllers"][0]["model"], "PERC H330 Mini")
+        self.assertEqual(len(d["volumes"]), 2)
+        self.assertEqual(d["vol_bad"], 1)
+
+    def test_dimms_skip_empty_slot_and_sort(self):
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(SLOW_JSON)):
+            d = srv.idrac_collect_slow(self.cfg, force=True)
+        self.assertEqual([x["slot"] for x in d["dimms"]], ["A1", "B2"])
+        self.assertEqual(d["dimm_count"], 2)
+        self.assertEqual(d["dimm_gib"], 32.0)
+        self.assertEqual(d["dimm_bad"], 0)
+
+    def test_cpu_health(self):
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(SLOW_JSON)):
+            d = srv.idrac_collect_slow(self.cfg, force=True)
+        self.assertEqual(len(d["cpus"]), 2)
+        self.assertEqual(d["cpus"][0]["cores"], 16)
+        self.assertEqual(d["idrac_fw"], "2.86.86.86")
+
+    def test_unreachable_returns_not_ok(self):
+        with mock.patch.object(srv, "_idrac_request",
+                               return_value=(None, "认证失败（用户名或密码错误）")):
+            d = srv.idrac_collect_slow(self.cfg, force=True)
+        self.assertFalse(d["ok"])
+        self.assertEqual(d["disks"], [])
+
+
+class IdracProblemsTest(unittest.TestCase):
+    def test_collects_only_unhealthy(self):
+        fast = {"psu": [{"name": "PS1", "health": "OK"}, {"name": "PS2", "health": "Critical"}],
+                "fans": [{"name": "Fan1", "rpm": 9000, "health": "OK"}]}
+        slow = {"disks": [{"bay": 7, "model": "X", "health": "OK", "fail_pred": False, "life": 90},
+                          {"bay": 9, "model": "Y", "health": "Critical", "fail_pred": True, "life": 7}],
+                "volumes": [{"name": "Volume 0", "raid": "RAID1", "health": "Degraded"}],
+                "controllers": [{"id": "c0", "model": "PERC", "health": "OK"}],
+                "cpus": [{"id": "CPU.Socket.1", "health": "OK"}],
+                "dimms": [{"slot": "A1", "vendor": "Hynix", "health": "Warning"}]}
+        ps = srv.idrac_problems(fast, slow)
+        keys = [p["key"] for p in ps]
+        self.assertIn("bay:9", keys)
+        self.assertIn("life:9", keys)          # 寿命 ≤10% 单独一条（warning）
+        self.assertIn("psu:PS2", keys)
+        self.assertIn("vol:Volume 0", keys)
+        self.assertIn("dimm:A1", keys)
+        self.assertNotIn("bay:7", keys)        # 健康盘不进列表
+        self.assertNotIn("fan:Fan1", keys)
+        life = [p for p in ps if p["key"] == "life:9"][0]
+        self.assertEqual(life["severity"], "warn")
+
+    def test_empty_when_all_ok(self):
+        self.assertEqual(srv.idrac_problems({"psu": [], "fans": []}, {}), [])
+
+
+class SensorMergeTest(unittest.TestCase):
+    """iDRAC 带外读数并入传感器：Dell 机的内核里一个风扇通道都没有。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def test_fans_and_inlet_merged(self):
+        fast = {"ok": True,
+                "fans": [{"name": "Fan1", "rpm": 9960}, {"name": "Fan2", "rpm": 10200}],
+                "temps": [{"name": "进风口", "c": 25, "crit": 47},
+                          {"name": "CPU1", "c": 40, "crit": 87}]}
+        with mock.patch.object(srv, "is_linux", return_value=True), \
+                mock.patch.object(srv, "run_cmd", return_value=("", 1)), \
+                mock.patch.object(srv, "_hwmon_fans", return_value=[]):
+            s = srv.collect_sensors(fast)
+        self.assertEqual([f["rpm"] for f in s["fans"]], [9960, 10200])
+        self.assertIn("idrac", s["fans_source"])
+        names = [t["name"] for t in s["temps"]]
+        self.assertIn("进风口", names)
+        # CPU 温度交给 thermal zone，带外的不重复塞进来
+        self.assertNotIn("CPU1", names)
+
+    def test_no_idrac_keeps_old_behaviour(self):
+        with mock.patch.object(srv, "is_linux", return_value=True), \
+                mock.patch.object(srv, "run_cmd", return_value=("", 1)), \
+                mock.patch.object(srv, "_hwmon_fans", return_value=[]), \
+                mock.patch.object(srv, "_ipmi_fans", return_value=[]), \
+                mock.patch.object(srv, "_ibm_acpi_fans", return_value=[]):
+            s = srv.collect_sensors(None)
+        self.assertEqual(s["fans"], [])
+        self.assertEqual(s["fans_source"], "")
+
+
+class MemberShapeTest(unittest.TestCase):
+    """$expand 只展开一层，Volumes 的三种形态都要能吃下（真机三种都出现过）。"""
+
+    def test_expanded_collection_object(self):
+        d = {"Volumes": {"@odata.context": "/redfish/v1/$metadata#VolumeCollection",
+                         "@odata.id": "/redfish/v1/Systems/System.Embedded.1/Storage/RAID.Integrated.1-1/Volumes",
+                         "@odata.type": "#VolumeCollection.VolumeCollection",
+                         "Description": "Collection of Volumes",
+                         "Members": [{"Name": "Volume 0", "RAIDType": "RAID1"}]}}
+        with mock.patch.object(srv, "_idrac_request",
+                               side_effect=AssertionError("已展开时不应再发请求")):
+            got = srv._idrac_members({}, d, "Volumes")
+        self.assertEqual([x["Name"] for x in got], ["Volume 0"])
+
+    def test_plain_reference_fetches_once(self):
+        d = {"Volumes": {"@odata.id": "/redfish/v1/X/Volumes"}}
+        with mock.patch.object(srv, "_idrac_request",
+                               return_value=({"Members": [{"Name": "V1"}]}, "")) as m:
+            got = srv._idrac_members({"host": "h"}, d, "Volumes")
+        self.assertEqual(len(got), 1)
+        self.assertTrue(m.called)
+
+    def test_list_passthrough(self):
+        d = {"Drives": [{"Id": "a"}, {"Id": "b"}]}
+        self.assertEqual(len(srv._idrac_members({}, d, "Drives")), 2)
+
+    def test_missing_key(self):
+        self.assertEqual(srv._idrac_members({}, {}, "Volumes"), [])
+        self.assertEqual(srv._idrac_members({}, None, "Volumes"), [])
+
+
+class SelPathFallbackTest(unittest.TestCase):
+    """iDRAC8 对 iDRAC9 的 SEL 路径会回 200 + 空列表，不能据此提前返回。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def test_empty_first_path_falls_through(self):
+        def fake(cfg, path, timeout=None, query=None):
+            if path == "/Managers/iDRAC.Embedded.1/LogServices/Sel/Entries":
+                return {"Members": [], "Members@odata.count": 0}, ""
+            return SEL_JSON, ""
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake):
+            r = srv.idrac_sel({"host": "h"}, limit=5)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["path"], "/Managers/iDRAC.Embedded.1/Logs/Sel")
+        self.assertEqual(len(r["entries"]), 3)
+
+    def test_all_empty_is_still_ok(self):
+        with mock.patch.object(srv, "_idrac_request",
+                               return_value=({"Members": []}, "")):
+            r = srv.idrac_sel({"host": "h"}, limit=5)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["entries"], [])
 
 
 if __name__ == "__main__":

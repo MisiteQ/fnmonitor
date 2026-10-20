@@ -1256,6 +1256,29 @@ dd .diag-link{margin:0;height:24px}
 .idrac-sel .s.Warning{color:var(--warn)}
 .idrac-sel .s.OK{color:var(--ink-3)}
 .idrac-sel .m{min-width:0;color:var(--ink-2)}
+.idrac-sec{padding:var(--s2) 0 var(--s3);border-top:1px solid var(--line)}
+.idrac-sec-h{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--ink-3);text-transform:uppercase;margin-bottom:6px}
+.idrac-sec-h .faint{text-transform:none;letter-spacing:0;font-weight:400}
+.idrac-line{font-size:13px;color:var(--ink-2);line-height:1.7}
+.idrac-line .h-crit{color:var(--crit);font-weight:600}
+.idrac-line .h-ok{color:var(--health-ok)}
+.idrac-dimms{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:4px 10px;font-size:12px}
+.idrac-dimms>div{display:flex;gap:6px;align-items:baseline;padding:3px 6px;border-radius:5px;background:color-mix(in srgb,var(--ink-1) 4%,transparent)}
+.idrac-dimms>div span:nth-child(2){color:var(--ink-1);font-variant-numeric:tabular-nums}
+.idrac-dimms>div.bad{box-shadow:inset 0 0 0 1px var(--crit)}
+.idrac-disks{display:flex;flex-direction:column;gap:1px;font-size:12px;font-variant-numeric:tabular-nums;max-width:780px}
+.idrac-disks .hr,.idrac-disks .dr{display:grid;grid-template-columns:38px minmax(0,1fr) 56px 74px 62px;gap:10px;align-items:baseline}
+.idrac-disks .hr{border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:2px}
+.idrac-disks .ih{color:var(--ink-3);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.idrac-disks .dr{padding:3px 0;color:var(--ink-2)}
+.idrac-disks .dr + .dr{border-top:1px solid color-mix(in srgb,var(--line) 45%,transparent)}
+.idrac-disks .dr>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idrac-disks .dr.bad{color:var(--crit)}
+.idrac-disks .h-ok{color:var(--health-ok)}
+.idrac-disks .h-crit{color:var(--crit);font-weight:600}
+@media (max-width: 720px){.idrac-disks .hr,.idrac-disks .dr{grid-template-columns:32px minmax(0,1fr) 58px}
+.idrac-disks .hr>span:nth-child(3),.idrac-disks .hr>span:nth-child(4),.idrac-disks .dr>span:nth-child(3),.idrac-disks .dr>span:nth-child(4){display:none}
+}
 </style>
 </head>
 <body>
@@ -2548,11 +2571,13 @@ if (dmax != null && tv != null) tp.push(`硬盘最高 ${F.int(dmax)}℃`);
 setText(x.tempSub, tv == null && dmax == null ? '未读取到温度传感器' : tp.join(' · ') || 'CPU 封装温度');
 m.sp.temp.set([{ values: vals(tv != null ? (ct != null ? S.live.temp : S.live.tempMb) : []) }], {});
 const pw = o.power || {}, has3 = pwrOk(o), w = has3 ? +pw.total : null, ep = S.pstats && S.pstats.estimation_params;
-const capW = ep ? ep.tdp_w + ep.base_w + ep.disk_typical_w * Math.max(1, dd.length) + ep.nic_fixed_w * Math.max(1, ni.length) : Math.max(60, (w || 0) * 1.5);
+const capW = pw.capacity ? +pw.capacity : (ep ? ep.tdp_w + ep.base_w + ep.disk_typical_w * Math.max(1, dd.length) + ep.nic_fixed_w * Math.max(1, ni.length) : Math.max(60, (w || 0) * 1.5));
 dnum(x.pwrV, w, F.d1); m.g.pwr.set(w != null ? w / capW : 0, ''); m.g.pwr.tone(w != null ? rampAt(w / capW * 100, 'gen') : ''); inkTo(x.pwrV, w != null ? rampInk(w / capW * 100, 'gen') : '');
-st('pwr', '', !has3 ? '不可用' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
+st('pwr', '', !has3 ? '不可用' : pw.source === 'idrac' ? 'iDRAC 实测' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
 const en = S.pstats && S.pstats.energy, co = S.pstats && S.pstats.cost;
-setText(x.pwrSub, !has3 ? '无法读取或估算功耗' : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : (pw.source === 'rapl' ? '硬件 RAPL 读数' : '按部件模型估算'));
+const pwrSrc = pw.source === 'idrac' ? `iDRAC 整机读数${pw.capacity ? ` · 电源容量 ${F.int(pw.capacity)} W` : ''}`
+: pw.source === 'rapl' ? '硬件 RAPL 读数' : '按部件模型估算';
+setText(x.pwrSub, !has3 ? '无法读取或估算功耗' : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : pwrSrc);
 m.sp.pwr.set([{ values: vals(S.live.power) }], { min: 0 });
 },
 });
@@ -2943,6 +2968,7 @@ title: i => days[i] ? (days[i].getMonth() + 1) + '/' + days[i].getDate() + (i ==
 xLabel: i => { const n = days.length, step = n > 14 ? 7 : n > 7 ? 3 : 1; return i === n - 1 ? '今天' : ((n - 1 - i) % step === 0 && days[i] ? (days[i].getMonth() + 1) + '/' + days[i].getDate() : null); },
 });
 function powerParts(p) {
+if (p.source === 'idrac') return [['整机实测', +p.total || 0, 'var(--d-p)']];
 const parts = [];
 if (ok(p.package)) parts.push(['CPU 封装', +p.package, 'var(--d-p)']);
 if (ok(p.dram)) parts.push(['内存', +p.dram, 'color-mix(in srgb, var(--d-p) 55%, var(--card))']);
@@ -2953,7 +2979,7 @@ if (rest > 0.05) parts.push([p.source === 'estimated' ? 'CPU 与网卡等（估�
 return parts;
 }
 const ppI = c => c === 'hatch' ? '<i class="hatch"></i>' : `<i style="background:${c}"></i>`;
-const SRC_TXT = { rapl: '硬件 RAPL', estimated: '模型估算' };
+const SRC_TXT = { idrac: 'iDRAC 实测', rapl: '硬件 RAPL', estimated: '模型估算' };
 const monthProj = (mk, o) => { const a = avgW(o); if (!ok(mk) || !a) return null; const d = new Date(), end = new Date(d.getFullYear(), d.getMonth() + 1, 1); return { kwh: mk + a.w * (end - d) / 3.6e9, w: a.w, basis: a.basis }; };
 const yearProj = o => { const a = avgW(o); return a ? { kwh: a.w * 8.76, w: a.w, basis: a.basis } : null; };
 defineModule({
@@ -3006,7 +3032,9 @@ if (!o) return;
 const x = m.x, p = o.power || {}, has = pwrOk(o), ps = S.pstats, rate = ps && ps.cost ? ps.cost.rate_yuan_per_kwh : (S.cfg && S.cfg.power_rate_yuan);
 dnum(x.w, has ? +p.total : null, F.d1);
 setText(x.src, has ? (SRC_TXT[p.source] || '来源未知') : '不可用');
-setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗' : p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘' : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算');
+setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗'
+: p.source === 'idrac' ? `iDRAC 实测整机输出${ok(p.capacity) ? ` · 电源容量 ${F.int(p.capacity)} W` : ''}${ok(p.min) && ok(p.max) ? ` · 近 1 分钟 ${F.int(p.min)}–${F.int(p.max)} W` : ''}`
+: p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘' : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算');
 const parts = has ? powerParts(p) : [], sig = parts.map(q => q[0]).join();
 if (m.psig !== sig) { m.psig = sig; x.stack.innerHTML = parts.map(q => ppI(q[2])).join(''); }
 parts.forEach((q, i) => { if (x.stack.children[i]) x.stack.children[i].style.flexGrow = q[1].toFixed(2); });
@@ -3476,17 +3504,21 @@ b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">实时功耗</d
 <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
 sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
 b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
-<div class="note info">${ic('info')}<span>RAPL 只测得 CPU 封装（与内存）功耗；整机值叠加了主板底座与活动硬盘的典型功耗，可在设置中按插座实测补差。无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
+<div class="note info">${ic('info')}<span>接了 iDRAC 时直接用电源实测的整机输出，这是最准的口径（含主板、内存、网卡与全部硬盘）。没有 iDRAC 才会退回 RAPL：它只测得 CPU 封装（与内存）功耗，整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
 const x = collect(b);
 b.addEventListener('click', e => { const g = e.target.closest('[data-goset]'); if (g) { closeSheet(); focusGroup(g.dataset.goset); } });
 return o => {
 const p = o.power || {}, has = pwrOk(o), ps = S.pstats || {};
-dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
+dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'idrac' ? 'iDRAC 整机实测' : p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
 const parts = has ? powerParts(p) : [];
 setHTML(x.st, parts.map(q => ppI(q[2])).join('')); parts.forEach((q, i) => { x.st.children[i].style.flexGrow = q[1].toFixed(2); });
 setHTML(x.leg, parts.map(([l, v, c]) => `<span>${ppI(c)}${esc(l)} <b>${F.d1(v)} W</b></span>`).join('') || '<span>无功耗数据</span>');
 const w = v => ok(v) ? F.d1(v) + ' W' : '<span class="faint">—</span>';
-setHTML(x.parts, has ? kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]]) : '');
+const psuRows = (p.psu || []).map(u => [`电源 ${esc(u.name)}`,
+`${ok(u.volts) ? esc(String(u.volts)) + ' V' : '—'} · ${esc(u.health || '')}${u.model ? ' · ' + esc(u.model) : ''}`]);
+setHTML(x.parts, has ? (p.source === 'idrac'
+? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
+: kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
 const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
 setText(x.rate, ok(co.rate_yuan_per_kwh) ? `电价 ${co.rate_yuan_per_kwh} 元/kWh` : '');
 setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
@@ -4366,9 +4398,10 @@ sync();
 sync();
 }
 let IB = null;
-async function loadIdrac(force) {
-if (IB && !force) return IB;
-try { IB = await API.get('/api/idrac?sel=1' + (force ? '&refresh=1' : '')); }
+async function loadIdrac(opts) {
+opts = opts || {};
+if (IB && !opts.refresh && !opts.reload) return IB;
+try { IB = await API.get('/api/idrac?sel=1' + (opts.refresh ? '&refresh=1' : '')); }
 catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
 return IB;
 }
@@ -4398,6 +4431,10 @@ const when = s => { try { return new Date(s).toLocaleString('zh-CN', { hour12: f
 function renderLive() {
 const d = IB || {};
 if (!d.configured) { x.live.innerHTML = ''; return; }
+if (d.warming) {
+x.live.innerHTML = `<div class="idrac-head"><span class="h-ok">正在读取</span><span>iDRAC8 的 Redfish 每个请求约 5 秒，首次读取要 30–60 秒；后台会持续刷新，这里稍后自动出数据</span></div>`;
+return;
+}
 if (!d.ok) {
 x.live.innerHTML = `<div class="idrac-head"><span class="h-crit">读取失败</span><span>${esc(d.error || '未知错误')}</span></div>`;
 return;
@@ -4413,12 +4450,41 @@ fs.count ? `风扇 ${fs.count} 颗 · ${fs.min}–${fs.max} RPM · 均 ${fs.avg}
 d.bios ? `BIOS ${esc(d.bios)}` : ''
 ].filter(Boolean).join(' · ');
 const fans = (d.fans || []).map(v => `<div class="idrac-fan${v.health && v.health.toUpperCase() !== 'OK' ? ' bad' : ''}"><b>${esc(v.name)}</b>${esc(String(v.rpm))}<small>RPM</small></div>`).join('');
-const temps = (d.temps || []).slice(0, 8).map(t => `<span>${esc(String(t.name).replace(/^System Board\s*/i, ''))} <b>${esc(String(t.c))}</b>°C</span>`).join('');
-const sel = (d.sel && d.sel.entries) || [];
-const selHtml = sel.length ? `<div class="idrac-sel">${sel.map(e => `<div class="e"><span class="t">${esc(when(e.created))}</span><span class="s ${esc(e.severity)}">${esc(e.severity || '-')}</span><span class="m">${esc(e.message)}</span></div>`).join('')}</div>` : '';
+const temps = (d.temps || []).slice(0, 8).map(t => `<span>${esc(String(t.name))} <b>${esc(String(t.c))}</b>°C${t.crit != null ? `<small class="faint"> / ${esc(String(t.crit))}</small>` : ''}</span>`).join('');
+const cpus = d.cpus || [];
+const cpuLine = cpus.length ? cpus.map(c => `${esc(c.model || 'CPU')} <span class="faint">${c.cores ? c.cores + ' 核' : ''}${c.threads ? ' / ' + c.threads + ' 线程' : ''}${c.mhz ? ' · ' + (c.mhz / 1000).toFixed(1) + 'GHz' : ''}</span>`).join('　') : '';
+const dimms = d.dimms || [];
+const dimmHead = dimms.length
+? `${dimms.length} 条 · ${d.dimm_gib || 0} GiB${d.dimm_bad ? ` · <span class="h-crit">${d.dimm_bad} 条异常</span>` : ' · 全部正常'}`
+: '';
+const dimmRows = dimms.map(m => `<div class="${m.health && m.health.toUpperCase() !== 'OK' ? 'bad' : ''}"><span class="mono">${esc(m.slot)}</span><span>${Math.round(m.mb / 1024)} GB</span><span class="faint">${esc(m.type)}${m.mhz ? ' · ' + m.mhz + 'MHz' : ''}</span><span class="faint">${esc(m.vendor || '')}</span></div>`).join('');
+const ctrls = d.controllers || [];
+const disks = d.disks || [];
+const vols = (d.volumes || []).filter(v => v.raid && v.raid.toUpperCase() !== 'NONE');
+const ctrlLine = ctrls.map(c => `${esc(c.model || c.id)}${c.firmware ? ` <span class="faint">固件 ${esc(c.firmware)}</span>` : ''}${c.health && c.health.toUpperCase() !== 'OK' ? ` <span class="h-crit">${esc(c.health)}</span>` : ''}`).join('　');
+const diskHead = disks.length
+? `${disks.length} 块${d.disk_bad ? ` · <span class="h-crit">${d.disk_bad} 块异常</span>` : ' · 全部正常'}${vols.length ? ` · ${vols.length} 个卷` : ''}`
+: '';
+const diskRows = disks.map(k => {
+const bad = k.fail_pred || (k.health && k.health.toUpperCase() !== 'OK');
+const st = k.fail_pred ? '预测故障' : (k.health && k.health.toUpperCase() !== 'OK' ? k.health : '正常');
+return `<div class="dr${bad ? ' bad' : ''}"><span class="mono">${esc(String(k.bay))}</span><span class="mono" title="${esc(k.serial || '')}">${esc(k.model || '?')}</span><span>${k.cap_gb ? k.cap_gb + 'G' : '-'}</span><span class="faint">${esc(k.protocol || k.media || '')}${k.rpm ? ' ' + (k.rpm / 1000).toFixed(1) + 'k' : ''}</span><span class="${bad ? 'h-crit' : 'h-ok'}">${esc(st)}</span></div>`;
+}).join('');
+const fw = [
+d.idrac_fw ? `iDRAC ${esc(d.idrac_fw)}` : '',
+d.bios ? `BIOS ${esc(d.bios)}` : '',
+...ctrls.filter(c => c.firmware).map(c => `${esc(c.model || '阵列卡')} ${esc(c.firmware)}`)
+].filter(Boolean).join(' · ');
+const sel = ((d.sel && d.sel.entries) || []).slice(0, 5);
+const selHtml = sel.length ? `<div class="idrac-sec"><div class="idrac-sec-h">硬件日志 <span class="faint">最近 ${sel.length} 条</span></div><div class="idrac-sel">${sel.map(e => `<div class="e"><span class="t">${esc(when(e.created))}</span><span class="s ${esc(e.severity)}">${esc(e.severity || '-')}</span><span class="m">${esc(e.message)}</span></div>`).join('')}</div></div>` : '';
 x.live.innerHTML = `<div class="idrac-head">${head}</div>`
 + (fans ? `<div class="idrac-fans">${fans}</div>` : '')
 + (temps ? `<div class="idrac-temps">${temps}</div>` : '')
++ (cpuLine ? `<div class="idrac-sec"><div class="idrac-sec-h">处理器</div><div class="idrac-line">${cpuLine}</div></div>` : '')
++ (dimms.length ? `<div class="idrac-sec"><div class="idrac-sec-h">内存 <span class="faint">${dimmHead}</span></div><div class="idrac-dimms">${dimmRows}</div></div>` : '')
++ (ctrlLine ? `<div class="idrac-sec"><div class="idrac-sec-h">阵列卡</div><div class="idrac-line">${ctrlLine}</div></div>` : '')
++ (disks.length ? `<div class="idrac-sec"><div class="idrac-sec-h">物理盘 <span class="faint">${diskHead}</span></div><div class="idrac-disks"><div class="hr"><span class="ih">槽位</span><span class="ih">型号</span><span class="ih">容量</span><span class="ih">接口</span><span class="ih">状态</span></div>${diskRows}</div></div>` : '')
++ (fw ? `<div class="idrac-sec"><div class="idrac-sec-h">固件</div><div class="idrac-line faint">${fw}</div></div>` : '')
 + selHtml;
 }
 function sync() {
@@ -4444,7 +4510,7 @@ try {
 const j = await API.post('/api/idrac/save', body);
 if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
 f.password = ''; x.pw.value = '';
-IB = await loadIdrac(true);
+IB = await loadIdrac({ refresh: true });
 toast('iDRAC 配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
 setText(x.hMsg, (IB && IB.ok) ? '已保存并读取成功' : ('已保存 · ' + ((IB && IB.error) || '尚未读取到数据')));
 } catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
@@ -4452,7 +4518,7 @@ x.save.disabled = false; sync();
 }
 x.save.onclick = doSave;
 x.test.onclick = async () => {
-x.test.disabled = true; setText(x.hMsg, '正在连接 iDRAC…');
+x.test.disabled = true; setText(x.hMsg, '正在读取 iDRAC…（iDRAC8 每个请求约 5 秒，首次要 30–60 秒）');
 const body = { host: f.host, user: f.user };
 if (f.password) body.password = f.password;
 try {
@@ -4461,22 +4527,33 @@ const steps = (j && j.steps) || [];
 const bad = steps.find(s => !s.ok);
 if (j && j.ok) {
 const ov = j.overview || {};
-setText(x.hMsg, `连接成功 · ${ov.model || 'Dell'} · 服务标签 ${j.service_tag || ov.service_tag || '-'} · 风扇 ${(ov.fan_summary || {}).count || 0} 颗 · 硬件日志 ${(j.sel || {}).count || 0} 条`);
+setText(x.hMsg, `连接成功 · ${ov.model || 'Dell'} · 服务标签 ${j.service_tag || ov.service_tag || '-'} · 风扇 ${(ov.fan_summary || {}).count || 0} 颗 · 物理盘 ${(j.disks || []).length} 块 · 内存 ${(j.dimms || []).length} 条 · 硬件日志 ${(j.sel || {}).count || 0} 条`);
 toast('iDRAC 连接成功', { icon: 'check', ms: 4000 });
 } else {
 setText(x.hMsg, '连接失败：' + String((bad && (bad.error || bad.detail)) || (j && j.error) || '未知错误'));
 toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 });
 }
-IB = await loadIdrac(true); sync();
+IB = await loadIdrac({ refresh: true }); sync();
 } catch (e) { setText(x.hMsg, '连接失败：' + String(e.message).slice(0, 80)); toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 }); }
 x.test.disabled = false;
 };
 card._sync = sync;
+let warmTries = 0;
+function retryWarm() {
+if (!IB || !IB.warming || warmTries >= 8) return;
+warmTries += 1;
+setTimeout(async () => {
+await loadIdrac({ reload: true });
+sync();
+retryWarm();
+}, 15000);
+}
 loadIdrac().then(() => {
 const c = (IB && IB.config) || {};
 ['enabled', 'host', 'user', 'verify_tls', 'sel_alert'].forEach(k => { if (c[k] !== undefined) f[k] = c[k]; });
 f.password = '';
 sync();
+retryWarm();
 });
 sync();
 }

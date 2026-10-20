@@ -2380,10 +2380,39 @@ def _classify_temp(name):
     return "board"
 
 
-def collect_sensors():
-    """sensors -j 解析：温度分类 / 风扇转速 / 电压（参照网络主流硬件监控面板）。"""
+def collect_sensors(idr=None):
+    """sensors -j 解析：温度分类 / 风扇转速 / 电压（参照网络主流硬件监控面板）。
+
+    idr 传 iDRAC 的「快组」缓存时，机箱风扇与进排风温度也并进来——
+    Dell 服务器把风扇交给 iDRAC 管，内核 hwmon 里一个通道都没有，
+    所以本机永远是「未检测到风扇」；带外读数才是唯一来源。
+    """
     data = {"temps": [], "fans": [], "volts": [], "available": False, "fans_source": ""}
+    # ---- 带外（iDRAC）：先记下来，稍后并进风扇列表 ----
+    bmc_fans, bmc_temps = [], []
+    if idr and idr.get("ok"):
+        for i, f in enumerate(_idrac_items(idr, "fans")):
+            rpm = _nz(f.get("rpm"))
+            if rpm is None:
+                continue
+            bmc_fans.append({"name": str(f.get("name") or ("Fan%d" % (i + 1))),
+                             "rpm": int(rpm)})
+        for t in _idrac_items(idr, "temps"):
+            cel = _nz(t.get("c"))
+            nm = str(t.get("name") or "")
+            if cel is None or not nm:
+                continue
+            # CPU 温度由 thermal zone / coretemp 给，带外只补机箱级测点，免得同一行出现两次
+            if nm.upper().startswith("CPU"):
+                continue
+            bmc_temps.append({"name": nm, "raw": nm, "chip": "iDRAC",
+                              "type": "board", "value": round(float(cel), 1),
+                              "max": t.get("warn"), "crit": t.get("crit")})
     if not is_linux():
+        data["fans"] = bmc_fans
+        data["fans_source"] = "idrac" if bmc_fans else ""
+        data["temps"] = bmc_temps
+        data["available"] = bool(bmc_fans or bmc_temps)
         return data
     out, rc = run_cmd(["sensors", "-j"], timeout=10)
     data["available"] = (rc == 0 and bool(out.strip()))
@@ -2504,9 +2533,15 @@ def collect_sensors():
     if len(merged_fans) > n_hw:
         fan_src.append("hwmon")
     # ---- 标准 hwmon / sensors 均无风扇时，启用补充数据源（自动识别）----
-    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI（均为只读）。
+    # 覆盖标准内核驱动未接管的机型：iDRAC 带外、IPMI/BMC、ThinkPad ACPI（均为只读）。
     # EC 硬件监控邮箱（0xA20）需要向 IO 端口 0xA20/0xA21 写入选通 / bank / 寄存器
     # 字节，属于硬件访问，默认关闭；仅在用户于设置中开启 ec_fan_probe 后才尝试。
+    if not merged_fans and bmc_fans:
+        # Dell 服务器：风扇全交给 iDRAC 管，内核 hwmon 一个通道都没有。
+        # 带外读数比 ipmitool 更准（直接是 iDRAC 风扇表），所以排在最前。
+        fan_src.append("idrac")
+        for bf in bmc_fans:
+            merged_fans.append({"name": bf["name"], "rpm": int(bf["rpm"])})
     if not merged_fans:
         sources = [("ipmi", _ipmi_fans), ("ibm-acpi", _ibm_acpi_fans)]
         if RUNTIME.get("ec_fan_probe"):
@@ -2527,6 +2562,13 @@ def collect_sensors():
                 merged_fans.append({"name": ef["name"], "rpm": int(ef["rpm"])})
     data["fans"] = merged_fans
     data["fans_source"] = "+".join(fan_src)
+    # 带外温度（进风口 / 排风口）并进来；CPU 温度已由 thermal zone 提供，不重复
+    if bmc_temps:
+        have = set(str(t.get("name") or "") for t in data["temps"])
+        for t in bmc_temps:
+            if t["name"] not in have:
+                data["temps"].append(t)
+                have.add(t["name"])
     # 温度按 CPU / 芯片组 / 主板 / ACPI 顺序排列
     order = {"cpu": 0, "pch": 1, "board": 2, "acpi": 3, "disk": 4, "gpu": 5}
     data["temps"].sort(key=lambda t: (order.get(t["type"], 9), t["name"]))
@@ -3598,50 +3640,65 @@ def notify_after_scan(items, ts, db, config=None):
             if grew:
                 events.append({"act": "worse", "dev": dev, "d": it,
                                "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
-        # iDRAC 硬件日志：活跃告警按「指纹」（消息号 + 传感器）增量对比，
-        # 同一条告警只发一次；消失时补一条恢复。iDRAC 不通不影响硬盘判定。
+        # iDRAC：硬件状态（盘/卷/电源/风扇/CPU/内存）+ 硬件日志，都按「指纹」增量对比，
+        # 同一条只发一次；消失时补一条恢复。iDRAC 不通不影响硬盘判定。
         idrac_prev = st.get("idrac_active") or {}
         if isinstance(idrac_prev, list):          # 兼容早期纯列表格式
             idrac_prev = {k: {} for k in idrac_prev}
         idrac_cur = dict(idrac_prev)
+        # 硬件状态刚接入时先记一轮基线：否则第一次扫描会把机器上现存的历史问题
+        # （开盖记录、已恢复的电源告警）当成"新故障"一次性倒出来
+        hw_inited = bool(st.get("idrac_hw_inited"))
         icfg = idrac_load(data_dir)
-        if icfg.get("enabled") and icfg.get("sel_alert"):
+        if icfg.get("enabled"):
             snap = idrac_snapshot(icfg)
             if snap.get("ok"):
                 idrac_cur = {}
-                for a in snap.get("active") or []:
-                    fp = "%s|%s" % (a.get("msg_id") or a.get("id") or "", a.get("sensor") or "")
-                    if fp == "|":
-                        continue
-                    idrac_cur[fp] = {"message": a.get("message") or "",
-                                     "sensor": a.get("sensor") or "", "severity": a.get("severity") or ""}
-                for fp, a in idrac_cur.items():
-                    if fp in idrac_prev:
-                        continue
-                    sev = str(a.get("severity") or "")
-                    events.append({"act": "new", "dev": "iDRAC",
-                                   "d": {"dev": "iDRAC", "kind": "idrac", "model": a.get("sensor") or "硬件日志",
-                                         "grade": "crit" if sev.lower() == "critical" else "warn",
-                                         "detail": a.get("message") or ""},
-                                   "text": a.get("message") or ""})
-                for fp, a in idrac_prev.items():
-                    if fp in idrac_cur:
-                        continue
-                    events.append({"act": "recovered", "dev": "iDRAC",
-                                   "d": {"dev": "iDRAC", "kind": "idrac", "grade": "ok",
-                                         "model": a.get("sensor") or "硬件日志"},
-                                   "text": "已解除：%s" % (a.get("message") or fp)})
+                # ① 硬件状态：盘掉/故障预测、卷或阵列卡降级、电源/风扇/CPU/内存非 OK
+                for p in snap.get("problems") or []:
+                    idrac_cur["hw|" + str(p.get("key") or "")] = {
+                        "message": p.get("text") or "",
+                        "sensor": p.get("kind") or "",
+                        "severity": p.get("severity") or "crit"}
+                # ② 硬件日志：受「硬件日志纳入告警」开关单独控制
+                if icfg.get("sel_alert"):
+                    for a in snap.get("active") or []:
+                        fp = "%s|%s" % (a.get("msg_id") or a.get("id") or "", a.get("sensor") or "")
+                        if fp == "|":
+                            continue
+                        idrac_cur[fp] = {"message": a.get("message") or "",
+                                         "sensor": a.get("sensor") or "",
+                                         "severity": a.get("severity") or ""}
+                if hw_inited:
+                    for fp, a in idrac_cur.items():
+                        if fp in idrac_prev:
+                            continue
+                        sev = str(a.get("severity") or "")
+                        events.append({"act": "new", "dev": "iDRAC",
+                                       "d": {"dev": "iDRAC", "kind": "idrac",
+                                             "model": a.get("sensor") or "硬件状态",
+                                             "grade": "crit" if sev.lower() in ("crit", "critical") else "warn",
+                                             "detail": a.get("message") or ""},
+                                       "text": a.get("message") or ""})
+                    for fp, a in idrac_prev.items():
+                        if fp in idrac_cur:
+                            continue
+                        events.append({"act": "recovered", "dev": "iDRAC",
+                                       "d": {"dev": "iDRAC", "kind": "idrac", "grade": "ok",
+                                             "model": a.get("sensor") or "硬件状态"},
+                                       "text": "已解除：%s" % (a.get("message") or fp)})
         # 首次：只记基线不发信（老版本状态文件没有 inited，但 notified 非空说明早已在工作）
         if not (st.get("inited") or notified):
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
                               {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                               "idrac_active": idrac_cur, "ts": ts})
+                               "idrac_active": idrac_cur, "idrac_hw_inited": 1, "ts": ts})
             print("[fnmonitor] 硬盘巡检首次记录基线，本轮不发通知")
             return {"ok": True, "inited": True, "silent": True, "notified": cur}
         if not events:
-            if cur != notified or cur_metrics != old_metrics or idrac_cur != idrac_prev:
+            if (cur != notified or cur_metrics != old_metrics or idrac_cur != idrac_prev
+                    or not hw_inited):
                 keep = {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                        "idrac_active": idrac_cur, "ts": ts}
+                        "idrac_active": idrac_cur, "idrac_hw_inited": 1, "ts": ts}
                 if st.get("last"):
                     keep["last"] = st["last"]
                 write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE), keep)
@@ -3657,7 +3714,8 @@ def notify_after_scan(items, ts, db, config=None):
         if ok:
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
                               {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                               "idrac_active": idrac_cur, "ts": ts, "last": summary})
+                               "idrac_active": idrac_cur, "idrac_hw_inited": 1,
+                               "ts": ts, "last": summary})
         else:
             # 发送失败：保留旧状态与旧指标，下一轮巡检重试同一批事件
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
@@ -3720,10 +3778,17 @@ def notify_test(data_dir, channel="all"):
 # —— 和 notify.json 同一套口径。
 IDRAC_FILE = "idrac.json"
 IDRAC_TTL = 60.0                   # 概览缓存：页面刷新不打爆 iDRAC
+IDRAC_SLOW_TTL = 600.0             # 盘 / 内存 / 固件这类静态信息：10 分钟一次
 IDRAC_SEL_LIMIT = 20               # 只取最近 N 条硬件日志
-IDRAC_TIMEOUT = 8
+# iDRAC8 的 Redfish 慢得出奇：每个请求固定 4.5~6 秒（固件内部逐请求鉴权 + 查询，
+# 不是网络问题）。所以：① 一律带 $expand 把一个集合成员一次取全（35 请求 → 8）；
+# ② 绝不在采集主线程里同步发请求，改由 IdracPoller 后台线程刷缓存，主线程只读缓存。
+# 超时也要放宽，8 秒卡在正常耗时边缘会误判成"连接超时"。
+IDRAC_TIMEOUT = 25
 _IDRAC_CACHE = {}
 _IDRAC_LOCK = threading.Lock()
+# 保存配置后立刻唤醒后台轮询，不用等下一个周期（用户刚填完就盼着看到数据）
+_IDRAC_WAKE = threading.Event()
 
 IDRAC_DEFAULT = {"enabled": 0, "host": "", "user": "", "password": "",
                  "verify_tls": 0, "sel_alert": 1}
@@ -3792,6 +3857,7 @@ def idrac_save(data_dir, data):
         if not cfg["password"]:
             return cfg, "请填写 iDRAC 密码（红帽账号授权码那类不行，要 iDRAC 的登录密码）"
     write_json_secure(os.path.join(data_dir, IDRAC_FILE), cfg)
+    _IDRAC_WAKE.set()          # 配置变了：让后台轮询立刻重读，不必等周期
     return cfg, ""
 
 
@@ -3812,7 +3878,7 @@ def idrac_short_err(e):
     return "连接失败：%s" % s[:120]
 
 
-def _idrac_request(cfg, path, timeout=IDRAC_TIMEOUT):
+def _idrac_request(cfg, path, timeout=IDRAC_TIMEOUT, query=None):
     """GET 一个 Redfish 路径（path 相对 /redfish/v1）。返回 (json 或 None, 错误文案)。"""
     host = str(cfg.get("host") or "").strip()
     if not host:
@@ -3820,6 +3886,8 @@ def _idrac_request(cfg, path, timeout=IDRAC_TIMEOUT):
     if not re.match(r"^[A-Za-z0-9_.\-:]+$", host):
         return None, "iDRAC 地址格式不对（只填 IP 或主机名，不要带路径）"
     url = "https://%s/redfish/v1%s" % (host, path)
+    if query:
+        url += ("&" if "?" in url else "?") + query
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     token = base64.b64encode(("%s:%s" % (cfg.get("user") or "", cfg.get("password") or "")
                               ).encode("utf-8")).decode("ascii")
@@ -3856,11 +3924,101 @@ def _idrac_fan_sort(name):
     return (int(m.group(1)) if m else 99, (m.group(2) or "").upper())
 
 
+def _idrac_items(d, key):
+    """取集合成员，兼容三种形态：list / 单成员 dict / {"@odata.id": ...} 引用。"""
+    if not isinstance(d, dict):
+        return []
+    v = d.get(key)
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, dict)]
+    if isinstance(v, dict):
+        # 单成员时 iDRAC8 会退化成 dict；纯引用（只有 @odata.id）也在这里返回
+        return [v]
+    return []
+
+
+def _idrac_try_fetch(cfg, m):
+    """$expand 没生效时成员只剩 @odata.id，补一次请求。
+
+    正常路径（expand 生效）不会走到这里；一旦走到也只是多几次请求，
+    上限 20 条，避免 expand 失效时把 14 块盘拆成 78 秒。
+    """
+    if not isinstance(m, dict):
+        return {}
+    if len(m) > 2 or not m.get("@odata.id"):
+        return m
+    path = str(m["@odata.id"]).replace("/redfish/v1", "", 1)
+    d, err = _idrac_request(cfg, path)
+    return d if (not err and isinstance(d, dict)) else m
+
+
+def _idrac_members(cfg, d, key):
+    """取集合成员，兼容 iDRAC8 的三种形态。
+
+    $expand 只展开一层，而 Volumes 在控制器里可能以三种样子出现：
+      ① 数组（Drives 就是这种，成员字段已展开）
+      ② 已展开的集合对象（有 Members 键）—— expand 命中时就是它
+      ③ 纯集合引用（只有 @odata.id）—— 得再发一次请求取
+    不区分就会出现「卷 3 个、名字全是 ?」：三个控制器各算了一个引用。
+    """
+    v = d.get(key) if isinstance(d, dict) else None
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, dict)]
+    if isinstance(v, dict):
+        if "Members" in v:                      # ② 已展开的集合对象
+            return [x for x in (v.get("Members") or []) if isinstance(x, dict)]
+        if len(v) <= 2 and v.get("@odata.id"):  # ③ 纯引用
+            path = str(v["@odata.id"]).replace("/redfish/v1", "", 1)
+            sub, err = _idrac_request(cfg, path, query="$expand=*($levels=1)")
+            if err or not isinstance(sub, dict):
+                return []
+            return _idrac_members(cfg, sub, "Members") or _idrac_items(sub, "Members")
+        return [v]
+    return []
+
+
+def _idrac_slot(raw):
+    """"iDRAC.Embedded.1#DIMMSLOTA1" → "A1"；取不到就原样回。"""
+    s = str(raw or "")
+    if "#" in s:
+        s = s.split("#", 1)[1]
+    m = re.search(r"DIMM\s*SLOT\s*([A-Z]\d+)", s, re.I)
+    if m:
+        return m.group(1).upper()
+    m = re.search(r"([A-Z]\d+)$", s)
+    return m.group(1) if m else s
+
+
+def _idrac_dimm_sort(x):
+    m = re.match(r"([A-Z])(\d+)", x.get("slot") or "")
+    return (m.group(1), int(m.group(2))) if m else ("Z", 99)
+
+
+def _idrac_bay(raw):
+    """"Disk.Bay.7:Enclosure.Internal.0-1:..." → 7（槽位号，前端按它排序）。"""
+    m = re.search(r"Disk\.Bay\.(\d+)", str(raw or ""))
+    return int(m.group(1)) if m else (str(raw or "")[-18:] or "?")
+
+
+def _idrac_temp_zh(raw):
+    """iDRAC 的英文测点名翻成面板用语：Inlet Temp → 进风口。"""
+    s = _idrac_name(raw)
+    low = s.lower()
+    if "inlet" in low:
+        return "进风口"
+    if "exhaust" in low:
+        return "排风口"
+    m = re.match(r"(CPU\s*\d+)\s*Temp", s, re.I)
+    if m:
+        return m.group(1).upper().replace(" ", "")
+    return s
+
+
 def idrac_collect(cfg, force=False):
-    """拉一次概览：机型 / 整机健康 / 风扇 / 温度 / 功耗。带 60 秒缓存。"""
+    """「快组」概览（3 个请求）：机型 / 整机健康 / 风扇 / 温度 / 功耗。60 秒缓存。"""
     now = time.time()
     with _IDRAC_LOCK:
-        c = _IDRAC_CACHE.get("v")
+        c = _IDRAC_CACHE.get("fast")
         if not force and c and now - c.get("ts", 0) < IDRAC_TTL:
             return dict(c, cached=True)
     out = {"ok": False, "host": cfg.get("host") or "", "ts": now}
@@ -3869,7 +4027,7 @@ def idrac_collect(cfg, force=False):
     if err:
         out["error"] = err
         with _IDRAC_LOCK:
-            _IDRAC_CACHE["v"] = dict(out, ts=now)
+            _IDRAC_CACHE["fast"] = dict(out, ts=now)
         return out
     st = sysd.get("Status") or {}
     out.update({
@@ -3881,12 +4039,16 @@ def idrac_collect(cfg, force=False):
         "power_state": str(sysd.get("PowerState") or ""),
         "mem_gib": _nz((sysd.get("MemorySummary") or {}).get("TotalSystemMemoryGiB")),
         "cpu": (sysd.get("ProcessorSummary") or {}).get("Count"),
+        "cpu_model": str((sysd.get("ProcessorSummary") or {}).get("Model") or ""),
+        "cpu_health": str(((sysd.get("ProcessorSummary") or {}).get("Status") or {}).get("Health") or ""),
+        "mem_health": str(((sysd.get("MemorySummary") or {}).get("Status") or {}).get("Health") or ""),
+        "hostname": str(sysd.get("HostName") or ""),
     })
 
     th, err_th = _idrac_request(cfg, "/Chassis/System.Embedded.1/Thermal")
     fans, temps = [], []
     if not err_th:
-        for f in th.get("Fans") or []:
+        for f in _idrac_items(th, "Fans"):
             rpm = _nz(f.get("Reading"))
             if rpm is None:
                 continue
@@ -3897,16 +4059,19 @@ def idrac_collect(cfg, force=False):
                          "state": str(fs.get("State") or ""),
                          "min": _nz(f.get("LowerThresholdCritical"))})
         fans.sort(key=lambda x: _idrac_fan_sort(x["name"]))
-        for t in th.get("Temperatures") or []:
+        for t in _idrac_items(th, "Temperatures"):
             cel = _nz(t.get("ReadingCelsius"))
             if cel is None:
                 continue
             ts_ = t.get("Status") or {}
-            temps.append({"name": str(t.get("Name") or "?"),
+            temps.append({"name": _idrac_temp_zh(t.get("Name")),
                           "c": int(cel),
                           "health": str(ts_.get("Health") or ""),
+                          "warn": _nz(t.get("UpperThresholdNonCritical")),
                           "crit": _nz(t.get("UpperThresholdCritical"))})
-        temps.sort(key=lambda x: x["name"])
+        # 进风口在前：它是机箱散热的第一手指标
+        temps.sort(key=lambda x: (0 if x["name"] == "进风口" else
+                                  1 if x["name"] == "排风口" else 2, x["name"]))
     out["fans"] = fans
     out["temps"] = temps
     if fans:
@@ -3920,20 +4085,164 @@ def idrac_collect(cfg, force=False):
 
     pw, err_pw = _idrac_request(cfg, "/Chassis/System.Embedded.1/Power")
     if not err_pw:
-        pc = (pw.get("PowerControl") or [{}])[0]
+        pcs = _idrac_items(pw, "PowerControl")
+        pc = pcs[0] if pcs else {}
         out["power_watts"] = _nz(pc.get("PowerConsumedWatts"))
+        out["power_capacity_watts"] = _nz(pc.get("PowerCapacityWatts"))
+        pm = pc.get("PowerMetrics") or {}
+        out["power_min"] = _nz(pm.get("MinConsumedWatts"))
+        out["power_max"] = _nz(pm.get("MaxConsumedWatts"))
+        out["power_avg"] = _nz(pm.get("AverageConsumedWatts"))
         psu = []
-        for p in pw.get("PowerSupplies") or []:
+        for p in _idrac_items(pw, "PowerSupplies"):
             ps = p.get("Status") or {}
             psu.append({"name": str(p.get("Name") or p.get("MemberId") or "?"),
                         "health": str(ps.get("Health") or ""),
                         "state": str(ps.get("State") or ""),
-                        "watts": _nz(p.get("LastPowerOutputWatts"))})
+                        "watts": _nz(p.get("LastPowerOutputWatts")),
+                        "volts": _nz(p.get("LineInputVoltage")),
+                        "model": str(p.get("Model") or ""),
+                        "firmware": str(p.get("FirmwareVersion") or "")})
         out["psu"] = psu
 
     out["ok"] = True
     with _IDRAC_LOCK:
-        _IDRAC_CACHE["v"] = dict(out, ts=now)
+        _IDRAC_CACHE["fast"] = dict(out, ts=now)
+    return out
+
+
+def idrac_collect_slow(cfg, force=False):
+    """「慢组」明细（5 个请求，靠 $expand 把集合一次取全）：CPU / 内存条 / 盘 / 卷 / 固件。
+
+    iDRAC8 每请求约 5 秒，逐条取 14 块盘要 78 秒，所以全都带
+    `$expand=*($levels=1)`；实测 14 盘 + 7 卷一次返回。10 分钟刷一次足够——
+    插拔盘 / 换内存都会进 SEL，SEL 那条线会立刻报。
+    """
+    now = time.time()
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("slow")
+        if not force and c and now - c.get("ts", 0) < IDRAC_SLOW_TTL:
+            return dict(c, cached=True)
+    out = {"ok": False, "ts": now}
+    exp = "$expand=*($levels=1)"
+    got = 0
+
+    # ---- iDRAC 自身：固件版本 / 时间（时间戳要按它的 offset 换算，见 idrac_ts） ----
+    mg, err = _idrac_request(cfg, "/Managers/iDRAC.Embedded.1")
+    if not err:
+        got += 1
+        out["idrac_fw"] = str(mg.get("FirmwareVersion") or "")
+        out["idrac_model"] = str(mg.get("Model") or "")
+        out["idrac_time"] = str(mg.get("DateTime") or "")
+        out["idrac_offset"] = str(mg.get("DateTimeLocalOffset") or "")
+        out["idrac_health"] = str((mg.get("Status") or {}).get("Health") or "")
+
+    # ---- CPU ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Processors", query=exp)
+    cpus = []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            cpus.append({"id": str(m.get("Id") or m.get("Socket") or "?"),
+                         "model": str(m.get("Model") or ""),
+                         "cores": _nz(m.get("TotalCores")),
+                         "threads": _nz(m.get("TotalThreads")),
+                         "mhz": _nz(m.get("MaxSpeedMHz")),
+                         "health": str((m.get("Status") or {}).get("Health") or "")})
+    out["cpus"] = cpus
+
+    # ---- 内存条 ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Memory", query=exp)
+    dimms = []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            cap = _nz(m.get("CapacityMiB"))
+            if not cap:
+                continue
+            dimms.append({"slot": _idrac_slot(m.get("Id")),
+                          "mb": int(cap),
+                          "type": str(m.get("MemoryDeviceType") or ""),
+                          "mhz": _nz(m.get("OperatingSpeedMhz")),
+                          "vendor": str(m.get("Manufacturer") or ""),
+                          "part": str(m.get("PartNumber") or ""),
+                          "health": str((m.get("Status") or {}).get("Health") or "")})
+    dimms.sort(key=_idrac_dimm_sort)
+    out["dimms"] = dimms
+    if dimms:
+        out["dimm_count"] = len(dimms)
+        out["dimm_gib"] = round(sum(x["mb"] for x in dimms) / 1024.0, 1)
+        out["dimm_bad"] = sum(1 for x in dimms if x["health"] and x["health"].upper() != "OK")
+
+    # ---- 阵列卡 / 物理盘 / 卷 ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Storage", query=exp)
+    ctrls, disks, vols = [], [], []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            scs = _idrac_items(m, "StorageControllers")
+            sc = scs[0] if scs else {}
+            cid = str(m.get("Id") or "")
+            drives = _idrac_members(cfg, m, "Drives")
+            vols_raw = _idrac_members(cfg, m, "Volumes")
+            ctrls.append({"id": cid,
+                          "model": str(sc.get("Model") or m.get("Name") or ""),
+                          "firmware": str(sc.get("FirmwareVersion") or ""),
+                          "health": str((m.get("Status") or {}).get("Health") or ""),
+                          "drives": len(drives)})
+            for dv in drives:
+                dv = _idrac_try_fetch(cfg, dv)
+                cap = _nz(dv.get("CapacityBytes"))
+                stt = dv.get("Status") or {}
+                oem = (dv.get("Oem") or {}).get("Dell") or {}
+                disks.append({
+                    "bay": _idrac_bay(dv.get("Id")),
+                    "model": str(dv.get("Model") or ""),
+                    "serial": str(dv.get("SerialNumber") or ""),
+                    "cap_gb": int(round(cap / 1e9)) if cap else None,
+                    "media": str(dv.get("MediaType") or ""),
+                    "protocol": str(dv.get("Protocol") or ""),
+                    "rpm": _nz(dv.get("RotationSpeedRPM")),
+                    "firmware": str(dv.get("Revision") or ""),
+                    "link_gbs": _nz(dv.get("NegotiatedSpeedGbs")),
+                    "health": str(stt.get("Health") or ""),
+                    "state": str(stt.get("State") or ""),
+                    "fail_pred": bool(dv.get("FailurePredicted")),
+                    "life": _nz(dv.get("PredictedMediaLifeLeftPercent")),
+                    "hotspare": str(dv.get("HotspareType") or ""),
+                    "encrypted": str(dv.get("EncryptionStatus") or ""),
+                    "ctrl": cid,
+                })
+            for vv in vols_raw:
+                vv = _idrac_try_fetch(cfg, vv)
+                vcap = _nz(vv.get("CapacityBytes"))
+                vs = vv.get("Status") or {}
+                vols.append({"name": str(vv.get("Name") or vv.get("Id") or "?"),
+                             "raid": str(vv.get("RAIDType") or ""),
+                             "cap_gb": int(round(vcap / 1e9)) if vcap else None,
+                             "health": str(vs.get("Health") or ""),
+                             "state": str(vs.get("State") or ""),
+                             "bay": _idrac_bay(vv.get("Id"))})
+    disks.sort(key=lambda x: x["bay"] if isinstance(x["bay"], int) else 999)
+    vols.sort(key=lambda x: x["bay"] if isinstance(x["bay"], int) else 999)
+    out["controllers"] = ctrls
+    out["disks"] = disks
+    out["volumes"] = vols
+    if disks:
+        out["disk_total"] = len(disks)
+        out["disk_bad"] = sum(1 for x in disks
+                              if x["fail_pred"] or (x["health"] and x["health"].upper() != "OK"))
+    if vols:
+        out["vol_bad"] = sum(1 for x in vols if x["health"] and x["health"].upper() != "OK")
+
+    out["ok"] = got > 0
+    if not out["ok"]:
+        out["error"] = err or "iDRAC 明细读取失败"
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["slow"] = dict(out, ts=now)
     return out
 
 
@@ -3955,15 +4264,33 @@ def _sel_entry(m):
             "msg_id": str(m.get("MessageId") or "")}
 
 
-def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT):
-    """最近的硬件日志（SEL）。iDRAC8 在 Logs/Sel，iDRAC9 在 LogServices/Sel。"""
+def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT, force=False):
+    """最近的硬件日志（SEL）。iDRAC8 在 Logs/Sel，iDRAC9 在 LogServices/Sel。
+
+    带 60 秒缓存：SEL 一次请求在 iDRAC8 上要 5 秒，巡检线程和页面刷新
+    共用这一份，避免来回串行等待。
+    """
+    now = time.time()
+    if not force and limit == IDRAC_SEL_LIMIT:
+        with _IDRAC_LOCK:
+            c = _IDRAC_CACHE.get("sel")
+        if c and now - c.get("ts", 0) < IDRAC_TTL:
+            return dict(c["v"], cached=True)
     last_err = ""
+    empty_hit = None
     for path in IDRAC_SEL_PATHS:
         d, err = _idrac_request(cfg, path)
         if err:
             last_err = err
             continue
         members = d.get("Members") or []
+        if not members:
+            # 关键坑：iDRAC8 对 iDRAC9 的 LogServices/Sel/Entries 会回 200 + 空列表，
+            # 一旦据此提前返回，26 条真实日志就全被吞掉了。这里记下来继续试下一个路径，
+            # 全都为空才采用这个空结果。
+            if empty_hit is None:
+                empty_hit = (path, d)
+            continue
         # 部分固件只回 @odata.id，得逐条取详情
         if members and not (members[0].get("Message") or members[0].get("Created")):
             detailed = []
@@ -3981,28 +4308,157 @@ def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT):
         rows = rows[:limit]
         active = [r for r in rows
                   if r["assert"] and r["severity"].lower() in ("critical", "warning")]
-        return {"ok": True, "entries": rows, "active": active,
-                "count": int(d.get("Members@odata.count") or len(members)),
-                "path": path, "ts": time.time()}
+        res = {"ok": True, "entries": rows, "active": active,
+               "count": int(d.get("Members@odata.count") or len(members)),
+               "path": path, "ts": time.time()}
+        if limit == IDRAC_SEL_LIMIT:
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["sel"] = {"v": res, "ts": res["ts"]}
+        return res
+    if empty_hit:
+        res = {"ok": True, "entries": [], "active": [], "count": 0,
+               "path": empty_hit[0], "ts": time.time()}
+        if limit == IDRAC_SEL_LIMIT:
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["sel"] = {"v": res, "ts": res["ts"]}
+        return res
     return {"ok": False, "entries": [], "active": [], "count": 0, "error": last_err}
 
 
-def idrac_snapshot(cfg):
-    """给巡检用的轻量快照：整机健康 + 硬件日志里的活跃告警。异常不外抛。"""
+def idrac_problems(fast, slow):
+    """把 iDRAC 状态里「不健康」的项压成统一列表。
+
+    只收硬故障语义：盘的故障预测 / 非 OK、卷或控制器降级、PSU 掉一个、
+    风扇或 CPU / 内存条非 OK。温度和功耗不在这里判——温度交给面板阈值，
+    功耗只是读数。指纹（kind + 标识）稳定，供通知状态机做增量对比。
+    """
+    out = []
+
+    def add(kind, key, text, sev="crit"):
+        out.append({"kind": kind, "key": key, "text": text, "severity": sev})
+
+    for d in (slow or {}).get("disks") or []:
+        h = str(d.get("health") or "").upper()
+        if d.get("fail_pred"):
+            add("disk", "bay:%s" % d.get("bay"),
+                "槽位 %s 的 %s 被阵列卡判定为即将故障" % (d.get("bay"), d.get("model") or "硬盘"))
+        elif h and h != "OK":
+            add("disk", "bay:%s" % d.get("bay"),
+                "槽位 %s 的 %s 状态 %s" % (d.get("bay"), d.get("model") or "硬盘", h))
+        life = d.get("life")
+        if life is not None and life <= 10:
+            add("disk", "life:%s" % d.get("bay"),
+                "槽位 %s 的 %s 剩余寿命仅 %s%%" % (d.get("bay"), d.get("model") or "SSD", life), "warn")
+    for v in (slow or {}).get("volumes") or []:
+        h = str(v.get("health") or "").upper()
+        if h and h != "OK":
+            add("volume", "vol:%s" % v.get("name"),
+                "虚拟盘 %s（RAID %s）状态 %s" % (v.get("name"), v.get("raid") or "?", h))
+    for c in (slow or {}).get("controllers") or []:
+        h = str(c.get("health") or "").upper()
+        if h and h != "OK":
+            add("controller", "ctrl:%s" % c.get("id"),
+                "阵列卡 %s 状态 %s" % (c.get("model") or c.get("id"), h))
+    for p in (fast or {}).get("psu") or []:
+        h = str(p.get("health") or "").upper()
+        if h and h != "OK":
+            add("psu", "psu:%s" % p.get("name"),
+                "电源 %s 状态 %s" % (p.get("name"), h))
+    for f in (fast or {}).get("fans") or []:
+        h = str(f.get("health") or "").upper()
+        if h and h != "OK":
+            add("fan", "fan:%s" % f.get("name"),
+                "风扇 %s 状态 %s（%s RPM）" % (f.get("name"), h, f.get("rpm")))
+    for c in (slow or {}).get("cpus") or []:
+        h = str(c.get("health") or "").upper()
+        if h and h != "OK":
+            add("cpu", "cpu:%s" % c.get("id"), "处理器 %s 状态 %s" % (c.get("id"), h))
+    for m in (slow or {}).get("dimms") or []:
+        h = str(m.get("health") or "").upper()
+        if h and h != "OK":
+            add("dimm", "dimm:%s" % m.get("slot"),
+                "内存槽 %s（%s）状态 %s" % (m.get("slot"), m.get("vendor") or "内存", h))
+    return out
+
+
+def idrac_snapshot(cfg, fast_only=False):
+    """给巡检用的快照：整机健康 + 硬件异常 + 硬件日志活跃告警。异常不外抛。
+
+    只读缓存（IdracPoller 后台刷新），不在这里发请求——巡检线程不能被
+    iDRAC8 每个请求 5 秒的延迟拖住。缓存还没热起来时宁可不判。
+    """
     try:
-        ov = idrac_collect(cfg, force=True)
+        ov = idrac_collect(cfg)
         if not ov.get("ok"):
-            return {"ok": False, "error": ov.get("error") or "iDRAC 读取失败"}
+            return {"ok": False, "error": ov.get("error") or "iDRAC 读取失败",
+                    "warm": bool(_IDRAC_CACHE.get("fast"))}
+        slow = {} if fast_only else idrac_collect_slow(cfg)
         sel = idrac_sel(cfg)
         return {"ok": True, "health": ov.get("health") or "",
                 "fan_bad": (ov.get("fan_summary") or {}).get("bad") or 0,
                 "fan_min": (ov.get("fan_summary") or {}).get("min"),
                 "power_watts": ov.get("power_watts"),
+                "problems": idrac_problems(ov, slow),
                 "active": sel.get("active") or [],
                 "sel_count": sel.get("count") or 0,
                 "sel_error": sel.get("error") or ""}
     except Exception as e:
         return {"ok": False, "error": str(e)[:120]}
+
+
+class IdracPoller(threading.Thread):
+    """后台刷新 iDRAC 缓存。
+
+    iDRAC8 的 Redfish 每个请求要 4.5~6 秒，一次完整采集 8 个请求将近 45 秒。
+    放进采集主线程会让整个面板卡住，所以单开一条线程刷缓存，
+    主采集线程和页面都只读缓存（读缓存是内存操作，零延迟）。
+    """
+
+    def __init__(self, data_dir):
+        super().__init__(daemon=True, name="fnm-idrac")
+        self.data_dir = data_dir
+        self._stop = threading.Event()
+        self.last_run = 0.0
+        self.last_err = ""
+
+    def stop(self):
+        self._stop.set()
+
+    def _tick(self):
+        cfg = idrac_load(self.data_dir)
+        if not (cfg.get("enabled") and cfg.get("host") and cfg.get("user")
+                and cfg.get("password")):
+            _IDRAC_WAKE.clear()      # 不清会把 wait 变成忙循环
+            return False
+        _IDRAC_WAKE.clear()
+        try:
+            fast = idrac_collect(cfg)
+            if fast.get("ok"):
+                idrac_collect_slow(cfg)     # 10 分钟 TTL，内部自己判
+                idrac_sel(cfg)              # 60 秒 TTL
+                self.last_err = ""
+            else:
+                self.last_err = fast.get("error") or ""
+                print("[fnmonitor] iDRAC 读取失败：%s" % self.last_err)
+        except Exception as e:
+            self.last_err = str(e)[:120]
+            print("[fnmonitor] iDRAC 采集异常：%s" % self.last_err)
+        self.last_run = time.time()
+        return True
+
+    def run(self):
+        # 启动后先让采集线程跑一轮，避免和开机时的磁盘巡检抢 IO
+        self._stop.wait(5)
+        while not self._stop.is_set():
+            active = False
+            try:
+                active = self._tick()
+            except Exception:
+                pass
+            # 没配置 30 秒重看一次（用户可能刚填完），配置了每 20 秒醒一次
+            # （真正发不发请求由 TTL 决定）；保存配置会直接 set 立刻唤醒
+            _IDRAC_WAKE.wait(20 if active else 30)
+            _IDRAC_WAKE.clear()
 
 
 def read_net_dev():
@@ -6539,6 +6995,9 @@ class Collector(threading.Thread):
         self._last_fans_ts = 0.0
         self._last_power = {"ok": False}
         self._last_power_ts = 0.0
+        # iDRAC：配置每 30 秒看一次（改了立刻生效），数据只读后台 Poller 的缓存
+        self._idrac_cfg = {}
+        self._idrac_cfg_ts = 0.0
         self._cpu_topo = None  # CPU 拓扑（物理核/逻辑线程/插槽），运行期不变只解析一次
         self._last_gpu = []
         self._last_gpu_ts = 0.0
@@ -6552,6 +7011,28 @@ class Collector(threading.Thread):
 
     def stop(self):
         self._stop.set()
+
+    def _idrac_fast(self):
+        """读 iDRAC「快组」缓存（由 IdracPoller 后台刷新）。
+
+        绝不在这里发请求：iDRAC8 每个请求 5 秒，放进采集循环会让面板整个卡住。
+        缓存没热起来时返回 None，风扇/功耗就按原来的本地读数走。
+        """
+        now = time.time()
+        if now - self._idrac_cfg_ts >= 30:
+            try:
+                self._idrac_cfg = idrac_load(self.data_dir)
+            except Exception:
+                self._idrac_cfg = {}
+            self._idrac_cfg_ts = now
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return None
+        with _IDRAC_LOCK:
+            cache = _IDRAC_CACHE.get("fast")
+        if not cache or not cache.get("ok"):
+            return None
+        return cache
 
     def _reload_config(self):
         """检查配置文件是否变化，变化则重载。"""
@@ -6664,6 +7145,16 @@ class Collector(threading.Thread):
         snapshot["diskio"] = diskio
         # ---- 温度 ----
         temps = read_temps()
+        # thermal zone 没给 CPU 温度时，用 iDRAC 的带外读数兜底（老内核 / 虚拟机常见）
+        if temps.get("cpu") is None:
+            _if = self._idrac_fast()
+            for _t in (_if or {}).get("temps") or []:
+                if str(_t.get("name") or "").upper().startswith("CPU"):
+                    try:
+                        temps["cpu"] = float(_t.get("c"))
+                        break
+                    except Exception:
+                        continue
         # 硬 RAID 物理盘温度并入总览温度卡（读自阵列卡缓存，300 秒刷新；
         # 名称形如「阵列 32:0」，经阵列卡传感器读取、不唤醒硬盘）
         for _c in ((self._last_raidcard or {}).get("controllers") or []):
@@ -6672,14 +7163,15 @@ class Collector(threading.Thread):
                     temps["disks"].append({"name": "阵列 " + str(_p.get("loc")),
                                            "temp": _p.get("temp")})
         snapshot["temp"] = temps
-        # ---- 实时功耗（每 10 秒）：RAPL 硬件传感器优先，不可用时即时回退估算模型 ----
+        # ---- 实时功耗（每 10 秒）：iDRAC 整机读数 > RAPL > 估算模型 ----
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
         # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
         # 而趋势图却有估算数据的自相矛盾。
+        # 优先级说明：iDRAC 报的是电源实际输出（整机插座功耗，含主板/内存/网卡/
+        # 全部硬盘与转换损耗），比 RAPL 只算 CPU 封装准得多，所以排在最前。
         # 注意口径：RAPL package 只是 CPU 封装功耗（Jasper Lake N5095 等 SoC 空闲
-        # 仅 2-3W，且通常没有 DRAM 域），不等于整机插座功耗——主板/内存/网卡/
-        # 电源转换损耗与活动硬盘都在封装之外。整机 total = package + dram
-        # + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
+        # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
+        # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
             if now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
@@ -6688,33 +7180,47 @@ class Collector(threading.Thread):
                                    if d.get("state") != "standby")
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
                 disks_w = round(disks_active * disk_w_unit, 2)
-                rp = get_rapl_power()
-                if rp.get("ok"):
-                    base_w = float(self.config.get("power_base_w", 8) or 0)
-                    pkg = float(rp.get("package") or 0)
-                    dram = float(rp.get("dram") or 0)
-                    rp["source"] = "rapl"
-                    rp["base"] = round(base_w, 2)
-                    rp["disks_w"] = disks_w
-                    rp["disks_active"] = disks_active
-                    rp["total"] = round(pkg + dram + base_w + disks_w, 2)
-                    self._last_power = rp
+                idr = self._idrac_fast()
+                if idr and _nz(idr.get("power_watts")) is not None:
+                    self._last_power = {
+                        "ok": True, "source": "idrac",
+                        "total": round(float(idr["power_watts"]), 2),
+                        "package": None, "core": None, "uncore": None, "dram": None,
+                        "base": None, "disks_w": disks_w, "disks_active": disks_active,
+                        "capacity": _nz(idr.get("power_capacity_watts")),
+                        "min": _nz(idr.get("power_min")),
+                        "max": _nz(idr.get("power_max")),
+                        "avg": _nz(idr.get("power_avg")),
+                        "psu": idr.get("psu") or [],
+                    }
                 else:
-                    try:
-                        nics_active = len([i for i in ifaces
-                                           if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
-                        est_w = estimate_power(
-                            cpu_percent, disks_active, nics_active,
-                            float(self.config.get("power_tdp_w", 65)),
-                            disk_w_unit,
-                            float(self.config.get("power_nic_fixed_w", 5)),
-                        )
-                        self._last_power = {"ok": True, "total": est_w, "source": "estimated",
-                                            "package": None, "core": None, "uncore": None,
-                                            "dram": None, "base": None,
-                                            "disks_w": disks_w, "disks_active": disks_active}
-                    except Exception:
-                        self._last_power = {"ok": False, "source": "unknown"}
+                    rp = get_rapl_power()
+                    if rp.get("ok"):
+                        base_w = float(self.config.get("power_base_w", 8) or 0)
+                        pkg = float(rp.get("package") or 0)
+                        dram = float(rp.get("dram") or 0)
+                        rp["source"] = "rapl"
+                        rp["base"] = round(base_w, 2)
+                        rp["disks_w"] = disks_w
+                        rp["disks_active"] = disks_active
+                        rp["total"] = round(pkg + dram + base_w + disks_w, 2)
+                        self._last_power = rp
+                    else:
+                        try:
+                            nics_active = len([i for i in ifaces
+                                               if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
+                            est_w = estimate_power(
+                                cpu_percent, disks_active, nics_active,
+                                float(self.config.get("power_tdp_w", 65)),
+                                disk_w_unit,
+                                float(self.config.get("power_nic_fixed_w", 5)),
+                            )
+                            self._last_power = {"ok": True, "total": est_w, "source": "estimated",
+                                                "package": None, "core": None, "uncore": None,
+                                                "dram": None, "base": None,
+                                                "disks_w": disks_w, "disks_active": disks_active}
+                        except Exception:
+                            self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
         except Exception:
             self._last_power = {"ok": False, "source": "unknown"}
@@ -6893,8 +7399,9 @@ class Collector(threading.Thread):
         snapshot["raidcard"] = self._last_raidcard
 
         # ---- 传感器：温度分类 / 风扇 / 电压（每 15 秒） ----
+        # 带外 iDRAC 读数一并传入：Dell 机的风扇只由 iDRAC 管，内核里没有通道
         if now - self._last_sensors_ts >= 15:
-            self._last_sensors = collect_sensors()
+            self._last_sensors = collect_sensors(self._idrac_fast())
             self._last_sensors_ts = now
         snapshot["sensors"] = self._last_sensors
 
@@ -8030,7 +8537,7 @@ class MonitorApp:
         return notify_test(self.data_dir, ch)
 
     def api_idrac_get(self, query=None):
-        """iDRAC 概览：机型 / 整机健康 / 风扇转速 / 温度 / 功耗（60 秒缓存）。
+        """iDRAC 全量：快组（机型/健康/风扇/温度/功耗）+ 慢组（CPU/内存/盘/卷/固件）。
 
         query 带 refresh=1 强制重读。没配置时不报错，回 ok=False + 默认配置，
         设置页据此渲染「未配置」状态。"""
@@ -8038,13 +8545,42 @@ class MonitorApp:
         pub = idrac_public(cfg)
         if not pub["host"]:
             return {"ok": False, "configured": False, "error": "", "config": pub,
-                    "fans": [], "temps": [], "psu": []}
+                    "fans": [], "temps": [], "psu": [], "disks": [], "dimms": [],
+                    "volumes": [], "controllers": [], "cpus": []}
         force = bool((query or {}).get("refresh"))
-        d = idrac_collect(cfg, force=force)
+        if force:
+            d = idrac_collect(cfg, force=True)
+            slow = idrac_collect_slow(cfg, force=True)
+        else:
+            # 不强制时只读缓存：iDRAC8 一个请求 5 秒，页面刷新绝不能去等它。
+            # 缓存还没热（应用刚起来 / 刚配好账号）就回 warming，前端过一会儿再来取。
+            with _IDRAC_LOCK:
+                cached = _IDRAC_CACHE.get("fast")
+            if not cached or not cached.get("ok"):
+                return {"ok": False, "warming": not cached,
+                        "configured": True, "error": "", "config": pub,
+                        "fans": [], "temps": [], "psu": [], "disks": [], "dimms": [],
+                        "volumes": [], "controllers": [], "cpus": [],
+                        "idrac_fw": "", "problems": []}
+            d = dict(cached)
+            with _IDRAC_LOCK:
+                cached_slow = _IDRAC_CACHE.get("slow")
+            slow = dict(cached_slow) if cached_slow else {}
+        for k in ("cpus", "dimms", "disks", "volumes", "controllers",
+                  "idrac_fw", "idrac_model", "idrac_time", "idrac_offset",
+                  "idrac_health", "dimm_count", "dimm_gib", "dimm_bad",
+                  "disk_total", "disk_bad", "vol_bad"):
+            if k in slow:
+                d[k] = slow[k]
+        d["problems"] = idrac_problems(d, slow)
         d["configured"] = True
         d["config"] = pub
         if (query or {}).get("sel"):
-            d["sel"] = idrac_sel(cfg, 5)
+            # 只读缓存，前端取前几条——按 limit=5 单独请求会多等 5 秒
+            with _IDRAC_LOCK:
+                sel_cache = _IDRAC_CACHE.get("sel")
+            if sel_cache:
+                d["sel"] = dict(sel_cache["v"])
         return d
 
     def api_idrac_save(self, data):
@@ -8069,7 +8605,8 @@ class MonitorApp:
             cfg["password"] = str(data["password"])
         if not cfg.get("host"):
             return {"ok": False, "error": "请先填写 iDRAC 地址"}
-        root, err = _idrac_request(cfg, "", timeout=6)
+        # iDRAC8 每个请求实测 4.5~6 秒，超时给 6 秒会被误判成"连接超时"
+        root, err = _idrac_request(cfg, "", timeout=IDRAC_TIMEOUT)
         out = {"ok": False, "host": cfg.get("host"), "steps": []}
         if err:
             out["error"] = err
@@ -8085,6 +8622,19 @@ class MonitorApp:
         out["overview"] = {k: ov.get(k) for k in
                            ("model", "service_tag", "bios", "health", "power_state",
                             "power_watts", "mem_gib", "fan_summary")}
+        # 硬件明细：Storage / Memory / Processors 各一次 $expand 取全（每次约 6 秒）
+        slow = idrac_collect_slow(cfg, force=True)
+        out["steps"].append({
+            "name": "硬件明细 /Storage /Memory /Processors",
+            "ok": bool(slow.get("ok")),
+            "detail": "物理盘 %s 块 · 内存 %s 条 · 卷 %s 个 · 控制器 %s 个"
+                      % (len(slow.get("disks") or []), len(slow.get("dimms") or []),
+                         len(slow.get("volumes") or []), len(slow.get("controllers") or [])),
+            "error": slow.get("error") or ""})
+        for k in ("cpus", "dimms", "disks", "volumes", "controllers",
+                  "idrac_fw", "idrac_model", "idrac_time", "idrac_offset"):
+            if k in slow:
+                out[k] = slow[k]
         sel = idrac_sel(cfg)
         out["steps"].append({"name": "硬件日志 SEL", "ok": bool(sel.get("ok")),
                              "detail": "共 %s 条，活跃告警 %s 条" % (sel.get("count") or 0,
@@ -9973,10 +10523,15 @@ def main():
     # 硬盘巡检独立线程：与采集循环解耦，全盘 smartctl 不再拖慢 10 秒采样
     scanner = DiskScanner(app.collector.db, config)
     scanner.start()
+    # iDRAC 后台轮询：每次 Redfish 请求 5 秒，只能自己一条线程刷缓存，
+    # 采集循环和页面都只读缓存（面板卡不卡，全看这条线程有没有隔开）
+    idrac_poller = IdracPoller(app.collector.data_dir)
+    idrac_poller.start()
 
     def shutdown(sig, frame):
         app.collector.stop()
         scanner.stop()
+        idrac_poller.stop()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
         sys.exit(0)
 
