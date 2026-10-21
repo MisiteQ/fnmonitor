@@ -369,5 +369,224 @@ class DiskScanNotifyHookTest(unittest.TestCase):
             tmp.cleanup()
 
 
+class HwNotifyTest(unittest.TestCase):
+    """硬件告警：攒批 + 每日定时发送。
+
+    与硬盘巡检通知的区别：硬盘「有变化立刻发」，硬件「到点统一发，
+    到点前恢复的整条不发，一直不修的每 7 天再提醒，发过的恢复了补一封」。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        srv._HW_CHECK_TS[0] = 0.0
+        srv._HW_JOB[0] = None
+        self._cfg(hw_time="00:00")
+        # iDRAC 配置与快照全部用桩：这些用例只验告警批次的状态机，不该联网
+        p = mock.patch.object(srv, "idrac_load",
+                              return_value={"enabled": 1, "host": "h", "user": "u",
+                                            "password": "p", "sel_alert": 1})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def tearDown(self):
+        srv._HW_CHECK_TS[0] = 0.0
+        srv._HW_JOB[0] = None
+        for f in ("notify.json", "notify-hw.json"):
+            p = os.path.join(self.dir, f)
+            if os.path.exists(p):
+                os.remove(p)
+        os.rmdir(self.dir)
+
+    def _cfg(self, **kw):
+        cfg = {"enabled": 1, "provider": "qq", "host": "smtp.qq.com", "port": 465,
+               "secure": "ssl", "user": "u@qq.com", "password": "pw",
+               "sender": "u@qq.com", "to": "d@qq.com", "sct_enabled": 0, "sct_key": "",
+               "hw_enabled": 1, "hw_time": "00:00"}
+        cfg.update(kw)
+        with open(os.path.join(self.dir, "notify.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+    def _state(self, **kw):
+        st = {"active": {}, "recovered": [], "day": "", "ts": 0}
+        st.update(kw)
+        with open(os.path.join(self.dir, "notify-hw.json"), "w", encoding="utf-8") as f:
+            json.dump(st, f)
+        return st
+
+    def _read_state(self):
+        with open(os.path.join(self.dir, "notify-hw.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    @staticmethod
+    def _item(msg="The chassis is open while the power is on.", sev="Critical"):
+        return {"message": msg, "sensor": "硬件日志", "severity": sev}
+
+    # ---- 配置解析 ----
+    def test_time_parse(self):
+        self.assertEqual(srv.notify_hw_time({"hw_time": "8:05"}), (8, 5))
+        self.assertEqual(srv.notify_hw_time({"hw_time": "23:59"}), (23, 59))
+        self.assertEqual(srv.notify_hw_time({"hw_time": "25:00"}), (8, 0))
+        self.assertEqual(srv.notify_hw_time({"hw_time": ""}), (8, 0))
+        self.assertEqual(srv.notify_hw_time({}), (8, 0))
+
+    # ---- 合并逻辑 ----
+    def test_merge_new_keeps_first_seen(self):
+        now = 1000.0
+        hw = srv.notify_hw_merge(None, {"k1": self._item()}, now)
+        self.assertEqual(hw["active"]["k1"]["first"], now)
+        self.assertEqual(hw["active"]["k1"]["sent"], 0)
+        hw2 = srv.notify_hw_merge(hw, {"k1": self._item()}, now + 100)
+        self.assertEqual(hw2["active"]["k1"]["first"], now)      # 首次时间不被刷新
+        self.assertEqual(hw2["active"]["k1"]["last"], now + 100)
+
+    def test_merge_recovered_only_when_notified(self):
+        now = 1000.0
+        hw = srv.notify_hw_merge(None, {"k1": self._item(), "k2": self._item("x")}, now)
+        hw["active"]["k1"]["sent"] = 1        # 通知过的
+        hw = srv.notify_hw_merge(hw, {}, now + 50)
+        # 只给通知过的补「已恢复」，没通知过的不打扰
+        self.assertEqual([r["key"] for r in hw["recovered"]], ["k1"])
+        self.assertEqual(hw["active"], {})
+
+    def test_merge_reappeared_cancels_recovered(self):
+        hw = {"active": {}, "recovered": [{"key": "k1", "message": "m", "first": 1}]}
+        hw = srv.notify_hw_merge(hw, {"k1": self._item()}, 2000.0)
+        self.assertEqual(hw["recovered"], [])
+        self.assertIn("k1", hw["active"])
+
+    # ---- 定时发送 ----
+    def test_first_run_is_silent_baseline(self):
+        """首次接入只记基线：机器上现存的异常不倒出来。"""
+        with mock.patch.object(srv, "notify_hw_collect", return_value={"k1": self._item()}):
+            with mock.patch.object(srv, "notify_send_all") as send:
+                r = srv.notify_hw_tick(self.dir, {})
+        self.assertTrue(r.get("baseline"))
+        send.assert_not_called()
+        st = self._read_state()
+        self.assertEqual(st["active"]["k1"]["sent"], 1)
+        self.assertTrue(st["day"])
+
+    def test_send_new_with_first_seen(self):
+        """到点仍没恢复 → 发一封，正文必须带发生时间。"""
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "The chassis is open while the power is on.", "sensor": "硬件日志",
+                   "severity": "Critical", "first": 1700000000, "last": 1700000000,
+                   "sent": 0, "sent_ts": 0}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={"k1": self._item()}):
+            with mock.patch.object(srv, "notify_send_all", return_value=(True, {})) as send:
+                with mock.patch.object(srv, "notify_build",
+                                       wraps=srv.notify_build) as build:
+                    r = srv.notify_hw_tick(self.dir, {})
+        self.assertTrue(r.get("ok"))
+        send.assert_called_once()
+        _args, kwargs = send.call_args
+        subject, body = _args[1], _args[2]
+        self.assertIn("硬件告警", subject)
+        self.assertIn("发生时间", body)
+        st = self._read_state()
+        self.assertEqual(st["active"]["k1"]["sent"], 1)
+        self.assertGreater(st["active"]["k1"]["sent_ts"], 0)
+
+    def test_recovered_but_unnotified_is_silent(self):
+        """到点前就恢复了、而且从没通知过 → 一条都不发。"""
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "m", "sensor": "硬件日志", "severity": "Critical",
+                   "first": 1000, "last": 1000, "sent": 0, "sent_ts": 0}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={}):
+            with mock.patch.object(srv, "notify_send_all") as send:
+                r = srv.notify_hw_tick(self.dir, {})
+        send.assert_not_called()
+        self.assertEqual(r.get("events"), 0)
+        self.assertEqual(self._read_state()["active"], {})
+
+    def test_recovered_after_notified_sends_notice(self):
+        """通知过的告警后来恢复了 → 补一封「已恢复」。"""
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "The chassis is open while the power is on.", "sensor": "硬件日志",
+                   "severity": "Critical", "first": 1000, "last": 1000,
+                   "sent": 1, "sent_ts": 1000}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={}):
+            with mock.patch.object(srv, "notify_send_all", return_value=(True, {})) as send:
+                r = srv.notify_hw_tick(self.dir, {})
+        send.assert_called_once()
+        subject = send.call_args[0][1]
+        self.assertIn("解除", subject)
+        self.assertEqual(self._read_state()["recovered"], [])
+
+    def test_remind_every_7_days(self):
+        """一直不修：7 天内不重复，满 7 天再提醒一次。"""
+        import time as _t
+        now = _t.time()
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "m", "sensor": "硬件日志", "severity": "Critical",
+                   "first": now - 86400 * 30, "last": now, "sent": 1,
+                   "sent_ts": now - 86400 * 3}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={"k1": self._item("m")}):
+            with mock.patch.object(srv, "notify_send_all") as send:
+                r = srv.notify_hw_tick(self.dir, {})
+        send.assert_not_called()               # 才 3 天，不提醒
+        self.assertEqual(r.get("events"), 0)
+
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "m", "sensor": "硬件日志", "severity": "Critical",
+                   "first": now - 86400 * 30, "last": now, "sent": 1,
+                   "sent_ts": now - 86400 * 8}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={"k1": self._item("m")}):
+            with mock.patch.object(srv, "notify_send_all", return_value=(True, {})) as send:
+                srv.notify_hw_tick(self.dir, {})
+        send.assert_called_once()              # 满 7 天，再提醒
+
+    def test_same_day_never_twice(self):
+        import time as _t
+        today = _t.strftime("%Y-%m-%d", _t.localtime())
+        self._state(day=today, active={
+            "k1": {"message": "m", "sensor": "x", "severity": "Critical",
+                   "first": 1, "last": 1, "sent": 0, "sent_ts": 0}})
+        with mock.patch.object(srv, "notify_hw_collect") as collect:
+            with mock.patch.object(srv, "notify_send_all") as send:
+                srv.notify_hw_tick(self.dir, {})
+        collect.assert_not_called()
+        send.assert_not_called()
+
+    def test_send_failure_keeps_pending(self):
+        """发送失败不能把 sent 置位，否则明天就不发了。"""
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "m", "sensor": "x", "severity": "Critical",
+                   "first": 1, "last": 1, "sent": 0, "sent_ts": 0}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value={"k1": self._item("m")}):
+            with mock.patch.object(srv, "notify_send_all", return_value=(False, "smtp 超时")):
+                r = srv.notify_hw_tick(self.dir, {})
+        self.assertFalse(r.get("ok"))
+        st = self._read_state()
+        self.assertEqual(st["active"]["k1"]["sent"], 0)
+        self.assertNotEqual(st.get("day"), srv.time.strftime("%Y-%m-%d"))
+
+    def test_idrac_unreadable_keeps_state(self):
+        """iDRAC 读不到时绝不能被当成「全部恢复」。"""
+        self._state(day="2000-01-01", active={
+            "k1": {"message": "m", "sensor": "x", "severity": "Critical",
+                   "first": 1, "last": 1, "sent": 1, "sent_ts": 1}})
+        with mock.patch.object(srv, "notify_hw_collect", return_value=None):
+            with mock.patch.object(srv, "notify_send_all") as send:
+                r = srv.notify_hw_tick(self.dir, {})
+        self.assertIsNone(r)
+        send.assert_not_called()
+        self.assertIn("k1", self._read_state()["active"])
+
+    # ---- 到点判断 ----
+    def test_due_respects_time_and_disabled(self):
+        import time as _t
+        srv._HW_CHECK_TS[0] = 0.0
+        early = _t.mktime((2026, 10, 21, 7, 0, 0, 0, 0, -1))
+        self._cfg(hw_time="08:00")
+        self.assertFalse(srv._hw_due(self.dir, early))
+        srv._HW_CHECK_TS[0] = 0.0
+        late = _t.mktime((2026, 10, 21, 8, 1, 0, 0, 0, -1))
+        self.assertTrue(srv._hw_due(self.dir, late))
+        srv._HW_CHECK_TS[0] = 0.0
+        self._cfg(hw_time="08:00", hw_enabled=0)
+        self.assertFalse(srv._hw_due(self.dir, late))
+
+
 if __name__ == "__main__":
     unittest.main()

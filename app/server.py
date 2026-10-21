@@ -3010,6 +3010,38 @@ def smart_detail_cached(dev):
 # 注意 ECC 计数（scsi_ecc）不参与判定：它是 32 位计数器会回绕，只反映读过多少数据。
 DISK_SCAN_PRESETS_H = (6, 12, 24, 72, 168)   # 与 sashealth 自动快照档位一致
 DISK_SCAN_GROWTH_CRIT = 10                   # 一次巡检内缺陷增长到这个数就判故障
+DISK_SCAN_LOG_KEEP_OK = 7 * 86400            # 巡检流水：「未见异常」保留 7 天；有变化的永久保留
+
+
+def _scan_change_text(items, prev):
+    """把本次巡检相对上次的变化压成一句话列表（供巡检流水使用）。
+
+    只比等级与三个计数：温度、通电时长这类自然变量天天在动，算「变化」会把
+    「未见异常」的记录淹掉。
+    """
+    out = []
+    for it in items or []:
+        dev = it.get("dev") or ""
+        if not dev or it.get("standby"):
+            continue
+        old = (prev or {}).get(dev) or {}
+        if not old:
+            continue                      # 新接进来的盘不算「变化」
+        og, ng = old.get("grade") or "", it.get("grade") or ""
+        if og and ng and og != ng:
+            out.append("%s 由「%s」变为「%s」" % (dev, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
+            continue
+        bits = []
+        for key, label in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
+                           ("uncorr", "不可纠正错误")):
+            a, b = _nz(old.get(key)), _nz(it.get(key))
+            if a is not None and b is not None and a != b:
+                bits.append("%s %s→%s" % (label, a, b))
+        if bits:
+            out.append("%s %s" % (dev, "，".join(bits)))
+    return out
+
+
 _disk_scan_state = {"running": False, "last_ts": 0.0, "summary": {}, "error": ""}
 _DISK_SCAN_LOCK = threading.Lock()
 
@@ -3059,10 +3091,10 @@ def grade_disk(rec, prev=None):
         if old is not None:
             delta = reall - old
     if delta is not None and delta >= DISK_SCAN_GROWTH_CRIT:
-        return "crit", ["缺陷增长 %+d 个（%d → %d）" % (delta, reall - delta, reall)]
+        return "crit", ["重映射扇区增长 %+d 个（%d → %d）" % (delta, reall - delta, reall)]
     reasons = []
     if reall:
-        reasons.append("增长缺陷 %d 个" % reall)
+        reasons.append("重映射扇区 %d 个" % reall)
     if pend:
         reasons.append("待处理扇区 %d 个" % pend)
     if delta and delta > 0:
@@ -3177,9 +3209,21 @@ def disk_scan_once(db, config=None):
                 changed = db.disk_health_save(items, prev)
             except Exception as e:
                 errors.append("写库失败：%s" % e)
+        # 巡检流水：**每次**巡检都留一行（disk_health_hist 只在有变化时记）。
+        # 没变化也要记——「上周三巡检过一次，未见异常」本身就是有用的信息。
+        diff = []
+        try:
+            diff = _scan_change_text(items, prev)
+            if db:
+                db.disk_scan_log_add(
+                    ts, len(items), bool(diff),
+                    "；".join(diff) if diff else "未见异常（%d 块盘分级与计数均无变化）" % len(items))
+        except Exception:
+            traceback.print_exc()
         summary = {
             "ok": True, "ts": ts, "total": len(items), "changed": changed,
             "skipped_standby": skipped, "errors": errors,
+            "log": ({"changed": True, "text": "；".join(diff)} if diff else {"changed": False}),
             "counts": {g: sum(1 for i in items if i.get("grade") == g) for g in ("ok", "warn", "crit", "unknown")},
         }
         # 状态有变化才推送（新增 / 加重 / 恢复）；通知失败只记日志，不影响巡检结果
@@ -3279,9 +3323,29 @@ NOTIFY_PROVIDERS = (
 )
 NOTIFY_DEFAULT = {"enabled": 0, "provider": "qq", "host": "smtp.qq.com", "port": 465,
                   "secure": "ssl", "user": "", "password": "", "sender": "", "to": "",
-                  "sct_enabled": 0, "sct_key": ""}
+                  "sct_enabled": 0, "sct_key": "",
+                  # 硬件告警（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）单独一组：
+                  # 默认关闭，开启了也只在你指定的时刻统一发一封，恢复的不发、没恢复的才发
+                  "hw_enabled": 0, "hw_time": "08:00"}
 NOTIFY_SECRET_KEYS = ("password", "sct_key")
 GRADE_LABEL = {"ok": "正常", "warn": "留意", "crit": "故障", "unknown": "未知"}
+
+# 同一条硬件告警一直没恢复时，隔多久再提醒一次（天）
+HW_REMIND_DAYS = 7
+# 发送失败后的退避：避免采集线程每 10 秒重试一次把SMTP打爆
+HW_RETRY_GAP = 600
+
+
+def notify_hw_time(cfg):
+    """解析 hw_time（HH:MM）→ (时, 分)。非法值回落 08:00。"""
+    raw = str((cfg or {}).get("hw_time") or "").strip()
+    m = re.match(r"^(\d{1,2})\s*:\s*(\d{1,2})$", raw)
+    if not m:
+        return 8, 0
+    h, mi = int(m.group(1)), int(m.group(2))
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return 8, 0
+    return h, mi
 
 
 def notify_load(data_dir):
@@ -3297,9 +3361,12 @@ def notify_load(data_dir):
     except Exception:
         user = {}
     onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
-    for k in ("enabled", "sct_enabled"):
+    for k in ("enabled", "sct_enabled", "hw_enabled"):
         if k in user:
             cfg[k] = onoff(user[k])
+    if "hw_time" in user:
+        hh, mm = notify_hw_time({"hw_time": user["hw_time"]})
+        cfg["hw_time"] = "%02d:%02d" % (hh, mm)
     if str(user.get("provider") or "") in [p[0] for p in NOTIFY_PROVIDERS]:
         cfg["provider"] = str(user["provider"])
     for k in ("host", "user", "sender", "to", "password", "sct_key"):
@@ -3327,9 +3394,12 @@ def notify_save(data_dir, data, cur=None):
     """合并保存通知配置：空值 / 未提供的密码项保留原值，返回 (配置, 错误)。"""
     cfg = dict(cur) if cur else notify_load(data_dir)
     onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
-    for k in ("enabled", "sct_enabled"):
+    for k in ("enabled", "sct_enabled", "hw_enabled"):
         if k in data:
             cfg[k] = onoff(data[k])
+    if "hw_time" in data:
+        hh, mm = notify_hw_time({"hw_time": data["hw_time"]})
+        cfg["hw_time"] = "%02d:%02d" % (hh, mm)
     if "provider" in data:
         p = str(data["provider"] or "")
         if p in [x[0] for x in NOTIFY_PROVIDERS]:
@@ -3476,6 +3546,19 @@ def notify_lan_ip():
         return ""
 
 
+def _dur_cn(sec):
+    """秒数转「1 天 3 小时」这类中文时长。"""
+    sec = max(0, int(sec or 0))
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    if d:
+        return "%d 天 %d 小时" % (d, h)
+    if h:
+        return "%d 小时 %d 分" % (h, m)
+    return "%d 分钟" % m
+
+
 def notify_build(events, ts, port=8777):
     """生成通知标题与正文：按 新增 / 加重 / 恢复 分组。"""
     new = [e for e in events if e["act"] == "new"]
@@ -3495,7 +3578,20 @@ def notify_build(events, ts, port=8777):
         for e in group:
             d = e["d"] or {}
             if d.get("kind") == "idrac":
-                lines.append("iDRAC · 硬件日志 · %s" % GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-"))
+                lines.append("iDRAC · %s · %s" % (d.get("model") or "硬件告警",
+                                                  GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
+                # 硬件类必须把发生时间写清楚：定时发送意味着「什么时候出的问题」和
+                # 「什么时候收到信」可能差好几天，不写时间根本对不上号
+                first = float(d.get("first_ts") or 0)
+                rec_ts = float(d.get("recovered_ts") or 0)
+                if e["act"] == "recovered" and first > 0 and rec_ts > 0:
+                    lines.append("  发生：%s　恢复：%s"
+                                 % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
+                                    time.strftime("%Y-%m-%d %H:%M", time.localtime(rec_ts))))
+                elif first > 0:
+                    lines.append("  发生时间：%s（已持续 %s）"
+                                 % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
+                                    _dur_cn(ts - first)))
             else:
                 lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
                                                     d.get("serial") or "无序列号",
@@ -3503,7 +3599,7 @@ def notify_build(events, ts, port=8777):
             lines.append("  %s" % (e.get("text") or ""))
             bits = []
             if d.get("defects") is not None:
-                bits.append("增长缺陷 %s" % d["defects"])
+                bits.append("重映射扇区 %s" % d["defects"])
             if d.get("pending_defects"):
                 bits.append("待处理 %s" % d["pending_defects"])
             if d.get("uncorr"):
@@ -3552,7 +3648,7 @@ def notify_send_all(cfg, subject, body):
     return ok_all, res
 
 
-DISK_METRIC_KEYS = (("defects", "增长缺陷"), ("pending_defects", "待处理扇区"),
+DISK_METRIC_KEYS = (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
                     ("uncorr", "不可纠正"))
 
 
@@ -3641,65 +3737,18 @@ def notify_after_scan(items, ts, db, config=None):
             if grew:
                 events.append({"act": "worse", "dev": dev, "d": it,
                                "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
-        # iDRAC：硬件状态（盘/卷/电源/风扇/CPU/内存）+ 硬件日志，都按「指纹」增量对比，
-        # 同一条只发一次；消失时补一条恢复。iDRAC 不通不影响硬盘判定。
-        idrac_prev = st.get("idrac_active") or {}
-        if isinstance(idrac_prev, list):          # 兼容早期纯列表格式
-            idrac_prev = {k: {} for k in idrac_prev}
-        idrac_cur = dict(idrac_prev)
-        # 硬件状态刚接入时先记一轮基线：否则第一次扫描会把机器上现存的历史问题
-        # （开盖记录、已恢复的电源告警）当成"新故障"一次性倒出来
-        hw_inited = bool(st.get("idrac_hw_inited"))
-        icfg = idrac_load(data_dir)
-        if icfg.get("enabled"):
-            snap = idrac_snapshot(icfg, data_dir=data_dir)
-            if snap.get("ok"):
-                idrac_cur = {}
-                # ① 硬件状态：盘掉/故障预测、卷或阵列卡降级、电源/风扇/CPU/内存非 OK
-                for p in snap.get("problems") or []:
-                    idrac_cur["hw|" + str(p.get("key") or "")] = {
-                        "message": p.get("text") or "",
-                        "sensor": p.get("kind") or "",
-                        "severity": p.get("severity") or "crit"}
-                # ② 硬件日志：受「硬件日志纳入告警」开关单独控制
-                if icfg.get("sel_alert"):
-                    for a in snap.get("active") or []:
-                        fp = "%s|%s" % (a.get("msg_id") or a.get("id") or "", a.get("sensor") or "")
-                        if fp == "|":
-                            continue
-                        idrac_cur[fp] = {"message": a.get("message") or "",
-                                         "sensor": a.get("sensor") or "",
-                                         "severity": a.get("severity") or ""}
-                if hw_inited:
-                    for fp, a in idrac_cur.items():
-                        if fp in idrac_prev:
-                            continue
-                        sev = str(a.get("severity") or "")
-                        events.append({"act": "new", "dev": "iDRAC",
-                                       "d": {"dev": "iDRAC", "kind": "idrac",
-                                             "model": a.get("sensor") or "硬件状态",
-                                             "grade": "crit" if sev.lower() in ("crit", "critical") else "warn",
-                                             "detail": a.get("message") or ""},
-                                       "text": a.get("message") or ""})
-                    for fp, a in idrac_prev.items():
-                        if fp in idrac_cur:
-                            continue
-                        events.append({"act": "recovered", "dev": "iDRAC",
-                                       "d": {"dev": "iDRAC", "kind": "idrac", "grade": "ok",
-                                             "model": a.get("sensor") or "硬件状态"},
-                                       "text": "已解除：%s" % (a.get("message") or fp)})
+        # iDRAC 硬件类（SEL 硬件日志 + 实时风扇/温度/电源）**不在这里发**：
+        # 已改成「攒批 + 每日定时」，见 notify_hw_collect / notify_hw_merge / notify_hw_tick。
+        # 硬盘巡检仍然「有变化立刻发」，两条线互不影响。
         # 首次：只记基线不发信（老版本状态文件没有 inited，但 notified 非空说明早已在工作）
         if not (st.get("inited") or notified):
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
-                              {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                               "idrac_active": idrac_cur, "idrac_hw_inited": 1, "ts": ts})
+                              {"inited": 1, "notified": cur, "metrics": cur_metrics, "ts": ts})
             print("[fnmonitor] 硬盘巡检首次记录基线，本轮不发通知")
             return {"ok": True, "inited": True, "silent": True, "notified": cur}
         if not events:
-            if (cur != notified or cur_metrics != old_metrics or idrac_cur != idrac_prev
-                    or not hw_inited):
-                keep = {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                        "idrac_active": idrac_cur, "idrac_hw_inited": 1, "ts": ts}
+            if cur != notified or cur_metrics != old_metrics:
+                keep = {"inited": 1, "notified": cur, "metrics": cur_metrics, "ts": ts}
                 if st.get("last"):
                     keep["last"] = st["last"]
                 write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE), keep)
@@ -3715,19 +3764,280 @@ def notify_after_scan(items, ts, db, config=None):
         if ok:
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
                               {"inited": 1, "notified": cur, "metrics": cur_metrics,
-                               "idrac_active": idrac_cur, "idrac_hw_inited": 1,
                                "ts": ts, "last": summary})
         else:
             # 发送失败：保留旧状态与旧指标，下一轮巡检重试同一批事件
             write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
                               {"inited": 1, "notified": notified, "metrics": old_metrics,
-                               "idrac_active": idrac_prev, "ts": st.get("ts") or 0,
+                               "ts": st.get("ts") or 0,
                                "last": summary})
             print("[fnmonitor] 硬盘告警通知发送失败：%s" % res)
         return summary
     except Exception:
         traceback.print_exc()
         return None
+
+
+# ---------------------------------------------------------------- 硬件告警：攒批 + 定时
+#
+# 硬盘巡检通知是「有变化立刻发」；硬件（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）
+# 是「到点统一发一封」：
+#   · 到点前就恢复的，整条不发（这就是「配对后不发」）；
+#   · 到点仍没恢复的才发，正文带发生时间；
+#   · 一直不修的，每 7 天再提醒一次；
+#   · 发过通知、后来恢复的，补一封「已恢复」。
+# 状态单独存 notify-hw.json：notify_after_scan 每轮都会整体重写 notify-state.json，
+# 混在一起会被冲掉。
+HW_STATE_FILE = "notify-hw.json"
+_HW_LOCK = threading.Lock()
+
+
+def hw_state_load(data_dir):
+    """读硬件告警状态；没有 / 损坏返回 None（调用方据此走「首次基线」）。"""
+    try:
+        with open(os.path.join(data_dir, HW_STATE_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def hw_state_save(data_dir, hw):
+    try:
+        write_json_secure(os.path.join(data_dir, HW_STATE_FILE), dict(hw or {}, ts=time.time()))
+    except Exception as e:
+        print("[fnmonitor] 硬件告警状态写入失败：%s" % str(e)[:120])
+
+
+def _hw_fingerprint(a):
+    """SEL 条目的稳定指纹：MessageId + 监控对象。
+
+    原来用 SensorType，但 iDRAC8 回的是 `[{'Member': '...'}]` 这种结构字符串，
+    同一路传感器也可能算出不同值，指纹一抖就被当成「新告警」重复发信。
+    改用从消息里抽出的对象，稳定得多。
+    """
+    mid = str(a.get("msg_id") or a.get("id") or "")
+    obj = _sel_object(a.get("message") or "")
+    if not mid and not obj:
+        return ""
+    return "%s|%s" % (mid, obj)
+
+
+def notify_hw_collect(data_dir, icfg, force_sel=False):
+    """拉一次「当前仍未恢复」的硬件异常清单。
+
+    force_sel=True 会强制重读 SEL（到点发送前用，否则「到点前刚恢复」判不出来）。
+    返回 {指纹: {...}}；iDRAC 读不到返回 None——调用方必须保留旧清单，
+    绝不能把「读不到」当成「全部恢复」。
+    """
+    try:
+        if force_sel:
+            idrac_sel(icfg, force=True)
+        snap = idrac_snapshot(icfg, data_dir=data_dir)
+    except Exception as e:
+        print("[fnmonitor] 硬件告警采集异常：%s" % str(e)[:120])
+        return None
+    if not snap.get("ok"):
+        return None
+    cur = {}
+    # ① 实时硬件状态：风扇 / 温度 / 电源 / CPU / 内存
+    #    盘 / 卷 / 阵列卡的健康**故意不收**：v12 起它们是「固定信息台账」，只在第一次
+    #    连接时读一次、之后不再更新，拿来当告警会天天报一条几周前的陈旧故障。
+    #    盘的退化交给硬盘巡检（SMART），那个才是实时的。
+    for p in snap.get("problems") or []:
+        if str(p.get("kind") or "") in ("disk", "volume", "controller"):
+            continue
+        cur["hw|" + str(p.get("key") or "")] = {
+            "message": p.get("text") or "",
+            "sensor": p.get("kind") or "",
+            "severity": p.get("severity") or "crit"}
+    # ② SEL 硬件日志：只收配对后仍没恢复的（sel_pair_active 已处理）
+    if icfg.get("sel_alert"):
+        for a in snap.get("active") or []:
+            fp = _hw_fingerprint(a)
+            if not fp:
+                continue
+            cur[fp] = {"message": a.get("message") or "",
+                       "sensor": "硬件日志",
+                       "severity": a.get("severity") or ""}
+    return cur
+
+
+def notify_hw_merge(hw, cur, now):
+    """把这轮的真实状态合进待发清单：新出现的开始计时，消失的转成「待发恢复」。"""
+    base = dict(hw or {})
+    act = {k: dict(v) for k, v in (base.get("active") or {}).items()}
+    rec = [dict(r) for r in (base.get("recovered") or [])]
+    for k, v in (cur or {}).items():
+        if k in act:
+            e = act[k]
+            e["message"] = v.get("message") or e.get("message") or ""
+            e["severity"] = v.get("severity") or e.get("severity") or ""
+            e["last"] = now
+            continue
+        # 同一条又出现了：把还没发出去的「已恢复」撤回，别自相矛盾
+        rec = [r for r in rec if r.get("key") != k]
+        act[k] = {"message": v.get("message") or "", "sensor": v.get("sensor") or "",
+                  "severity": v.get("severity") or "", "first": now, "last": now,
+                  "sent": 0, "sent_ts": 0}
+    for k in list(act.keys()):
+        if k in (cur or {}):
+            continue
+        e = act.pop(k)
+        if e.get("sent"):
+            # 只给「已经通知过」的补恢复信；从没通知过的恢复了也不该打扰
+            rec.append({"key": k, "message": e.get("message") or "",
+                        "sensor": e.get("sensor") or "", "severity": e.get("severity") or "",
+                        "first": e.get("first") or 0, "recovered_ts": now})
+    base["active"] = act
+    base["recovered"] = rec
+    return base
+
+
+def _hw_event(act, k, e, now):
+    """把清单条目转成 notify_build 认识的事件（带发生时间）。"""
+    sev = str(e.get("severity") or "").lower()
+    first = float(e.get("first") or 0)
+    return {"act": act, "dev": "iDRAC",
+            "d": {"dev": "iDRAC", "kind": "idrac", "key": k,
+                  "model": e.get("sensor") or "硬件告警",
+                  "grade": "crit" if sev in ("crit", "critical") else "warn",
+                  "detail": e.get("message") or "",
+                  "first_ts": first,
+                  "recovered_ts": float(e.get("recovered_ts") or 0)},
+            "text": e.get("message") or ""}
+
+
+def notify_hw_tick(data_dir, config=None):
+    """采集线程每 10 秒调用一次：到点（且今天还没发）就把硬件告警汇总发一封。
+
+    没到点 / 今天发过 / 开关关着，都在毫秒级返回，**不产生任何 iDRAC 请求**。
+    与硬盘巡检通知完全独立。
+    """
+    try:
+        cfg = notify_load(data_dir)
+        if not cfg.get("hw_enabled"):
+            return None
+        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+            return None
+        icfg = idrac_load(data_dir)
+        if not (icfg.get("enabled") and icfg.get("host")):
+            return None
+        now = time.time()
+        lt = time.localtime(now)
+        hh, mm = notify_hw_time(cfg)
+        if (lt.tm_hour, lt.tm_min) < (hh, mm):
+            return None
+        today = time.strftime("%Y-%m-%d", lt)
+        hw = hw_state_load(data_dir)
+        if hw and hw.get("day") == today:
+            return None
+        if hw and now - float(hw.get("last_try") or 0) < HW_RETRY_GAP:
+            return None
+        if not _HW_LOCK.acquire(False):
+            return None
+        try:
+            cur = notify_hw_collect(data_dir, icfg, force_sel=True)
+            if cur is None:
+                return None                    # iDRAC 暂时读不到：保留清单，不改也不发
+            first = hw is None
+            hw = notify_hw_merge(hw, cur, now)
+            hw["last_try"] = now
+            if first:
+                # 首次接入只记基线：机器上现存的异常不倒一遍，避免刚开启就被历史问题刷屏
+                for e in hw["active"].values():
+                    e["sent"] = 1
+                    e["sent_ts"] = now
+                hw["recovered"] = []
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                print("[fnmonitor] 硬件告警首次记录基线（%d 条未恢复），本轮不发通知"
+                      % len(hw["active"]))
+                return {"ok": True, "baseline": True, "active": len(hw["active"])}
+            events, marked = [], []
+            for k, e in hw["active"].items():
+                if not e.get("sent"):
+                    events.append(_hw_event("new", k, e, now))
+                    marked.append(k)
+                elif now - float(e.get("sent_ts") or 0) >= HW_REMIND_DAYS * 86400:
+                    events.append(_hw_event("worse", k, e, now))
+                    marked.append(k)
+            for r in hw["recovered"]:
+                events.append(_hw_event("recovered", r.get("key") or "", r, now))
+            if not events:
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                return {"ok": True, "events": 0}
+            try:
+                port = int((config or {}).get("port") or 0) or 8777
+            except Exception:
+                port = 8777
+            subject, body = notify_build(events, now, port)
+            ok, res = notify_send_all(cfg, subject, body)
+            if ok:
+                for k in marked:
+                    hw["active"][k]["sent"] = 1
+                    hw["active"][k]["sent_ts"] = now
+                hw["recovered"] = []
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                print("[fnmonitor] 硬件告警已发送：%s" % subject)
+                return {"ok": True, "events": len(events), "subject": subject}
+            # 失败：不回写 sent 状态，10 分钟后再试（每次 10 秒重试会把 SMTP 打爆）
+            hw_state_save(data_dir, hw)
+            print("[fnmonitor] 硬件告警发送失败：%s" % res)
+            return {"ok": False, "error": res}
+        finally:
+            _HW_LOCK.release()
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+# 采集线程调用的入口：只做「到点没到点」的判断，真正的读取与发信丢后台线程。
+# iDRAC8 一个请求 5 秒，绝不能放进采集主循环——那会让风扇/功耗/温度停更十几秒。
+_HW_JOB = [None]
+_HW_CHECK_TS = [0.0]
+
+
+def _hw_due(data_dir, now=None):
+    """毫秒级判断：现在是否该发硬件告警汇总（不碰 iDRAC，不写盘）。"""
+    now = now or time.time()
+    if now - _HW_CHECK_TS[0] < 30:        # 最多 30 秒检查一次，省掉无谓的文件读
+        return False
+    _HW_CHECK_TS[0] = now
+    cfg = notify_load(data_dir)
+    if not cfg.get("hw_enabled"):
+        return False
+    if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+        return False
+    lt = time.localtime(now)
+    hh, mm = notify_hw_time(cfg)
+    if (lt.tm_hour, lt.tm_min) < (hh, mm):
+        return False
+    hw = hw_state_load(data_dir)
+    if hw and hw.get("day") == time.strftime("%Y-%m-%d", lt):
+        return False
+    if hw and now - float(hw.get("last_try") or 0) < HW_RETRY_GAP:
+        return False
+    return True
+
+
+def notify_hw_schedule(data_dir, config=None):
+    """采集线程每轮调用一次：到点就起一条后台线程去发，立刻返回。"""
+    try:
+        if _HW_JOB[0] is not None and _HW_JOB[0].is_alive():
+            return False
+        if not _hw_due(data_dir):
+            return False
+        t = threading.Thread(target=notify_hw_tick, args=(data_dir, config),
+                             name="fnm-hw-notify", daemon=True)
+        _HW_JOB[0] = t
+        t.start()
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
 
 
 def notify_test(data_dir, channel="all"):
@@ -4589,6 +4899,80 @@ def _sel_entry(m):
             "msg_id": str(m.get("MessageId") or "")}
 
 
+# SEL 里表示「已回到正常」的英文句式。iDRAC 固件换了文案可能变，所以集中放这里；
+# 认不出的一律按「仍活跃」处理——宁可多报一次，也不能把真故障当成已恢复。
+_SEL_RECOVER_RE = re.compile(
+    r"is within range|has been restored|is closed|"
+    r"has been (?:deasserted|cleared)|returned to normal|is no longer", re.I)
+
+# 从消息里抽「被监控对象」。顺序敏感：先具体（带编号）后笼统。
+# 注意 chassis 故意不区分「上电/下电」状态：盖子只有一个，关上了就是关上了，
+# 否则「下电状态下被打开」这种历史记录永远配不上「上电状态下已关闭」而常年报警。
+_SEL_OBJ_RULES = (
+    (re.compile(r"\bFan\s+(\d+)\s+RPM", re.I), "fan:%s"),
+    (re.compile(r"\bDrive\s+(\d+)", re.I), "drive:%s"),
+    (re.compile(r"\bpower supply\s+(\d+)", re.I), "psu:%s"),
+    (re.compile(r"\bCPU\s*(\d+)", re.I), "cpu:%s"),
+    (re.compile(r"\bDIMM\s*_?([A-Z]?\d+)", re.I), "dimm:%s"),
+    (re.compile(r"\b(?:Temperature|Temp)\b[^.\d]{0,20}?(\d+)\s*(?:Degrees|C\b)", re.I), "temp:%s"),
+    (re.compile(r"\bchassis\b", re.I), "chassis"),
+    (re.compile(r"\bpower supply\b", re.I), "psu"),
+    (re.compile(r"\bfan\b", re.I), "fan"),
+)
+
+
+def _sel_object(message):
+    """从 SEL 消息里抽出「这是哪一路传感器」的稳定标识，抽不出返回空串。"""
+    msg = message or ""
+    for rx, fmt in _SEL_OBJ_RULES:
+        m = rx.search(msg)
+        if not m:
+            continue
+        try:
+            return fmt % m.group(1)
+        except (IndexError, TypeError):
+            return fmt
+    return ""
+
+
+def sel_pair_active(rows):
+    """从 SEL 条目里挑出「确实还没恢复」的告警。
+
+    SEL 是**事件流水**，不是状态表：一条 Critical 后面往往跟着同一条事件的
+    Assert → Deassert，或者一句 "is within range" / "has been restored"。
+    原来只看「这条是 Critical/Warning 且是 Assert」，于是三个月前的开盖、
+    风扇低速会被永远当成活跃告警（实测 20 条里 10 条全是这种情况）。
+
+    这里补上配对，两条规则并用：
+
+      ① 同 MessageId 在「更新」的方向上出现过 Deassert → 已恢复；
+      ② MessageId 对不上时（风扇几条告警编号各异，恢复记录又是另一个编号），
+         按「同一监控对象 + 恢复措辞」配对。
+
+    rows 必须按时间倒序（下标越小越新）。配不上的一律算活跃。
+    """
+    out = []
+    for i, r in enumerate(rows):
+        if not r.get("assert"):
+            continue
+        if str(r.get("severity") or "").lower() not in ("critical", "warning"):
+            continue
+        mid = r.get("msg_id") or ""
+        obj = _sel_object(r.get("message") or "")
+        recovered = False
+        for newer in rows[:i]:
+            n_msg = newer.get("message") or ""
+            if mid and newer.get("msg_id") == mid and not newer.get("assert"):
+                recovered = True
+                break
+            if obj and _sel_object(n_msg) == obj and _SEL_RECOVER_RE.search(n_msg):
+                recovered = True
+                break
+        if not recovered:
+            out.append(r)
+    return out
+
+
 def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT, force=False):
     """最近的硬件日志（SEL）。iDRAC8 在 Logs/Sel，iDRAC9 在 LogServices/Sel。
 
@@ -4631,8 +5015,8 @@ def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT, force=False):
         rows = [_sel_entry(m) for m in members]
         rows.sort(key=lambda x: (x["created"], x["id"]), reverse=True)
         rows = rows[:limit]
-        active = [r for r in rows
-                  if r["assert"] and r["severity"].lower() in ("critical", "warning")]
+        # 不是「所有 assert 的告警」，而是「配对后仍没恢复的」——见 sel_pair_active
+        active = sel_pair_active(rows)
         res = {"ok": True, "entries": rows, "active": active,
                "count": int(d.get("Members@odata.count") or len(members)),
                "path": path, "ts": time.time()}
@@ -6583,6 +6967,12 @@ class History:
                     ts REAL NOT NULL, dev TEXT NOT NULL, grade TEXT,
                     defects INTEGER, pending_defects INTEGER, uncorr INTEGER)""")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_dhh ON disk_health_hist(dev, ts)")
+                # 巡检流水：**每次**巡检都记一行（disk_health_hist 只在有变化时才记）。
+                # changed=0 表示「未见异常」，这类记录 7 天后自动清掉；changed=1 的永久保留，
+                # 只有用户手动清理才删——异常记录是排障依据，不能悄悄消失。
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_scan_log (
+                    ts REAL PRIMARY KEY, total INTEGER, changed INTEGER NOT NULL DEFAULT 0,
+                    summary TEXT NOT NULL DEFAULT '')""")
                 # 自愈：v2.8.0 前的历史写入曾把 (指标名, 时间戳) 两列互换（ts 列存了文本），
                 # 这些脏行永远查不出来还会拖慢查询，启动时一次性清除
                 conn.execute("DELETE FROM metrics WHERE typeof(ts) != 'real'")
@@ -6615,6 +7005,60 @@ class History:
             traceback.print_exc()
         self._memo("disk_health", rows)
         return rows
+
+    # ---- 巡检流水（每次一行：有变化记变化内容，没变化记「未见异常」）----
+    def disk_scan_log_add(self, ts, total, changed, summary):
+        try:
+            conn = self._connect(write=True)
+            try:
+                with conn:
+                    conn.execute("INSERT OR REPLACE INTO disk_scan_log(ts, total, changed, summary)"
+                                 " VALUES (?,?,?,?)",
+                                 (float(ts), int(total or 0), 1 if changed else 0,
+                                  str(summary or "")[:2000]))
+                    # 「未见异常」只留 7 天，异常永久保留（手动清理才删）
+                    conn.execute("DELETE FROM disk_scan_log WHERE changed=0 AND ts<?",
+                                 (time.time() - DISK_SCAN_LOG_KEEP_OK,))
+            finally:
+                conn.close()
+            return True
+        except Exception:
+            traceback.print_exc()
+            return False
+
+    def disk_scan_log_read(self, limit=200):
+        rows = []
+        try:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT ts, total, changed, summary FROM disk_scan_log"
+                    " ORDER BY ts DESC LIMIT ?", (max(1, min(1000, int(limit or 200))),))
+                rows = [{"ts": r[0], "total": r[1], "changed": bool(r[2]), "summary": r[3] or ""}
+                        for r in cur.fetchall()]
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        return rows
+
+    def disk_scan_log_clear(self, only_ok=False):
+        """手动清理：默认全清（含异常记录），only_ok=True 只清「未见异常」的。"""
+        try:
+            conn = self._connect(write=True)
+            try:
+                with conn:
+                    if only_ok:
+                        cur = conn.execute("DELETE FROM disk_scan_log WHERE changed=0")
+                    else:
+                        cur = conn.execute("DELETE FROM disk_scan_log")
+                    n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            finally:
+                conn.close()
+            return n
+        except Exception:
+            traceback.print_exc()
+            return 0
 
     def disk_health_save(self, items, prev):
         """写入本次巡检结果；仅当等级或计数变化时补一条历史。
@@ -7325,6 +7769,12 @@ class History:
             with conn:
                 for metric in self._distinct_metrics(conn):
                     conn.execute("DELETE FROM metrics WHERE metric=? AND ts<?", (metric, cutoff))
+                # 巡检流水里的「未见异常」只留 7 天（巡检关掉时也要能清），异常永久保留
+                try:
+                    conn.execute("DELETE FROM disk_scan_log WHERE changed=0 AND ts<?",
+                                 (time.time() - DISK_SCAN_LOG_KEEP_OK,))
+                except Exception:
+                    pass
         except Exception:
             traceback.print_exc()
         finally:
@@ -7850,6 +8300,13 @@ class Collector(threading.Thread):
                 self.updater.start_auto_job(bool(self.config.get("update_autoupdate")),
                                             bool(self.config.get("update_autodownload")))
 
+        # ---- 硬件告警定时发送（每 30 秒判断一次是否到点；读取与发信都在后台线程）----
+        # 与上面的硬盘巡检通知完全独立：硬盘「有变化立刻发」，硬件「到点统一发」
+        try:
+            notify_hw_schedule(self.data_dir, self.config)
+        except Exception:
+            traceback.print_exc()
+
         with self._lock:
             self.latest = snapshot
 
@@ -8335,7 +8792,8 @@ class MonitorApp:
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
                      "/api/vm/action", "/api/config/save", "/api/update/install",
                      "/api/notify/save", "/api/notify/test", "/api/disk_scan/now",
-                     "/api/idrac/save", "/api/idrac/test", "/api/idrac/refresh"}
+                     "/api/idrac/save", "/api/idrac/test", "/api/idrac/refresh",
+                     "/api/scan_log/clear"}
 
         class Handler(BaseHTTPRequestHandler):
             # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程；timeout 保证空闲连接
@@ -8548,6 +9006,9 @@ class MonitorApp:
                 if path == "/api/disk_health":
                     # 盘位健康分级：只读巡检缓存，不触发 smartctl
                     self._json(app.api_disk_health())
+                    return
+                if path == "/api/scan_log":
+                    self._json(app.api_scan_log(qs))
                     return
                 if path == "/api/notify":
                     self._json(app.api_notify_get())
@@ -8806,6 +9267,9 @@ class MonitorApp:
                 if path == "/api/disk_scan/now":
                     self._json(app.api_disk_scan_now())
                     return
+                if path == "/api/scan_log/clear":
+                    self._json(app.api_scan_log_clear(data))
+                    return
                 if path == "/api/update/install":
                     self._json(app.api_update_install())
                     return
@@ -8876,6 +9340,33 @@ class MonitorApp:
         threading.Thread(target=disk_scan_once, args=(self.collector.db, self.config),
                          name="disk-scan-manual", daemon=True).start()
         return {"ok": True, "started": True, "message": "已开始巡检，约 15–20 秒后刷新"}
+
+    def api_scan_log(self, query=None):
+        """巡检流水：每次巡检一行，有变化记变化内容、没变化记未见异常。
+
+        「未见异常」7 天后自动清；有变化的永久保留，只有手动清理才删。
+        """
+        limit = 200
+        try:
+            limit = int((query or {}).get("limit") or 200)
+        except Exception:
+            pass
+        try:
+            items = self.collector.db.disk_scan_log_read(limit) or []
+        except Exception:
+            items = []
+        return {"ok": True, "items": items,
+                "keep_ok_days": int(DISK_SCAN_LOG_KEEP_OK // 86400)}
+
+    def api_scan_log_clear(self, data=None):
+        """手动清理巡检流水。默认全清；body 传 {"only_ok": true} 只清「未见异常」。"""
+        only_ok = bool((data or {}).get("only_ok"))
+        try:
+            n = self.collector.db.disk_scan_log_clear(only_ok=only_ok)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:120]}
+        return {"ok": True, "removed": n,
+                "message": ("已清理 %d 条「未见异常」记录" % n) if only_ok else ("已清理 %d 条记录" % n)}
 
     def api_disk_health(self):
         """盘位卡片的健康分级（只读巡检缓存，不触发任何 smartctl）。

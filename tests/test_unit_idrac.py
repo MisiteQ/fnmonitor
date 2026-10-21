@@ -824,3 +824,110 @@ class VolumePrefilterTest(unittest.TestCase):
         self.assertFalse([p for p in asked if "Disk.Bay.8" in p])
         self.assertTrue([p for p in asked if "Disk.Virtual.0" in p])
         self.assertEqual([v["raid"] for v in d["volumes"]], ["RAID1"])
+
+
+class SelPairTest(unittest.TestCase):
+    """SEL 配对：把「发生」与「恢复」配成一对，配上的不再算活跃告警。
+
+    夹具是 R730XD 上实测的最近 20 条 SEL（PowerEdge + iDRAC8，2026-10-21 抓取）。
+    这些条目里原来有 10 条被判为活跃，实际全是早已恢复的历史事件：
+    8 月两次风扇低速、多次开关盖。配对逻辑上线后应该是 0 条。
+    """
+
+    # (严重级别, EntryCode, MessageId, 消息)   —— 顺序即 SEL 的返回顺序：最新的在前
+    REAL_20 = [
+        ("OK", "Deassert", "801ff", "The chassis is closed while the power is on."),
+        ("Critical", "Assert", "801ff", "The chassis is open while the power is on."),
+        ("OK", "Deassert", "801ff", "The chassis is closed while the power is on."),
+        ("OK", "Lower Non-critical - going low", "50915", "Fan 1 RPM is within range."),
+        ("Warning", "Lower Critical - going low", "52913", "Fan 1 RPM is less than the lower warning threshold."),
+        ("Critical", "Lower Critical - going low", "5203", "Fan 1 RPM is less than the lower critical threshold."),
+        ("Warning", "Lower Non-critical - going low", "5005", "Fan 1 RPM is less than the lower warning threshold."),
+        ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+        ("OK", "Assert", "a015", "Drive 5 is installed in disk drive bay 1."),
+        ("Critical", "Deassert", "a015", "Drive 5 is removed from disk drive bay 1."),
+        ("OK", "Deassert", "801ff", "The chassis is closed while the power is on."),
+        ("Critical", "Assert", "801ff", "The chassis is open while the power is on."),
+        ("OK", "Deassert", "802ff", "The chassis is closed while the power is off."),
+        ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+        ("OK", "Deassert", "802ff", "The chassis is closed while the power is off."),
+        ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+        ("OK", "Deassert", "802ff", "The chassis is closed while the power is off."),
+        ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+        ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+        ("OK", "Deassert", "3ffff", "The input power for power supply 2 has been restored."),
+    ]
+
+    def _rows(self, items):
+        rows = []
+        for i, (sev, code, mid, msg) in enumerate(items):
+            rows.append({"id": str(9000 - i),
+                         "created": "2026-10-21T00:%02d:00Z" % (59 - i),
+                         "severity": sev, "message": msg, "code": code,
+                         "assert": code.lower() != "deassert",
+                         "sensor": "[{'Member': 'x'}]", "msg_id": mid})
+        rows.sort(key=lambda x: (x["created"], x["id"]), reverse=True)
+        return rows
+
+    def test_real_machine_collapses_to_zero(self):
+        """真机 20 条：原来 10 条活跃，配对后必须一条不剩。"""
+        rows = self._rows(self.REAL_20)
+        self.assertEqual(len(srv.sel_pair_active(rows)), 0)
+
+    def test_unrecovered_warning_stays(self):
+        """只有告警、没有任何恢复记录 → 必须留着（宁可多报）。"""
+        rows = self._rows([
+            ("Critical", "Assert", "802ff", "The chassis is open while the power is off."),
+            ("OK", "Assert", "a015", "Drive 5 is installed in disk drive bay 1."),
+        ])
+        act = srv.sel_pair_active(rows)
+        self.assertEqual(len(act), 1)
+        self.assertIn("chassis is open", act[0]["message"])
+
+    def test_deassert_by_same_msg_id(self):
+        rows = self._rows([
+            ("OK", "Deassert", "801ff", "The chassis is closed while the power is on."),
+            ("Critical", "Assert", "801ff", "The chassis is open while the power is on."),
+        ])
+        self.assertEqual(srv.sel_pair_active(rows), [])
+
+    def test_semantic_pairing_across_msg_ids(self):
+        """风扇：告警与恢复的 MessageId 不同，只能靠「同一对象 + within range」。"""
+        rows = self._rows([
+            ("OK", "Lower Non-critical - going low", "50915", "Fan 1 RPM is within range."),
+            ("Critical", "Lower Critical - going low", "5203", "Fan 1 RPM is less than the lower critical threshold."),
+        ])
+        self.assertEqual(srv.sel_pair_active(rows), [])
+
+    def test_semantic_pairing_is_object_scoped(self):
+        """恢复记录只配对同一个对象，不能把别的传感器的告警一起消掉。"""
+        rows = self._rows([
+            ("OK", "Lower Non-critical - going low", "50915", "Fan 1 RPM is within range."),
+            ("Critical", "Lower Critical - going low", "5203", "Fan 2 RPM is less than the lower critical threshold."),
+        ])
+        act = srv.sel_pair_active(rows)
+        self.assertEqual(len(act), 1)
+        self.assertIn("Fan 2", act[0]["message"])
+
+    def test_info_events_never_active(self):
+        """OK 级别的信息事件（装盘/拔盘）不算告警。"""
+        rows = self._rows([
+            ("OK", "Assert", "a015", "Drive 5 is installed in disk drive bay 1."),
+            ("Critical", "Deassert", "a015", "Drive 5 is removed from disk drive bay 1."),
+        ])
+        self.assertEqual(srv.sel_pair_active(rows), [])
+
+    def test_recovery_must_be_newer(self):
+        """恢复记录比告警更旧，说明是「先恢复、后发生」，不能算恢复。"""
+        rows = self._rows([
+            ("Critical", "Assert", "801ff", "The chassis is open while the power is on."),
+            ("OK", "Deassert", "801ff", "The chassis is closed while the power is on."),
+        ])
+        self.assertEqual(len(srv.sel_pair_active(rows)), 1)
+
+    def test_object_extraction(self):
+        self.assertEqual(srv._sel_object("Fan 3 RPM is less than the lower warning threshold."), "fan:3")
+        self.assertEqual(srv._sel_object("The chassis is open while the power is on."), "chassis")
+        self.assertEqual(srv._sel_object("The input power for power supply 2 has been restored."), "psu:2")
+        self.assertEqual(srv._sel_object("Drive 12 is removed from disk drive bay 1."), "drive:12")
+        self.assertEqual(srv._sel_object("完全看不懂的一句话"), "")

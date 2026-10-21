@@ -115,6 +115,10 @@ to{opacity:1;transform:none}
 .mod-dek{margin:8px 0 0;color:var(--ink-2);max-width:64ch;font-size:var(--fs-body)}
 .mod-dek b{color:var(--ink-1);font-weight:600}
 .mod-dek .warn{color:var(--warn);font-weight:600}
+.mod-dek .warn.dismissible{display:inline-flex;align-items:flex-start;gap:6px}
+.mod-dek .warn-x{flex:none;width:16px;height:16px;margin-top:1px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;opacity:.55;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:opacity var(--dur-1),background var(--dur-1)}
+.mod-dek .warn-x:hover{opacity:1;background:var(--warn-soft)}
+.mod-dek .warn-x .i{width:10px;height:10px}
 .mod-actions{display:flex;align-items:center;gap:var(--s3);flex:none}
 .link-btn{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:var(--r-pill);color:var(--ink-2);font-size:var(--fs-sm);font-weight:500;transition:background var(--dur-1),color var(--dur-1)}
 .link-btn:hover{background:var(--fill-1);color:var(--ink-1)}
@@ -994,7 +998,7 @@ a{color:var(--ink-1)}
 .bay:active{transform:translateY(1px) scale(.985)}
 .bay:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .bay-top{display:flex;align-items:center;gap:6px;font:500 10.5px/1 var(--font-mono);color:var(--chassis-ink-2);letter-spacing:.06em}
-.bay-top>span:first-child{margin-right:auto}
+.bay-top>span:first-child{margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bay-led{width:7px;height:7px;border-radius:50%;background:var(--led-off);transition:background-color 60ms,box-shadow 60ms}
 .bay-led.on{background:var(--led-on);box-shadow:0 0 6px var(--led-glow)}
 .bay[data-st="ok"] .bay-led{background:var(--health-ok);box-shadow:0 0 6px color-mix(in srgb,var(--health-ok) 55%,transparent)}
@@ -1104,6 +1108,10 @@ a{color:var(--ink-1)}
 .cs-rdemo i{display:block;height:100%;border-radius:3px}
 .cs-note{font-size:11.5px;color:var(--ink-3);line-height:1.5}
 @media (max-width: 760px){.colorspec{grid-template-columns:1fr}
+}
+.scanlog-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.scanlog-bar .faint{font-size:12.5px}
+@media (max-width: 520px){.scanlog-bar .btn{flex:1}
 }
 .bays{display:flex;flex-wrap:wrap}
 .bays>.bay{flex:1 1 170px;min-width:0}
@@ -2081,6 +2089,20 @@ const ioOf = (o, name) => ((o && o.diskio) || []).find(z => z.name === name) || 
 const isSleep = d => !!(d && (d.standby || d.state === 'standby'));
 const diskKind = d => /^nvme/.test(d.name) ? 'nvme' : /solid state/i.test(d.rpm || '') ? 'ssd' : /rpm/i.test(d.rpm || '') ? 'hdd' : 'disk';
 const KIND_TXT = { nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD', disk: '硬盘' };
+function volOf(d) {
+for (const mp of (d && d.mounts) || []) {
+const m = /^\/vol(\d+)(?:\/|$)/.exec(String(mp));
+if (m) return +m[1];
+}
+return 0;
+}
+const volLabel = d => volOf(d) ? `vol${volOf(d)}` : '未挂载';
+const byVol = (a, b) => {
+const va = volOf(a), vb = volOf(b);
+if (va !== vb) return (va || 999) - (vb || 999);
+return String(a.name).localeCompare(String(b.name));
+};
+const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];
 function smartState(d) {
@@ -2583,7 +2605,7 @@ m.sp.pwr.set([{ values: vals(S.live.power) }], { min: 0 });
 });
 defineModule({
 id: 'storage', page: 'overview', dc: 'util', kicker: 'STORAGE', title: '存储', dek: '存储池用量与每块物理硬盘的状态',
-actions: () => detailBtn('storage', '全部硬盘'),
+actions: () => [detailBtn('scanlog', '巡检历史'), detailBtn('storage', '全部硬盘')],
 build(body, m) {
 body.innerHTML = `<div class="card pool">
 <div><div class="eyebrow">存储池使用率</div><div class="dnum" style="margin-top:12px"><span class="dm" data-ref="poolV"></span><span class="unit">%</span></div></div>
@@ -2595,7 +2617,7 @@ body.innerHTML = `<div class="card pool">
 <div class="ch-top"><span class="pwr" title="电源"><i></i></span><span data-ref="chName"></span><span class="vent"></span><span data-ref="chModel">NAS</span></div>
 <div class="bays" data-ref="bays"></div>
 </div>
-<div class="nas-foot"><span><i class="led-key"></i>正常</span><span><i class="led-key warn"></i>留意</span><span><i class="led-key crit"></i>故障</span><span><i class="led-key off"></i>休眠 / 未巡检</span><span class="faint scan-ago" data-ref="scanAgo"></span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
+<div class="nas-foot"><span><i class="led-key"></i>正常</span><span><i class="led-key warn"></i>留意</span><span><i class="led-key crit"></i>故障</span><span><i class="led-key off"></i>休眠 / 未巡检</span><span class="faint scan-ago" data-ref="scanAgo"></span><span class="faint">点击盘位查看 SMART 详情 · 盘位按存储空间排列</span></div>
 </div>
 <div data-ref="raid"></div>`;
 m.x = collect(body); m.bays = {}; m.io = {};
@@ -2606,8 +2628,10 @@ m.x.bays.style.setProperty('--bays', clamp(dd.length, 1, 6));
 if (!dd.length) { m.x.bays.innerHTML = `<div class="bays-empty">${ic('hdd')}<span>未检测到物理硬盘（需要 lsblk 支持）</span></div>`; return; }
 dd.forEach(d => {
 const k = diskKind(d);
-const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，查看详情">
-<span class="bay-top"><span>${KIND_TXT[k]}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
+const v = volOf(d);
+const volTxt = v ? `存储空间 vol${v}` : '未挂载';
+const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
+<span class="bay-top"><span title="${esc(volTxt)}">${volLabel(d)}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
 <span class="bay-body">
 <span class="bay-gauge" data-ref="g"></span>
 <span class="bay-zz" aria-hidden="true"><span class="dm" data-dm="Zz"></span>休眠</span>
@@ -2627,13 +2651,13 @@ m.bays[d.name] = el; m.x.bays.append(el);
 },
 update(o, m) {
 if (!o) return;
-const x = m.x, dd = disksOf(o), has = +o.disk_size > 0;
+const x = m.x, dd = disksOf(o).slice().sort(byVol), has = +o.disk_size > 0;
 dnum(x.poolV, has ? o.disk_total : null); if (has) { rampBar(x.poolBar, +o.disk_total, 'cap'); inkTo(x.poolV, rampInk(+o.disk_total, 'cap')); } else { setW(x.poolBar, 0); inkTo(x.poolV, ''); }
 dnumU(x.poolFree, x.poolFreeU, has ? o.disk_size - o.disk_used : null, F.dsize);
 setHTML(x.poolLeg, has ? `<span>已用 <b>${F.dsizeStr(o.disk_used)}</b></span><span>总容量 <b>${F.dsizeStr(o.disk_size)}</b></span>${o.disk_pools ? `<span>${esc(o.disk_pools)} 个存储池</span>` : ''}` : '<span>未读取到存储池用量（fnOS 存储池挂载在 /vol*）</span>');
 const sy = o.system || {}, hw = (o.hardware || {}).board || {};
 setText(x.chName, sy.hostname || ''); setText(x.chModel, String(hw.product_name || hw.board_name || 'NAS').slice(0, 24) + ` · ${dd.length} 盘`);
-const sig = dd.map(d => d.name + diskKind(d)).join(',');
+const sig = dd.map(d => d.name + diskKind(d) + volOf(d)).join(',');
 if (m.sig !== sig) { m.sig = sig; this.buildBays(dd, m); }
 m.io = {}; (o.diskio || []).forEach(z => { m.io[z.name] = (+z.read_rate || 0) + (+z.write_rate || 0); });
 dd.forEach(d => {
@@ -2654,10 +2678,32 @@ setHTML(x.raid, raid.length || (rc.type && rc.type !== 'none') ? `<div class="ca
 const warnD = dd.filter(d => ['warn', 'crit'].includes(bayState(d).lv)), sleepD = dd.filter(isSleep);
 let dek = !dd.length ? '未检测到物理硬盘。' : `${dd.length} 块硬盘${has ? `，存储池共 <b>${F.dsizeStr(o.disk_size)}</b>，已用 ${F.int(o.disk_total)}%` : ''}。`;
 const unknownD = dd.filter(d => bayState(d).lv === 'unknown');
-if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(bayState(warnD[0]).text)}${bayState(warnD[0]).detail ? ' · ' + esc(bayState(warnD[0]).detail) : ''}</span>，建议确认备份。`;
+if (warnD.length) {
+const line = list => {
+const d0 = list[0], bs = bayState(d0), v = volOf(d0);
+const cap = d0.size ? ' ' + F.dsizeStr(d0.size) : '';
+const where = [v ? `vol${v}` : '未挂载', d0.slot ? `插槽 ${d0.slot}` : ''].filter(Boolean).join(' · ');
+const more = list.length > 1 ? ` 等 ${list.length} 块` : '';
+return `<b>${esc(d0.name)}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
+};
+const sig = warnD.map(d => `${d.name}:${bayState(d).lv}:${bayState(d).detail || ''}`).join('|');
+let hidden = '';
+try { hidden = localStorage.getItem(WARN_DISMISS_KEY) || ''; } catch (e) { hidden = ''; }
+if (hidden !== sig) {
+dek += `<span class="warn dismissible" data-warn="${esc(sig)}">${line(warnD)}<button class="warn-x" type="button" aria-label="隐藏本次提醒" title="隐藏本次提醒（状态有变化时会重新出现）">${ic('x')}</button></span>`;
+}
+}
 if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
 if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
 setHTML(m.r.dek, dek);
+const bx = m.r.dek && m.r.dek.querySelector ? m.r.dek.querySelector('.warn-x') : null;
+if (bx) bx.onclick = ev => {
+ev.preventDefault(); ev.stopPropagation();
+const host = bx.closest('.dismissible');
+const sig = host && host.getAttribute('data-warn');
+try { if (sig) localStorage.setItem(WARN_DISMISS_KEY, sig); } catch (e) { /* 隐私模式忽略 */ }
+if (host) host.remove();
+};
 },
 });
 const SERIES_SRC = { 'net.rx': ['net', 'rx'], 'net.tx': ['net', 'tx'], 'diskio.r': ['diskio', 'r'], 'diskio.w': ['diskio', 'w'], 'net_bytes.rx': ['net_bytes', 'rx'], 'net_bytes.tx': ['net_bytes', 'tx'] };
@@ -3565,6 +3611,62 @@ setHTML(x.kv, kvHTML([['镜像', `<span class="mono">${esc(c.image)}</span>`], [
 };
 },
 },
+scanlog: {
+icon: () => 'list', title: () => '巡检历史', sub: () => '每次巡检一行 · 有变化记详情，没变化记未见异常',
+build(b) {
+b.innerHTML = `<div class="card pad scanlog-bar"><span class="faint" data-ref="sum" style="flex:1;min-width:140px"></span><button class="btn sm ghost" type="button" data-clear="ok">${ic('eye-off')}清理未见异常</button><button class="btn sm ghost" type="button" data-clear="all">${ic('x')}清空全部</button></div>
+<div data-ref="list" style="margin-top:10px"></div>
+<p class="sub">每次巡检固定留一条记录：分级或计数（重映射扇区 / 待映射扇区 / 不可纠正错误）有变化就写清哪块盘、从多少变到多少；没有变化就记「未见异常」。温度、通电时长这类天天在动的量不算变化。未见异常的记录 7 天后自动清理，有变化的记录不会自动清理，只有点上面的按钮才删。</p>`;
+const x = collect(b), st = { rows: null, err: '', loading: false };
+const ago = ts => {
+const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+if (s < 90) return '刚刚';
+if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+return Math.round(s / 86400) + ' 天前';
+};
+const one = r => {
+const ch = !!r.changed, txt = r.summary || (ch ? '有变化' : '未见异常');
+return `<div class="row-i" style="grid-template-columns:auto 1fr auto">
+<span class="${ch ? 'st-warn' : 'st-ok'}">${ic(ch ? 'alert' : 'check-c')}</span>
+<div style="min-width:0"><b style="font-weight:600;${ch ? '' : 'color:var(--ink-2)'}">${esc(txt)}</b>
+<div class="sub">${esc(F.mdhm(r.ts))} · ${esc(ago(r.ts))}${+r.total ? ` · ${+r.total} 块盘` : ''}</div></div>
+<span class="pill ${ch ? 'warn' : 'ok'}">${ch ? '有变化' : '未见异常'}</span></div>`;
+};
+const draw = () => {
+if (!st.rows && st.loading) setHTML(x.list, `<div class="card pad">${emptyHTML('正在读取巡检流水…', '', 'clock')}</div>`);
+else if (st.err) setHTML(x.list, `<div class="card pad">${emptyHTML('读取失败', esc(st.err))}</div>`);
+else if (!st.rows || !st.rows.length) setHTML(x.list, `<div class="card pad">${emptyHTML('还没有巡检记录', '下一次巡检完成后这里会出现第一条记录', 'list')}</div>`);
+else setHTML(x.list, rowsCard(st.rows.map(one).join('')));
+const n = (st.rows || []).length, chg = (st.rows || []).filter(r => r.changed).length;
+setText(x.sum, st.rows ? `${n} 条记录${chg ? ` · ${chg} 条有变化` : ''}` : st.loading ? '读取中…' : '');
+};
+const load = async () => {
+st.loading = true; draw();
+try { const j = await API.get('/api/scan_log?limit=200'); st.rows = (j && j.items) || []; st.err = ''; }
+catch (e) { st.err = String((e && e.message) || e); }
+st.loading = false; draw();
+};
+b.addEventListener('click', async e => {
+const t = e.target.closest('[data-clear]'); if (!t) return;
+const onlyOk = t.dataset.clear === 'ok';
+if (!confirm(onlyOk ? '清理所有「未见异常」记录？有变化的记录会保留。' : '清空全部巡检记录？有变化的记录也会一起删掉，无法恢复。')) return;
+t.disabled = true;
+try {
+const j = await API.post('/api/scan_log/clear', onlyOk ? { only_ok: true } : {});
+toast((j && j.message) || '已清理', { key: 'scanlog', icon: 'check' });
+await load();
+} catch (err) { toast('清理失败 · ' + String((err && err.message) || err).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+t.disabled = false;
+});
+load();
+let seen = (S.diskHealth && S.diskHealth.last_ts) || 0;
+return () => {
+const lt = (S.diskHealth && S.diskHealth.last_ts) || 0;
+if (lt && lt !== seen) { seen = lt; load(); }
+};
+},
+},
 keys: {
 icon: () => 'key', title: () => '键盘快捷键', sub: () => '在任何页面都可使用',
 build(b) {
@@ -4186,6 +4288,9 @@ else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
 } catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
 b.disabled = false;
 } },
+{ k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+run: () => openSheet('scanlog') },
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
 { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
@@ -4318,7 +4423,9 @@ catch (e) { NB = Object.assign({}, NB || {}, { load_error: e.message || '读取�
 return NB;
 }
 function renderNotify(card) {
-card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>只在变化时推送</b>：新增故障 / 故障加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。消息跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检。</span></div>
+card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
+· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
+· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
 <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
 <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
 <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
@@ -4327,10 +4434,12 @@ card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>只�
 <div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
 <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
 <div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+<div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
+<div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
 <div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
 const x = collect(card);
 const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
-password: '', sct_enabled: 0, sct_key: '' };
+password: '', sct_enabled: 0, sct_key: '', hw_enabled: 0, hw_time: '08:00' };
 const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
 f.provider = v;
 const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
@@ -4340,27 +4449,32 @@ const segSec = makeSeg([['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不�
 x.segP.append(segP); x.segSec.append(segSec);
 const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
 bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
-bind(x.pw, 'password'); bind(x.sctkey, 'sct_key');
+bind(x.pw, 'password'); bind(x.sctkey, 'sct_key'); bind(x.hwTime, 'hw_time');
 const setSw = (el, k) => el.addEventListener('click', () => {
 const on = el.getAttribute('aria-checked') !== 'true';
 el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
 });
-setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled');
+setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled'); setSw(x.swHw, 'hw_enabled');
 const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
 function sync() {
 const n = NB || {};
 x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
 x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
 segP.set(f.provider); segSec.set(f.secure);
 if (document.activeElement !== x.host) x.host.value = f.host || '';
 if (document.activeElement !== x.port) x.port.value = f.port || 465;
 if (document.activeElement !== x.user) x.user.value = f.user || '';
 if (document.activeElement !== x.to) x.to.value = f.to || '';
+if (document.activeElement !== x.hwTime) x.hwTime.value = f.hw_time || '08:00';
 x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
 x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
 setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
 setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
 setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+setText(x.hHw, +f.hw_enabled
+? `已开启：每天 ${f.hw_time || '08:00'} 汇总发一封，只发到点仍未恢复的`
+: '关闭：SEL 硬件日志与风扇 / 温度 / 电源不推送（硬盘巡检仍按上面的开关走）');
 const last = n.last || {};
 setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
 ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
@@ -4369,7 +4483,8 @@ setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
 async function doSave() {
 x.save.disabled = true;
 const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
-user: f.user, to: f.to, sct_enabled: f.sct_enabled };
+user: f.user, to: f.to, sct_enabled: f.sct_enabled,
+hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00' };
 if (f.password) body.password = f.password;
 if (f.sct_key) body.sct_key = f.sct_key;
 try {

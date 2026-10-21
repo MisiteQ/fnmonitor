@@ -169,6 +169,9 @@ const SET_SCHEMA = [
         } catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
         b.disabled = false;
       } },
+    { k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+      hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+      run: () => openSheet('scanlog') },
     cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
   ] },
   { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
@@ -304,7 +307,9 @@ async function loadNotify(force) {
   return NB;
 }
 function renderNotify(card) {
-  card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>只在变化时推送</b>：新增故障 / 故障加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试。消息跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检。</span></div>
+  card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
+· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
+· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
     <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
     <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
     <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
@@ -313,10 +318,12 @@ function renderNotify(card) {
     <div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
     <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
     <div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+    <div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
+    <div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
     <div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
   const x = collect(card);
   const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
-              password: '', sct_enabled: 0, sct_key: '' };
+              password: '', sct_enabled: 0, sct_key: '', hw_enabled: 0, hw_time: '08:00' };
   const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
     f.provider = v;
     const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
@@ -326,27 +333,32 @@ function renderNotify(card) {
   x.segP.append(segP); x.segSec.append(segSec);
   const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
   bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
-  bind(x.pw, 'password'); bind(x.sctkey, 'sct_key');
+  bind(x.pw, 'password'); bind(x.sctkey, 'sct_key'); bind(x.hwTime, 'hw_time');
   const setSw = (el, k) => el.addEventListener('click', () => {
     const on = el.getAttribute('aria-checked') !== 'true';
     el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
   });
-  setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled');
+  setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled'); setSw(x.swHw, 'hw_enabled');
   const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
   function sync() {
     const n = NB || {};
     x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
     x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+    x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
     segP.set(f.provider); segSec.set(f.secure);
     if (document.activeElement !== x.host) x.host.value = f.host || '';
     if (document.activeElement !== x.port) x.port.value = f.port || 465;
     if (document.activeElement !== x.user) x.user.value = f.user || '';
     if (document.activeElement !== x.to) x.to.value = f.to || '';
+    if (document.activeElement !== x.hwTime) x.hwTime.value = f.hw_time || '08:00';
     x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
     x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
     setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
     setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
     setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+    setText(x.hHw, +f.hw_enabled
+      ? `已开启：每天 ${f.hw_time || '08:00'} 汇总发一封，只发到点仍未恢复的`
+      : '关闭：SEL 硬件日志与风扇 / 温度 / 电源不推送（硬盘巡检仍按上面的开关走）');
     const last = n.last || {};
     setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
       ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
@@ -355,7 +367,8 @@ function renderNotify(card) {
   async function doSave() {
     x.save.disabled = true;
     const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
-                   user: f.user, to: f.to, sct_enabled: f.sct_enabled };
+                   user: f.user, to: f.to, sct_enabled: f.sct_enabled,
+                   hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00' };
     if (f.password) body.password = f.password;
     if (f.sct_key) body.sct_key = f.sct_key;
     try {

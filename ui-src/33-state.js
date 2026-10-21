@@ -94,6 +94,25 @@ const ioOf = (o, name) => ((o && o.diskio) || []).find(z => z.name === name) || 
 const isSleep = d => !!(d && (d.standby || d.state === 'standby'));
 const diskKind = d => /^nvme/.test(d.name) ? 'nvme' : /solid state/i.test(d.rpm || '') ? 'ssd' : /rpm/i.test(d.rpm || '') ? 'hdd' : 'disk';
 const KIND_TXT = { nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD', disk: '硬盘' };
+/** 这块盘属于哪个存储空间：从挂载点 /volN 取 N；没挂载（或只是系统盘分区）返回 0。
+    fnOS 的「存储空间 4」就是 /vol4，二者编号一致，所以不需要问后端要名字。 */
+function volOf(d) {
+  for (const mp of (d && d.mounts) || []) {
+    const m = /^\/vol(\d+)(?:\/|$)/.exec(String(mp));
+    if (m) return +m[1];
+  }
+  return 0;
+}
+/** 盘位卡左上角的标签：原来印 HDD/SSD，现在换成存储空间编号（未挂载的显式标出来） */
+const volLabel = d => volOf(d) ? `vol${volOf(d)}` : '未挂载';
+/** 盘位排序：按存储空间号升序，同一空间内按设备名；未挂载的排最后 */
+const byVol = (a, b) => {
+  const va = volOf(a), vb = volOf(b);
+  if (va !== vb) return (va || 999) - (vb || 999);
+  return String(a.name).localeCompare(String(b.name));
+};
+/** 存储卡副标题里「隐藏本次提醒」的本地记录键（签名变了会自动重新出现） */
+const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
 /** SMART：通过 / 失败 / 未知；计数字段仅在后端提供时使用 */
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];

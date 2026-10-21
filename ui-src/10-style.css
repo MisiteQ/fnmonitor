@@ -253,6 +253,11 @@ a { color: var(--accent); text-decoration: none; }
 .mod-dek { margin: 8px 0 0; color: var(--ink-2); max-width: 64ch; font-size: var(--fs-body); }
 .mod-dek b { color: var(--ink-1); font-weight: 600; }
 .mod-dek .warn { color: var(--warn); font-weight: 600; }
+/* 存储卡副标题里的告警条：右侧可点 × 隐藏本次，状态变化后自动重现 */
+.mod-dek .warn.dismissible { display: inline-flex; align-items: flex-start; gap: 6px; }
+.mod-dek .warn-x { flex: none; width: 16px; height: 16px; margin-top: 1px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; opacity: .55; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: opacity var(--dur-1), background var(--dur-1); }
+.mod-dek .warn-x:hover { opacity: 1; background: var(--warn-soft); }
+.mod-dek .warn-x .i { width: 10px; height: 10px; }
 .mod-actions { display: flex; align-items: center; gap: var(--s3); flex: none; }
 .link-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: var(--r-pill); color: var(--ink-2); font-size: var(--fs-sm); font-weight: 500; transition: background var(--dur-1), color var(--dur-1); }
 .link-btn:hover { background: var(--fill-1); color: var(--ink-1); }
@@ -1227,7 +1232,7 @@ a { color: var(--ink-1); }
 .bay:active { transform: translateY(1px) scale(.985); }
 .bay:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bay-top { display: flex; align-items: center; gap: 6px; font: 500 10.5px/1 var(--font-mono); color: var(--chassis-ink-2); letter-spacing: .06em; }
-.bay-top > span:first-child { margin-right: auto; }
+.bay-top > span:first-child { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bay-led { width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); transition: background-color 60ms, box-shadow 60ms; }
 .bay-led.on { background: var(--led-on); box-shadow: 0 0 6px var(--led-glow); }
 .bay[data-st="ok"] .bay-led { background: var(--health-ok); box-shadow: 0 0 6px color-mix(in srgb, var(--health-ok) 55%, transparent); }
@@ -1341,3 +1346,8 @@ a { color: var(--ink-1); }
 .cs-rdemo i { display: block; height: 100%; border-radius: 3px; }
 .cs-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; }
 @media (max-width: 760px) { .colorspec { grid-template-columns: 1fr; } }
+
+/* ---- 巡检流水抽屉 ---- */
+.scanlog-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scanlog-bar .faint { font-size: 12.5px; }
+@media (max-width: 520px) { .scanlog-bar .btn { flex: 1; } }

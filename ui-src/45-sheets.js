@@ -351,6 +351,66 @@ const SHEETS = {
       };
     },
   },
+  /* 巡检流水：每次巡检留一行。有变化记变化内容，没变化记「未见异常」。
+     「未见异常」7 天后自动清；有变化的永久保留，只能手动清。
+     数据来自 /api/scan_log（只读本机 sqlite，不触发任何 smartctl）。 */
+  scanlog: {
+    icon: () => 'list', title: () => '巡检历史', sub: () => '每次巡检一行 · 有变化记详情，没变化记未见异常',
+    build(b) {
+      b.innerHTML = `<div class="card pad scanlog-bar"><span class="faint" data-ref="sum" style="flex:1;min-width:140px"></span><button class="btn sm ghost" type="button" data-clear="ok">${ic('eye-off')}清理未见异常</button><button class="btn sm ghost" type="button" data-clear="all">${ic('x')}清空全部</button></div>
+        <div data-ref="list" style="margin-top:10px"></div>
+        <p class="sub">每次巡检固定留一条记录：分级或计数（重映射扇区 / 待映射扇区 / 不可纠正错误）有变化就写清哪块盘、从多少变到多少；没有变化就记「未见异常」。温度、通电时长这类天天在动的量不算变化。未见异常的记录 7 天后自动清理，有变化的记录不会自动清理，只有点上面的按钮才删。</p>`;
+      const x = collect(b), st = { rows: null, err: '', loading: false };
+      const ago = ts => {
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (s < 90) return '刚刚';
+        if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+        if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+        return Math.round(s / 86400) + ' 天前';
+      };
+      const one = r => {
+        const ch = !!r.changed, txt = r.summary || (ch ? '有变化' : '未见异常');
+        return `<div class="row-i" style="grid-template-columns:auto 1fr auto">
+          <span class="${ch ? 'st-warn' : 'st-ok'}">${ic(ch ? 'alert' : 'check-c')}</span>
+          <div style="min-width:0"><b style="font-weight:600;${ch ? '' : 'color:var(--ink-2)'}">${esc(txt)}</b>
+            <div class="sub">${esc(F.mdhm(r.ts))} · ${esc(ago(r.ts))}${+r.total ? ` · ${+r.total} 块盘` : ''}</div></div>
+          <span class="pill ${ch ? 'warn' : 'ok'}">${ch ? '有变化' : '未见异常'}</span></div>`;
+      };
+      const draw = () => {
+        if (!st.rows && st.loading) setHTML(x.list, `<div class="card pad">${emptyHTML('正在读取巡检流水…', '', 'clock')}</div>`);
+        else if (st.err) setHTML(x.list, `<div class="card pad">${emptyHTML('读取失败', esc(st.err))}</div>`);
+        else if (!st.rows || !st.rows.length) setHTML(x.list, `<div class="card pad">${emptyHTML('还没有巡检记录', '下一次巡检完成后这里会出现第一条记录', 'list')}</div>`);
+        else setHTML(x.list, rowsCard(st.rows.map(one).join('')));
+        const n = (st.rows || []).length, chg = (st.rows || []).filter(r => r.changed).length;
+        setText(x.sum, st.rows ? `${n} 条记录${chg ? ` · ${chg} 条有变化` : ''}` : st.loading ? '读取中…' : '');
+      };
+      const load = async () => {
+        st.loading = true; draw();
+        try { const j = await API.get('/api/scan_log?limit=200'); st.rows = (j && j.items) || []; st.err = ''; }
+        catch (e) { st.err = String((e && e.message) || e); }
+        st.loading = false; draw();
+      };
+      b.addEventListener('click', async e => {
+        const t = e.target.closest('[data-clear]'); if (!t) return;
+        const onlyOk = t.dataset.clear === 'ok';
+        if (!confirm(onlyOk ? '清理所有「未见异常」记录？有变化的记录会保留。' : '清空全部巡检记录？有变化的记录也会一起删掉，无法恢复。')) return;
+        t.disabled = true;
+        try {
+          const j = await API.post('/api/scan_log/clear', onlyOk ? { only_ok: true } : {});
+          toast((j && j.message) || '已清理', { key: 'scanlog', icon: 'check' });
+          await load();
+        } catch (err) { toast('清理失败 · ' + String((err && err.message) || err).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+        t.disabled = false;
+      });
+      load();
+      // 巡检刚跑完（last_ts 变了）就悄悄刷新一次，不用手动关掉重开
+      let seen = (S.diskHealth && S.diskHealth.last_ts) || 0;
+      return () => {
+        const lt = (S.diskHealth && S.diskHealth.last_ts) || 0;
+        if (lt && lt !== seen) { seen = lt; load(); }
+      };
+    },
+  },
   keys: {
     icon: () => 'key', title: () => '键盘快捷键', sub: () => '在任何页面都可使用',
     build(b) {
