@@ -417,6 +417,7 @@ function renderIdrac(card) {
     <div class="set-row inline"><div><div class="lbl">跳过证书校验</div><div class="hint">iDRAC 出厂是自签证书，内网访问需要关闭校验</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swTls" aria-label="跳过证书校验"></button></div></div>
     <div class="set-row inline"><div><div class="lbl">硬件日志纳入告警</div><div class="hint">SEL 出现新的 Critical / Warning 时，跟硬盘告警一起推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swSel" aria-label="硬件日志纳入告警"></button></div></div>
     <div class="set-row"><div><div class="lbl">连接与保存</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" data-ref="test">测试连接</button><button class="btn primary" type="button" data-ref="save">保存</button></div></div>
+    <div class="set-row inline"><div><div class="lbl">固定信息</div><div class="hint" data-ref="hStatic">槽位 / 内存 / 阵列卡 / 物理盘 / 卷只在首次连接时读一次，之后不再自动刷新</div></div><div class="ctl"><button class="btn" type="button" data-ref="refresh">刷新固定信息</button></div></div>
     <div class="idrac-live" data-ref="live"></div>`;
   const x = collect(card);
   const f = { enabled: 0, host: '', user: '', password: '', verify_tls: 0, sel_alert: 1 };
@@ -433,6 +434,13 @@ function renderIdrac(card) {
   const when = s => { try { return new Date(s).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(s || ''); } };
   function renderLive() {
     const d = IB || {};
+    // 固定信息是台账不是实时数据，把「什么时候读的」直接写在行上，
+    // 免得以后有人看到旧槽位以为是 bug
+    const sts = Number(d.static_ts || 0);
+    x.refresh.disabled = !d.configured;
+    setText(x.hStatic, sts
+      ? `读取于 ${when(sts * 1000)}${d.static_from === 'disk' ? '' : '（刚读取）'} · 槽位 / 内存 / 阵列卡 / 物理盘 / 卷都来自这份台账，之后不再自动刷新`
+      : '还没读到：iDRAC 连通后会自动读一次（1.5–3 分钟），之后不再自动刷新');
     if (!d.configured) { x.live.innerHTML = ''; return; }
     if (d.warming) {
       x.live.innerHTML = `<div class="idrac-head"><span class="h-ok">正在读取</span><span>iDRAC8 的 Redfish 每个请求约 5 秒，首次读取要 30–60 秒；后台会持续刷新，这里稍后自动出数据</span></div>`;
@@ -551,6 +559,42 @@ function renderIdrac(card) {
     x.test.disabled = false;
   };
   card._sync = sync;
+  // 固定信息只读一次：换盘 / 加内存 / 换阵列卡之后点这里重读。
+  // 一轮 1.5~3 分钟，后端起线程跑，这里轮询 static_ts 变了就刷新界面。
+  x.refresh.onclick = async () => {
+    const label = x.refresh.textContent;
+    const base = Number((IB || {}).static_ts || 0);
+    x.refresh.disabled = true;
+    x.refresh.textContent = '读取中…';
+    setText(x.hStatic, '正在重读固定信息（CPU / 内存 / 阵列卡 / 物理盘 / 卷），iDRAC8 一轮要 1.5–3 分钟，读完自动更新');
+    let done = false;
+    try {
+      const j = await API.post('/api/idrac/refresh', {});
+      if (!j || !j.ok) {
+        toast('刷新失败 · ' + String((j && j.error) || '未知错误').slice(0, 90), { icon: 'alert', ms: 7000 });
+        return;
+      }
+      if (j.busy) toast('已经有一轮在读取了，等它跑完会自动更新');
+      const t0 = Date.now();
+      while (Date.now() - t0 < 300000) {
+        await new Promise(r => setTimeout(r, 4000));
+        IB = await loadIdrac({ reload: true });
+        if (Number((IB || {}).static_ts || 0) > base) {
+          done = true;
+          renderLive(); sync();
+          toast('固定信息已更新', { icon: 'check', ms: 4000 });
+          return;
+        }
+      }
+      toast('读取超过 5 分钟还没回来，稍后再点一次', { icon: 'alert', ms: 7000 });
+    } catch (e) {
+      toast('刷新失败 · ' + String(e.message || e).slice(0, 90), { icon: 'alert', ms: 6000 });
+    } finally {
+      x.refresh.textContent = label;
+      x.refresh.disabled = false;
+      if (!done) renderLive();
+    }
+  };
   // 后台轮询线程还在读取时自动再取几轮，用户不用手动刷新页面
   let warmTries = 0;
   function retryWarm() {

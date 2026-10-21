@@ -3652,7 +3652,7 @@ def notify_after_scan(items, ts, db, config=None):
         hw_inited = bool(st.get("idrac_hw_inited"))
         icfg = idrac_load(data_dir)
         if icfg.get("enabled"):
-            snap = idrac_snapshot(icfg)
+            snap = idrac_snapshot(icfg, data_dir=data_dir)
             if snap.get("ok"):
                 idrac_cur = {}
                 # ① 硬件状态：盘掉/故障预测、卷或阵列卡降级、电源/风扇/CPU/内存非 OK
@@ -3778,8 +3778,11 @@ def notify_test(data_dir, channel="all"):
 # 密码存独立文件 idrac.json（0600），GET /api/idrac 只回 password_set，明文不出网络
 # —— 和 notify.json 同一套口径。
 IDRAC_FILE = "idrac.json"
+# 固定信息台账：机型 / CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件。
+# 装机时定死，一个月都不会变，所以只读一次落盘，之后只看文件（见 idrac_static_read）。
+IDRAC_STATIC_FILE = "idrac-static.json"
 IDRAC_TTL = 60.0                   # 概览缓存：页面刷新不打爆 iDRAC
-IDRAC_SLOW_TTL = 600.0             # 盘 / 内存 / 固件这类静态信息：10 分钟一次
+IDRAC_SLOW_TTL = 600.0             # 旧版「慢组」周期，现已改为只读一次，仅保留兼容
 IDRAC_SEL_LIMIT = 20               # 只取最近 N 条硬件日志
 # iDRAC8 的 Redfish 慢得出奇：每个请求固定 4.5~6 秒（固件内部逐请求鉴权 + 查询，
 # 不是网络问题）。所以：① 一律带 $expand 把一个集合成员一次取全（35 请求 → 8）；
@@ -3820,6 +3823,76 @@ def idrac_load(data_dir):
         if k in user:
             cfg[k] = str(user[k] or "")
     return cfg
+
+
+def idrac_static_path(data_dir):
+    return os.path.join(data_dir, IDRAC_STATIC_FILE) if data_dir else ""
+
+
+def idrac_static_read(data_dir, cfg):
+    """读「固定信息」台账，不发任何请求。
+
+    机型 / 服务标签 / CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件，装机时就定下来了，
+    一个月甚至几个月都不会变；但 iDRAC8 读一轮要 1.5~3 分钟、三十来个请求。
+    所以只在第一次连接时读一次落盘，之后每次启动直接从文件灌回内存。
+
+    台账里记着读取时的 host：地址变了（换机器 / 换了 iDRAC）就作废重读，
+    免得拿旧机器的槽位张冠李戴。读残的（一块盘都没有）也不认。
+    """
+    p = idrac_static_path(data_dir)
+    if not p or not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            d = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(d, dict) or not d.get("ok") or not d.get("disks"):
+        return None
+    if str(d.get("host") or "") != str(cfg.get("host") or ""):
+        return None
+    return d
+
+
+def idrac_static_write(data_dir, cfg, out):
+    """把固定信息落盘（0600）。写失败只打日志：下次启动重读，不影响当前显示。"""
+    p = idrac_static_path(data_dir)
+    if not p:
+        return
+    try:
+        body = {k: v for k, v in out.items()
+                if k not in ("cached", "from_disk", "partial", "busy", "ts",
+                             "error", "refresh_error")}
+        body["host"] = str(cfg.get("host") or "")
+        body["static_ts"] = float(out.get("static_ts") or time.time())
+        write_json_secure(p, body)
+    except Exception as e:
+        print("[fnmonitor] iDRAC 固定信息写盘失败：%s" % str(e)[:120])
+
+
+def idrac_static_ensure_loaded(data_dir, cfg=None):
+    """内存里没有台账时，从磁盘灌一次（零请求）。返回内存里是否已有可用台账。"""
+    if cfg is None:
+        cfg = idrac_load(data_dir)
+    host = str(cfg.get("host") or "")
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("slow")
+    if c and c.get("ok") and c.get("disks") and str(c.get("host") or "") == host:
+        return True
+    d = idrac_static_read(data_dir, cfg)
+    if not d:
+        return False
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["slow"] = dict(d, ts=float(d.get("static_ts") or 0),
+                                    from_disk=True, host=host)
+    return True
+
+
+def idrac_static_valid(data_dir, cfg=None):
+    """台账是否已就绪（只看有没有，不加载）。"""
+    if cfg is None:
+        cfg = idrac_load(data_dir)
+    return bool(idrac_static_read(data_dir, cfg))
 
 
 def idrac_public(cfg):
@@ -4097,19 +4170,20 @@ def idrac_collect(cfg, force=False):
             _IDRAC_CACHE["fast"] = dict(out, ts=now)
         return out
     st = sysd.get("Status") or {}
+    # 只留界面和告警真用得上的：机型 / 服务标签 / BIOS / 整机健康 / 电源状态 /
+    # CPU 与内存的汇总 health。
+    # 曾经解析过的 mem_gib / cpu（颗数）/ cpu_model / hostname / health_rollup 全部删掉：
+    # 本机 /proc/meminfo、lscpu、/proc/cpuinfo 更准更全，而 hostname 更是个坑 ——
+    # Redfish 的 HostName 是上一个装过的系统注册进去的（这台至今停在 DESKTOP-NTRSKPB，
+    # 实际主机名是 R730XD），fnOS 不跑 OpenManage 就永不同步，显示出来纯属误导。
     out.update({
         "model": str(sysd.get("Model") or ""),
         "service_tag": str(sysd.get("SKU") or ""),
         "bios": str(sysd.get("BiosVersion") or ""),
         "health": str(st.get("Health") or ""),
-        "health_rollup": str(st.get("HealthRollup") or ""),
         "power_state": str(sysd.get("PowerState") or ""),
-        "mem_gib": _nz((sysd.get("MemorySummary") or {}).get("TotalSystemMemoryGiB")),
-        "cpu": (sysd.get("ProcessorSummary") or {}).get("Count"),
-        "cpu_model": str((sysd.get("ProcessorSummary") or {}).get("Model") or ""),
         "cpu_health": str(((sysd.get("ProcessorSummary") or {}).get("Status") or {}).get("Health") or ""),
         "mem_health": str(((sysd.get("MemorySummary") or {}).get("Status") or {}).get("Health") or ""),
-        "hostname": str(sysd.get("HostName") or ""),
     })
 
     th, err_th = _idrac_request(cfg, "/Chassis/System.Embedded.1/Thermal")
@@ -4209,23 +4283,31 @@ def _slow_single_flight(fn):
 
 
 @_slow_single_flight
-def idrac_collect_slow(cfg, force=False):
-    """「慢组」明细（5 个请求，靠 $expand 把集合一次取全）：CPU / 内存条 / 盘 / 卷 / 固件。
+def idrac_collect_slow(cfg, force=False, data_dir=None):
+    """「固定信息」台账：CPU / 内存条 / 阵列卡 / 物理盘 / 卷 / 固件。
 
-    iDRAC8 每请求约 5 秒，逐条取 14 块盘要 78 秒，所以全都带
-    `$expand=*($levels=1)`；实测 14 盘 + 7 卷一次返回。10 分钟刷一次足够——
-    插拔盘 / 换内存都会进 SEL，SEL 那条线会立刻报。
+    **只读一次。** 这些信息装机时就定死了（换盘、加内存、换阵列卡才会变），
+    但 iDRAC8 读一轮要 1.5~3 分钟、三十来个请求。所以：第一次连接读一轮存进
+    idrac-static.json，之后每次启动只从文件灌回内存，想更新就在设置里点
+    「刷新固定信息」。
+
+    代价说清楚：盘和卷的健康状态也在这份数据里，所以它不会自动刷新。盘故障改由
+    SEL（60 秒一刷）与本机 SMART 巡检（6 小时）两条线盯，而且那两条更细
+    （重映射扇区 / 待处理扇区比 iDRAC 的 OK / 非 OK 早得多）。
     """
     now = time.time()
     with _IDRAC_LOCK:
         c = _IDRAC_CACHE.get("slow")
-        # 部分失败（比如 Storage 那一步超时、一块盘都没拿到）不要按 10 分钟缓存，
-        # 否则槽位/物理盘表会空整整十分钟。partial 的 60 秒后就重试。
-        if not force and c:
-            ttl = 60.0 if c.get("partial") else IDRAC_SLOW_TTL
-            if now - c.get("ts", 0) < ttl:
-                return dict(c, cached=True)
-    out = {"ok": False, "ts": now}
+    # 内存里有且是同一台机器才算数：改过地址（换机器）必须重读，不能拿旧槽位充数
+    if (not force and c and c.get("ok") and c.get("disks")
+            and str(c.get("host") or "") == str(cfg.get("host") or "")):
+        return dict(c, cached=True)
+    # 内存里没有 → 从磁盘台账灌回来（零请求），这就是「之后只显示不更新」
+    if not force and data_dir and idrac_static_ensure_loaded(data_dir, cfg):
+        with _IDRAC_LOCK:
+            c = dict(_IDRAC_CACHE.get("slow") or {})
+        return dict(c, cached=True)
+    out = {"ok": False, "ts": now, "host": str(cfg.get("host") or "")}
     exp = "$expand=*($levels=1)"
     got = 0
 
@@ -4297,6 +4379,14 @@ def idrac_collect_slow(cfg, force=False):
                           "drives": len(drives)})
             # 14 块盘 / 14 个卷都只有引用，并发补全（串行要 70~170 秒）
             drives = _idrac_parallel(cfg, drives)
+            # HBA 直通（非 RAID）时 iDRAC 会把每块物理盘额外伪装成一个「卷」，
+            # id 与物理盘完全相同（Physical Disk 0:1:N、raid 字段为空），
+            # 前端 filter(raid && raid !== 'NONE') 本来就会把它们丢掉。
+            # 真 RAID 卷的 id 含 Disk.Virtual —— 只给这种逐条取详情，
+            # 你这台没做阵列的机器能省 14 个请求（约 70 秒）。
+            vols_raw = [v for v in vols_raw
+                        if "Disk.Virtual" in str(v.get("@odata.id") or "")
+                        or "Disk.Bay" not in str(v.get("@odata.id") or "")]
             vols_raw = _idrac_parallel(cfg, vols_raw)
             for dv in drives:
                 cap = _nz(dv.get("CapacityBytes"))
@@ -4342,34 +4432,52 @@ def idrac_collect_slow(cfg, force=False):
         out["vol_bad"] = sum(1 for x in vols if x["health"] and x["health"].upper() != "OK")
 
     out["ok"] = got > 0
-    out["partial"] = not disks        # 一块盘都没拿到 → 60 秒后重试，不干等 10 分钟
+    out["partial"] = not disks        # 一块盘都没拿到 → 不算读成功，不落盘、下次重试
+    out["static_ts"] = now
+    out["from_disk"] = False
     if not out["ok"]:
         out["error"] = err or "iDRAC 明细读取失败"
+    # 读失败 / 读残时不许覆盖上一份好台账：内存里的、磁盘上的都留着，
+    # 界面继续显示上一次读到的固定信息（手动刷新失败也不该把表清空）。
+    if not out["ok"] or not disks:
+        with _IDRAC_LOCK:
+            prev = _IDRAC_CACHE.get("slow") or {}
+        if not (prev.get("ok") and prev.get("disks")):
+            prev = idrac_static_read(data_dir, cfg) or {}
+        if prev.get("ok") and prev.get("disks"):
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["slow"] = dict(prev, ts=prev.get("static_ts") or now,
+                                            from_disk=True)
+            return dict(prev, cached=True,
+                        refresh_error=out.get("error") or "本轮读取不完整，沿用上一份台账")
     with _IDRAC_LOCK:
         _IDRAC_CACHE["slow"] = dict(out, ts=now)
+    if out["ok"] and disks:
+        idrac_static_write(data_dir, cfg, out)
     return out
 
 
-# 慢组「兜底刷新」的在飞标记：0 表示没有正在跑的一轮
+# 固定信息「首次读取」的在飞标记：0 表示没有正在跑的一轮
 _SLOW_LOCK = threading.Lock()
 _SLOW_INFLIGHT = [0.0]
 
 
 def idrac_ensure_slow_async(data_dir):
-    """慢组缓存空 / 过期时踢一轮后台刷新；已经有在跑的就不重复踢。
+    """台账还没有时踢一轮首次读取；已经有台账就什么都不做（零请求）。
 
-    为什么不只靠 IdracSlowPoller：那条常驻线程一旦没起来（打包漏带、异常退出、
-    kill -9 后重启时机不对），槽位就永远是空的，而界面上跟「iDRAC 没配」长得
-    一模一样，排查很费劲。这里在读路径上兜一层——谁先发现过期谁踢一脚，
-    跑完写回缓存，下次自然就新鲜了。返回是否真的踢了新的一轮。
+    固定信息只读一次，所以这条兜底只在两种情况下起作用：刚配好 iDRAC 还没读过、
+    或者上一轮读残了（一块盘都没拿到，没敢落盘）。为什么要兜：那条常驻线程一旦
+    没起来（打包漏带、异常退出），槽位就永远是空的，而界面上跟「iDRAC 没配」
+    长得一模一样，排查很费劲。返回是否真的踢了新的一轮。
     """
+    cfg = idrac_load(data_dir)
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return False
+    # 有磁盘台账就直接灌进来，不发请求
+    if idrac_static_ensure_loaded(data_dir, cfg):
+        return False
     now = time.time()
-    with _IDRAC_LOCK:
-        c = _IDRAC_CACHE.get("slow") or {}
-        ttl = 60.0 if c.get("partial") else IDRAC_SLOW_TTL
-        if c and now - c.get("ts", 0) < ttl:
-            return False
-    # 常驻轮询线程活着就交给它：两边同时抓会把 iDRAC8 打爆（实测并发 8 个请求就
+    # 常驻线程活着就交给它：两边同时抓会把 iDRAC8 打爆（实测并发 8 个请求就
     # 开始连接超时，风扇/功耗也跟着断更）。这条兜底只在「线程没了」时才顶上。
     if any(t.name == "fnm-idrac-slow" and t.is_alive() for t in threading.enumerate()):
         return False
@@ -4381,12 +4489,11 @@ def idrac_ensure_slow_async(data_dir):
 
     def _work():
         try:
-            cfg = idrac_load(data_dir)
             if (cfg.get("enabled") and cfg.get("host")
                     and cfg.get("user") and cfg.get("password")):
-                idrac_collect_slow(cfg)
+                idrac_collect_slow(cfg, data_dir=data_dir)
         except Exception as e:
-            print("[fnmonitor] iDRAC 明细后台刷新异常：%s" % str(e)[:120])
+            print("[fnmonitor] iDRAC 固定信息后台读取异常：%s" % str(e)[:120])
         finally:
             with _SLOW_LOCK:
                 _SLOW_INFLIGHT[0] = 0.0
@@ -4394,11 +4501,48 @@ def idrac_ensure_slow_async(data_dir):
     try:
         threading.Thread(target=_work, daemon=True, name="fnm-idrac-slow-once").start()
     except Exception as e:
-        print("[fnmonitor] iDRAC 明细补读线程启动失败：%s" % str(e)[:120])
+        print("[fnmonitor] iDRAC 固定信息补读线程启动失败：%s" % str(e)[:120])
         with _SLOW_LOCK:
             _SLOW_INFLIGHT[0] = 0.0
         return False
     return True
+
+
+def idrac_refresh_static_async(data_dir):
+    """手动「刷新固定信息」：后台重读一轮，立刻返回。
+
+    一轮 1.5~3 分钟，同步等必然超时，所以起线程；前端轮询 /api/idrac 看
+    static_ts 变了就知道读完了。撞上已经在跑的（常驻线程首读 / 上一次手动刷新）
+    直接返回 busy，绝不叠请求——iDRAC8 并发一叠就连接超时。
+    """
+    cfg = idrac_load(data_dir)
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return {"ok": False, "error": "iDRAC 未启用或未填地址"}
+    if not (cfg.get("user") and cfg.get("password")):
+        return {"ok": False, "error": "iDRAC 用户名或密码未填"}
+    # 只看「真正在跑」的标记，不看线程存活——fnm-idrac-slow 是常驻线程，
+    # 它平时只是睡着，按线程名判会永远回 busy，按钮就点不动了。
+    with _SLOW_LOCK:
+        if _SLOW_INFLIGHT[0] and time.time() - _SLOW_INFLIGHT[0] < 300:
+            return {"ok": True, "started": False, "busy": True}
+        _SLOW_INFLIGHT[0] = time.time()
+
+    def _work():
+        try:
+            idrac_collect_slow(cfg, force=True, data_dir=data_dir)
+        except Exception as e:
+            print("[fnmonitor] iDRAC 固定信息刷新异常：%s" % str(e)[:120])
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
+
+    try:
+        threading.Thread(target=_work, daemon=True, name="fnm-idrac-static-refresh").start()
+    except Exception as e:
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = 0.0
+        return {"ok": False, "error": "刷新线程启动失败：%s" % str(e)[:80]}
+    return {"ok": True, "started": True}
 
 
 def idrac_diag():
@@ -4562,10 +4706,10 @@ def idrac_problems(fast, slow):
     return out
 
 
-def idrac_snapshot(cfg, fast_only=False):
+def idrac_snapshot(cfg, fast_only=False, data_dir=None):
     """给巡检用的快照：整机健康 + 硬件异常 + 硬件日志活跃告警。异常不外抛。
 
-    只读缓存（IdracPoller 后台刷新），不在这里发请求——巡检线程不能被
+    只读缓存 + 固定信息台账，不在这里发请求——巡检线程不能被
     iDRAC8 每个请求 5 秒的延迟拖住。缓存还没热起来时宁可不判。
     """
     try:
@@ -4573,7 +4717,7 @@ def idrac_snapshot(cfg, fast_only=False):
         if not ov.get("ok"):
             return {"ok": False, "error": ov.get("error") or "iDRAC 读取失败",
                     "warm": bool(_IDRAC_CACHE.get("fast"))}
-        slow = {} if fast_only else idrac_collect_slow(cfg)
+        slow = {} if fast_only else idrac_collect_slow(cfg, data_dir=data_dir)
         sel = idrac_sel(cfg)
         return {"ok": True, "health": ov.get("health") or "",
                 "fan_bad": (ov.get("fan_summary") or {}).get("bad") or 0,
@@ -4645,12 +4789,18 @@ class IdracPoller(threading.Thread):
 
 
 class IdracSlowPoller(threading.Thread):
-    """后台刷新 iDRAC「慢组」缓存（CPU / 内存条 / 阵列卡 / 物理盘 / 卷）。
+    """固定信息台账的「首次读取」线程。
 
-    单独一条线程的原因：iDRAC8 只认 `$expand=*($levels=1)`，`/Storage/Drives`
-    集合不存在、`$levels=2` 回 400，14 块物理盘只能逐个取——实测一轮 1.5~3 分钟。
-    和快组同线程时，这段时间里风扇、功耗、温度全部停更，观感像「卡住了」。
-    慢组自己 10 分钟刷一次（物理盘变化会同时进 SEL，那条线由快组盯着）。"""
+    固定信息（CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件）只读一次，之后由
+    用户点「刷新固定信息」手动更新，所以这条线程平时什么都不做：启动时看一眼
+    有没有台账，没有才去读一轮（1.5~3 分钟），读完就长睡。它留在进程里主要是
+    为了两件事——换机器（地址变了）能自动重读，读残了能自动重试。
+    """
+
+    # 台账就绪后睡多久再看一眼（只看文件在不在，不发请求）
+    IDLE_SECONDS = 3600.0
+    # 读失败 / 读残时多久重试
+    RETRY_SECONDS = 120.0
 
     def __init__(self, data_dir):
         super().__init__(daemon=True, name="fnm-idrac-slow")
@@ -4662,26 +4812,38 @@ class IdracSlowPoller(threading.Thread):
         self._stop.set()
 
     def _tick(self):
+        """返回台账是否已就绪（True = 有数据，可以长睡）。"""
         cfg = idrac_load(self.data_dir)
         if not (cfg.get("enabled") and cfg.get("host") and cfg.get("user")
                 and cfg.get("password")):
             return False
+        # 已有台账（磁盘的或内存的）→ 什么都不读
+        if idrac_static_ensure_loaded(self.data_dir, cfg):
+            return True
+        # 打上「在跑」标记：这一轮可能两分多钟，期间用户点「刷新固定信息」
+        # 必须回 busy，不能叠第二个请求上去（iDRAC8 一叠就连接超时）
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = time.time()
         try:
-            slow = idrac_collect_slow(cfg)     # 10 分钟 TTL；partial 时 60 秒重试
-            return bool(slow.get("ok"))
+            slow = idrac_collect_slow(cfg, data_dir=self.data_dir)
+            self.last_run = time.time()
+            return bool(slow.get("ok") and slow.get("disks"))
         except Exception as e:
-            print("[fnmonitor] iDRAC 明细采集异常：%s" % str(e)[:120])
+            print("[fnmonitor] iDRAC 固定信息采集异常：%s" % str(e)[:120])
             return False
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
 
     def run(self):
         self._stop.wait(10)          # 排在快组后面一点，别和它的首个请求撞在一起
         while not self._stop.is_set():
+            ready = False
             try:
-                self._tick()
+                ready = self._tick()
             except Exception:
                 pass
-            # 一轮本身就很长（1.5~3 分钟），这里再等 60 秒；实际是否发请求由 TTL 决定
-            _IDRAC_SLOW_WAKE.wait(60)
+            _IDRAC_SLOW_WAKE.wait(self.IDLE_SECONDS if ready else self.RETRY_SECONDS)
             _IDRAC_SLOW_WAKE.clear()
 
 
@@ -7259,21 +7421,23 @@ class Collector(threading.Thread):
         return cache
 
     def _idrac_slots(self):
-        """序列号 → 机箱槽位（读 iDRAC「慢组」缓存，同样不发请求）。
+        """序列号 → 机箱槽位（读固定信息台账，不发请求）。
 
-        慢组 10 分钟才刷一次，且首次预热要跑 5 个请求（约 30 秒），所以启动后
-        头半分钟拿不到槽位是正常的，拿到会自动补上。iDRAC 没启用就永远返回 {}。"""
+        台账在第一次连接时读过就一直在磁盘上，这里顺手把文件灌回内存即可；
+        只有「还没读过」才会出现空列表，那时前端显示「读取中…」。"""
         c = self._idrac_cfg or {}
         if not (c.get("enabled") and c.get("host")):
             return {}
+        idrac_static_ensure_loaded(self.data_dir, c)
         return idrac_slot_map()
 
     def _idrac_slot_state(self):
         """槽位数据的三种状态，给前端区分「还没读到」和「对不上」：
-        off = iDRAC 没启用；warming = 明细还没跑完（首次 40~60 秒）；ready = 有盘了。"""
+        off = iDRAC 没启用；warming = 台账还没读（首次 1~3 分钟）；ready = 有盘了。"""
         c = self._idrac_cfg or {}
         if not (c.get("enabled") and c.get("host")):
             return "off"
+        idrac_static_ensure_loaded(self.data_dir, c)
         with _IDRAC_LOCK:
             slow = _IDRAC_CACHE.get("slow") or {}
         return "ready" if slow.get("disks") else "warming"
@@ -8171,7 +8335,7 @@ class MonitorApp:
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
                      "/api/vm/action", "/api/config/save", "/api/update/install",
                      "/api/notify/save", "/api/notify/test", "/api/disk_scan/now",
-                     "/api/idrac/save", "/api/idrac/test"}
+                     "/api/idrac/save", "/api/idrac/test", "/api/idrac/refresh"}
 
         class Handler(BaseHTTPRequestHandler):
             # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程；timeout 保证空闲连接
@@ -8636,6 +8800,9 @@ class MonitorApp:
                 if path == "/api/idrac/test":
                     self._json(app.api_idrac_test(data))
                     return
+                if path == "/api/idrac/refresh":
+                    self._json(app.api_idrac_refresh_static())
+                    return
                 if path == "/api/disk_scan/now":
                     self._json(app.api_disk_scan_now())
                     return
@@ -8789,10 +8956,13 @@ class MonitorApp:
         return notify_test(self.data_dir, ch)
 
     def api_idrac_get(self, query=None):
-        """iDRAC 全量：快组（机型/健康/风扇/温度/功耗）+ 慢组（CPU/内存/盘/卷/固件）。
+        """iDRAC 全量：实时组（机型/健康/风扇/温度/功耗/SEL）+ 固定信息台账
+        （CPU/内存条/阵列卡/物理盘槽位/卷/固件）。
 
-        query 带 refresh=1 强制重读。没配置时不报错，回 ok=False + 默认配置，
-        设置页据此渲染「未配置」状态。"""
+        固定信息只读一次，normalize 时从 idrac-static.json 灌回内存，页面刷新
+        是纯内存操作；想更新走 POST /api/idrac/refresh。
+        query 带 refresh=1 会强制重读快组（固定信息不跟着走，太重）。
+        没配置时不报错，回 ok=False + 默认配置，设置页据此渲染「未配置」状态。"""
         cfg = idrac_load(self.data_dir)
         pub = idrac_public(cfg)
         if not pub["host"]:
@@ -8802,22 +8972,27 @@ class MonitorApp:
         force = bool((query or {}).get("refresh"))
         if force:
             d = idrac_collect(cfg, force=True)
-            slow = idrac_collect_slow(cfg, force=True)
+            slow = idrac_collect_slow(cfg, force=True, data_dir=self.data_dir)
         else:
             # 不强制时只读缓存：iDRAC8 一个请求 5 秒，页面刷新绝不能去等它。
             # 缓存还没热（应用刚起来 / 刚配好账号）就回 warming，前端过一会儿再来取。
             with _IDRAC_LOCK:
                 cached = _IDRAC_CACHE.get("fast")
             if not cached or not cached.get("ok"):
+                # 快组还没热（开机头二十来秒）也要把台账的读取时间给出：
+                # 否则设置页会写「还没读到」，可实际上槽位早就有了。
+                # 只读文件，绝不在这里去拉慢组（那要 1.5~3 分钟）。
+                _led = idrac_static_read(self.data_dir, cfg) or {}
                 return {"ok": False, "warming": not cached,
                         "configured": True, "error": "", "config": pub,
                         "fans": [], "temps": [], "psu": [], "disks": [], "dimms": [],
                         "volumes": [], "controllers": [], "cpus": [],
-                        "idrac_fw": "", "problems": []}
+                        "idrac_fw": "", "problems": [],
+                        "static_ts": _led.get("static_ts"),
+                        "static_from": "disk" if _led else "",
+                        "static_host": pub["host"]}
             d = dict(cached)
-            with _IDRAC_LOCK:
-                cached_slow = _IDRAC_CACHE.get("slow")
-            slow = dict(cached_slow) if cached_slow else {}
+            slow = idrac_collect_slow(cfg, data_dir=self.data_dir)
         for k in ("cpus", "dimms", "disks", "volumes", "controllers",
                   "idrac_fw", "idrac_model", "idrac_time", "idrac_offset",
                   "idrac_health", "dimm_count", "dimm_gib", "dimm_bad",
@@ -8825,8 +9000,15 @@ class MonitorApp:
             if k in slow:
                 d[k] = slow[k]
         d["problems"] = idrac_problems(d, slow)
+        # 固定信息的元信息：什么时候读的、从文件还是刚拉的。前端据此显示
+        # 「固定信息 · 10-21 07:50 读取」，让「这是台账不是实时」一眼可见。
+        d["static_ts"] = slow.get("static_ts")
+        d["static_from"] = "disk" if slow.get("from_disk") else ("fetch" if slow else "")
+        d["static_host"] = str(cfg.get("host") or "")
+        if slow.get("refresh_error"):
+            d["static_error"] = slow.get("refresh_error")
         if not slow.get("disks"):
-            # 明细空着就顺手补一轮（幂等，已经有一轮在跑会直接返回）
+            # 台账还是空的才补一轮（幂等，已经有一轮在跑会直接返回）
             idrac_ensure_slow_async(self.data_dir)
         d["diag"] = idrac_diag()
         d["configured"] = True
@@ -8847,6 +9029,15 @@ class MonitorApp:
               % ("开" if cfg.get("enabled") else "关", cfg.get("host") or "-"))
         return {"ok": True, "error": "", "config": idrac_public(cfg),
                 "message": "已保存" if cfg.get("enabled") else "已保存（iDRAC 未启用）"}
+
+    def api_idrac_refresh_static(self):
+        """设置页「刷新固定信息」：后台重读一轮 CPU / 内存 / 阵列卡 / 盘 / 卷 / 固件。
+
+        固定信息只读一次，换盘、加内存之后要靠这个按钮才更新。一轮 1.5~3 分钟，
+        不能同步等，所以起线程立刻返回；前端轮询 /api/idrac 看 static_ts 变了
+        就知道读完了。
+        """
+        return idrac_refresh_static_async(self.data_dir)
 
     def api_idrac_test(self, data):
         """设置页「测试连接」：真连一次，把每一步的结果原样回给前端排障用。"""
@@ -8877,11 +9068,12 @@ class MonitorApp:
                              "error": ov.get("error") or ""})
         out["overview"] = {k: ov.get(k) for k in
                            ("model", "service_tag", "bios", "health", "power_state",
-                            "power_watts", "mem_gib", "fan_summary")}
-        # 硬件明细：Storage / Memory / Processors 各一次 $expand 取全（每次约 6 秒）
-        slow = idrac_collect_slow(cfg, force=True)
+                            "power_watts", "fan_summary")}
+        # 固定信息台账：Storage / Memory / Processors 各一次 $expand 取全，14 块盘逐条补，
+        # 一轮 1.5~3 分钟。测试连接成功就会落盘，之后启动直接读文件、不再发请求。
+        slow = idrac_collect_slow(cfg, force=True, data_dir=self.data_dir)
         out["steps"].append({
-            "name": "硬件明细 /Storage /Memory /Processors",
+            "name": "固定信息 /Storage /Memory /Processors",
             "ok": bool(slow.get("ok")),
             "detail": "物理盘 %s 块 · 内存 %s 条 · 卷 %s 个 · 控制器 %s 个"
                       % (len(slow.get("disks") or []), len(slow.get("dimms") or []),

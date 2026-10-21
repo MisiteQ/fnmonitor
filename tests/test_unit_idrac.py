@@ -4,8 +4,10 @@
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -159,7 +161,22 @@ class IdracCollectTest(unittest.TestCase):
         self.assertEqual(d["service_tag"], "CJ0SWG2")
         self.assertEqual(d["health"], "OK")
         self.assertEqual(d["power_watts"], 210)
-        self.assertEqual(d["mem_gib"], 256)
+
+    def test_unused_fields_dropped(self):
+        """四个「解析了但界面从没用过」的字段必须不再出现在返回里。
+
+        hostname 尤其不能留：Redfish 报的是上一个装过的系统注册进去的名字
+        （真机至今是 DESKTOP-NTRSKPB，实际主机名 R730XD），fnOS 不跑
+        OpenManage 就永不同步，显示出来纯属误导。
+        """
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(FULL)):
+            d = srv.idrac_collect(self.cfg, force=True)
+        for k in ("hostname", "mem_gib", "cpu", "health_rollup", "cpu_model"):
+            self.assertNotIn(k, d)
+        # 界面和告警真正在用的那几个还得在
+        for k in ("model", "service_tag", "bios", "health", "power_state",
+                  "cpu_health", "mem_health"):
+            self.assertIn(k, d)
 
     def test_fans_parsed_and_sorted(self):
         with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(FULL)):
@@ -615,29 +632,54 @@ class ParallelFetchTest(unittest.TestCase):
 
 
 class SlowEnsureTest(unittest.TestCase):
-    """兜底补读：缓存新鲜时不许重复发请求，过期了要踢一轮。"""
+    """兜底补读：固定信息只读一次，所以只有「还没有台账」时才该踢一轮。"""
 
     def setUp(self):
         srv._IDRAC_CACHE.clear()
         srv._SLOW_INFLIGHT[0] = 0.0
         self.dir = tempfile.mkdtemp()
+        self.cfg = {"enabled": 1, "host": "192.168.1.120", "user": "u", "password": "p"}
+        srv.write_json_secure(os.path.join(self.dir, "idrac.json"), self.cfg)
 
     def tearDown(self):
         srv._IDRAC_CACHE.clear()
         srv._SLOW_INFLIGHT[0] = 0.0
+        shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_fresh_cache_no_spawn(self):
-        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time(), "disks": [{"bay": 1}]}
+    def test_memory_ledger_no_spawn(self):
+        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time(), "disks": [{"bay": 1}],
+                                    "host": "192.168.1.120"}
         self.assertFalse(srv.idrac_ensure_slow_async(self.dir))
 
-    def test_stale_cache_spawns(self):
-        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": 0, "disks": [{"bay": 1}]}
-        # 这个目录里没有 idrac.json → 线程拿到的配置是未启用，不会真的联网
-        self.assertTrue(srv.idrac_ensure_slow_async(self.dir))
+    def test_disk_ledger_no_spawn(self):
+        srv.idrac_static_write(self.dir, self.cfg,
+                               {"ok": True, "disks": [{"bay": 1}], "static_ts": 1.0})
+        self.assertFalse(srv.idrac_ensure_slow_async(self.dir))
+        # 顺手把文件灌回内存了，后面读槽位就不用再碰磁盘
+        self.assertTrue(srv._IDRAC_CACHE["slow"]["from_disk"])
 
-    def test_partial_uses_short_ttl(self):
-        srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time() - 90, "partial": True}
-        self.assertTrue(srv.idrac_ensure_slow_async(self.dir))
+    def test_no_ledger_spawns(self):
+        """没台账才踢一轮。线程体用桩替换，别真去连 192.168.1.120。
+
+        注意：真起线程会占住 idrac_collect_slow 的单飞锁，后面的用例就会
+        拿到 busy 响应，看起来像是「台账读不到」。所以这里必须等它跑完。
+        """
+        started = threading.Event()
+
+        def stub(*a, **kw):
+            started.set()
+            return {"ok": True, "disks": [{"bay": 1}]}
+
+        with mock.patch.object(srv, "idrac_collect_slow", stub):
+            self.assertTrue(srv.idrac_ensure_slow_async(self.dir))
+            started.wait(3)
+            for t in threading.enumerate():
+                if t.name in ("fnm-idrac-slow-once", "fnm-idrac-static-refresh"):
+                    t.join(3)
+
+    def test_disabled_config_no_spawn(self):
+        srv.write_json_secure(os.path.join(self.dir, "idrac.json"), {"enabled": 0})
+        self.assertFalse(srv.idrac_ensure_slow_async(self.dir))
 
     def test_diag_shape(self):
         srv._IDRAC_CACHE["slow"] = {"ok": True, "ts": srv.time.time() - 5,
@@ -647,3 +689,138 @@ class SlowEnsureTest(unittest.TestCase):
         self.assertEqual(d["slow_dimms"], 1)
         self.assertIsInstance(d["slow_age"], int)
         self.assertIsInstance(d["threads"], list)
+
+
+class StaticLedgerTest(unittest.TestCase):
+    """固定信息台账：读一次落盘，之后只读文件，换机器自动作废。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+        srv._SLOW_INFLIGHT[0] = 0.0
+        self.dir = tempfile.mkdtemp()
+        self.cfg = {"enabled": 1, "host": "192.168.1.120", "user": "u", "password": "p"}
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+        srv._SLOW_INFLIGHT[0] = 0.0
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _write(self, disks=None, host=None):
+        srv.idrac_static_write(self.dir, dict(self.cfg, host=host or self.cfg["host"]),
+                               {"ok": True, "disks": disks if disks is not None else [{"bay": 3}],
+                                "dimms": [{"slot": "A1"}], "volumes": [], "static_ts": 1000.0})
+
+    def test_roundtrip(self):
+        self._write()
+        d = srv.idrac_static_read(self.dir, self.cfg)
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["disks"][0]["bay"], 3)
+        self.assertEqual(d["host"], "192.168.1.120")
+        self.assertEqual(d["static_ts"], 1000.0)
+
+    def test_missing_file(self):
+        self.assertIsNone(srv.idrac_static_read(self.dir, self.cfg))
+
+    def test_host_changed_invalidates(self):
+        self._write()
+        other = dict(self.cfg, host="10.0.0.9")
+        self.assertIsNone(srv.idrac_static_read(self.dir, other))
+        # 换了地址不能拿旧机器的槽位充数
+        self.assertFalse(srv.idrac_static_ensure_loaded(self.dir, other))
+
+    def test_no_disks_not_accepted(self):
+        """空盘列表的台账不算数：读残了宁可重读。"""
+        self._write(disks=[])
+        self.assertIsNone(srv.idrac_static_read(self.dir, self.cfg))
+
+    def test_ensure_loaded_fills_cache(self):
+        self._write()
+        self.assertTrue(srv.idrac_static_ensure_loaded(self.dir, self.cfg))
+        self.assertTrue(srv._IDRAC_CACHE["slow"]["from_disk"])
+        self.assertEqual(srv._IDRAC_CACHE["slow"]["host"], "192.168.1.120")
+
+    def test_collect_slow_reads_ledger_without_request(self):
+        """有台账时一个请求都不许发——这是「减少 iDRAC 时间」的核心。"""
+        self._write()
+        calls = []
+
+        def fake(cfg, path, timeout=None, query=None):
+            calls.append(path)
+            return None, "不该被调用"
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            d = srv.idrac_collect_slow(self.cfg, data_dir=self.dir)
+        self.assertEqual(calls, [])
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["disks"][0]["bay"], 3)
+
+    def test_force_ignores_ledger(self):
+        self._write()
+        with mock.patch.object(srv, "_idrac_request", side_effect=fake_req(SLOW_JSON)):
+            d = srv.idrac_collect_slow(self.cfg, force=True, data_dir=self.dir)
+        self.assertTrue(d["ok"])
+        self.assertEqual(len(d["disks"]), 2)      # 真的重读了
+        # 重读成功 → 台账被覆盖成新的一份
+        again = srv.idrac_static_read(self.dir, self.cfg)
+        self.assertEqual(len(again["disks"]), 2)
+
+    def test_failed_refresh_keeps_old_ledger(self):
+        """手动刷新失败不能把上一份好台账弄丢，界面继续显示旧的。"""
+        self._write(disks=[{"bay": 3}])
+        with mock.patch.object(srv, "_idrac_request",
+                               return_value=(None, "连接超时")):
+            d = srv.idrac_collect_slow(self.cfg, force=True, data_dir=self.dir)
+        self.assertEqual(d["disks"][0]["bay"], 3)     # 沿用了旧台账
+        self.assertIn("refresh_error", d)
+        self.assertIsNotNone(srv.idrac_static_read(self.dir, self.cfg))
+
+    def test_write_strips_runtime_keys(self):
+        srv.idrac_static_write(self.dir, self.cfg,
+                               {"ok": True, "disks": [{"bay": 1}], "static_ts": 5.0,
+                                "cached": True, "from_disk": True, "partial": False,
+                                "busy": True, "ts": 999, "error": "x"})
+        d = srv.idrac_static_read(self.dir, self.cfg)
+        for k in ("cached", "from_disk", "partial", "busy", "ts", "error"):
+            self.assertNotIn(k, d)
+        self.assertIn("disks", d)
+
+
+class VolumePrefilterTest(unittest.TestCase):
+    """HBA 直通时 iDRAC 把每块盘伪装成一个「卷」，别再逐个取详情。"""
+
+    def setUp(self):
+        srv._IDRAC_CACHE.clear()
+
+    def tearDown(self):
+        srv._IDRAC_CACHE.clear()
+
+    def test_bay_refs_skipped(self):
+        storage = {"Members": [{
+            "Id": "RAID.Integrated.1-1",
+            "StorageControllers": [{"Model": "PERC H330 Mini"}],
+            "Status": {"Health": "OK"},
+            "Drives": [DISK_FULL],
+            "Volumes": [
+                {"@odata.id": "/redfish/v1/x/Disk.Bay.7:Enclosure.Internal.0-1:RAID.Integrated.1-1"},
+                {"@odata.id": "/redfish/v1/x/Disk.Bay.8:Enclosure.Internal.0-1:RAID.Integrated.1-1"},
+                {"@odata.id": "/redfish/v1/x/Disk.Virtual.0:RAID.Integrated.1-1"}]}]}
+        asked = []
+
+        def fake(cfg, path, timeout=None, query=None):
+            asked.append(path)
+            if path.endswith("/Storage"):
+                return storage, ""
+            if "Disk.Virtual" in path:
+                return {"Id": "Disk.Virtual.0", "Name": "VD0", "RAIDType": "RAID1",
+                        "CapacityBytes": 299439751168, "Status": {"Health": "OK"}}, ""
+            if path.endswith("/Processors") or path.endswith("/Memory"):
+                return {"Members": []}, ""
+            return {}, ""
+
+        with mock.patch.object(srv, "_idrac_request", fake):
+            d = srv.idrac_collect_slow({"host": "h"}, force=True)
+        # 两个 Disk.Bay 的假「卷」不许发请求（省 2 个请求 ≈ 10 秒），只有真卷去取
+        self.assertFalse([p for p in asked if "Disk.Bay.7" in p])
+        self.assertFalse([p for p in asked if "Disk.Bay.8" in p])
+        self.assertTrue([p for p in asked if "Disk.Virtual.0" in p])
+        self.assertEqual([v["raid"] for v in d["volumes"]], ["RAID1"])
