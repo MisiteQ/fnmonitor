@@ -1,0 +1,109 @@
+# 发版：在 Actions 里点一次「Run workflow」→ 构建 x86/arm 两个 fpk → 挂到 Release。
+#
+# 为什么不在 git 里改 UPDATE_REPO / manifest version：
+#   本仓库是 MisiteQ/fnmonitor 的定制 fork。「发版仓库地址」和「版本号」属于个人
+#   发版通道，若写进提交，每次合并上游都要解决 manifest 那行超长 changelog 的冲突，
+#   也没法把定制改动提回上游。所以统一由 tools/build_release.py 在构建时注入，
+#   打包完自动还原，仓库历史保持与上游一致。
+#
+# 触发方式：Actions → release → Run workflow（填版本号，如 2.19.0）
+# 版本号：三段纯数字，必须比已有 tag 大；与上游版本号无关，只增不减。
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（三段纯数字，如 2.19.0）"
+        required: true
+        type: string
+      notes:
+        description: "本次更新说明（可留空；会写进 Release 说明和 manifest changelog）"
+        required: false
+        default: ""
+        type: string
+      draft:
+        description: "存为草稿（确认后手动发布；不勾选则直接发布，NAS 立刻能检查到）"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # build_release.py 要读 git tag 校验版本递增
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"      # 回归测试里有「前端产物与 ui-src 构建一致」的校验
+
+      - name: 安装 fnpack（飞牛官方 Linux 版）
+        run: |
+          set -e
+          curl -fsSL -o /usr/local/bin/fnpack \
+            https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+          chmod +x /usr/local/bin/fnpack
+          fnpack --help >/dev/null
+
+      - name: 回归测试
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set -e
+          python -m py_compile app/server.py tools/build_release.py tools/minify_ui.py
+          python -m unittest discover -s tests
+
+      - name: 构建（构建时注入发版仓库地址与版本号）
+        env:
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -e
+          python3 tools/build_release.py \
+            --version "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --notes "$NOTES"
+
+      - name: 确认源文件已被还原（工作区必须干净）
+        run: |
+          set -e
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::构建后工作区仍有改动，注入还原失败"
+            git status --porcelain
+            exit 1
+          fi
+
+      - name: 发布到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -e
+          ARGS=""
+          if [ "$DRAFT" = "true" ]; then ARGS="--draft"; fi
+          BODY="$NOTES"
+          if [ -z "$BODY" ]; then BODY="定制版 v$VERSION（基于上游 v$(sed -n 's/^version=//p' manifest | head -1) 构建）"; fi
+          gh release create "$VERSION" \
+            "fnmonitor-$VERSION-x86.fpk" \
+            "fnmonitor-$VERSION-arm.fpk" \
+            --title "v$VERSION" \
+            --notes "$BODY" \
+            $ARGS
