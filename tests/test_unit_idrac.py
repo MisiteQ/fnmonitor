@@ -98,13 +98,13 @@ class IdracCfgTest(unittest.TestCase):
         self.assertEqual(cfg["verify_tls"], 0)
 
     def test_save_and_public_masks_password(self):
-        cfg, err = srv.idrac_save(self.dir, {"host": "192.168.124.121", "user": "root",
+        cfg, err = srv.idrac_save(self.dir, {"host": "192.0.2.10", "user": "root",
                                              "password": "calvin", "enabled": 1})
         self.assertEqual(err, "")
         pub = srv.idrac_public(cfg)
         self.assertNotIn("password", pub)
         self.assertTrue(pub["password_set"])
-        self.assertEqual(pub["host"], "192.168.124.121")
+        self.assertEqual(pub["host"], "192.0.2.10")
 
     def test_empty_password_keeps_old(self):
         srv.idrac_save(self.dir, {"host": "h", "user": "u", "password": "pw"})
@@ -147,7 +147,7 @@ class IdracCfgTest(unittest.TestCase):
 class IdracCollectTest(unittest.TestCase):
     def setUp(self):
         srv._IDRAC_CACHE.clear()
-        self.cfg = {"host": "192.168.124.121", "user": "root", "password": "pw",
+        self.cfg = {"host": "192.0.2.10", "user": "root", "password": "pw",
                     "verify_tls": 0, "enabled": 1}
 
     def tearDown(self):
