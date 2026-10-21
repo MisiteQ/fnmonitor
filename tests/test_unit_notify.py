@@ -203,14 +203,14 @@ class NotifyStateTest(unittest.TestCase):
         self.assertIsNone(self.scan([disk("sdk", "warn")]))
         r2 = self.scan([disk("sdk", "warn", defects=61)])
         self.assertEqual(r2["acts"], ["worse"])
-        self.assertIn("增长缺陷 49 → 61", self.sent[-1][1])
+        self.assertIn("重映射扇区 49 → 61", self.sent[-1][1])
 
     def test_warn_growth_sends_worse(self):
         # warn 内部的退化也要报，不能等到跨档才提醒
         self.scan([disk("sdk", "warn")])
         r = self.scan([disk("sdk", "warn", defects=53)])
         self.assertEqual(r["acts"], ["worse"])
-        self.assertIn("增长缺陷 49 → 53", self.sent[-1][1])
+        self.assertIn("重映射扇区 49 → 53", self.sent[-1][1])
         # 没有继续增长就不再发
         self.assertIsNone(self.scan([disk("sdk", "warn", defects=53)]))
 
@@ -218,7 +218,7 @@ class NotifyStateTest(unittest.TestCase):
         self.scan([disk("sdk", "warn", pending_defects=0)])
         r = self.scan([disk("sdk", "warn", pending_defects=2)])
         self.assertEqual(r["acts"], ["worse"])
-        self.assertIn("待处理扇区 0 → 2", self.sent[-1][1])
+        self.assertIn("待映射扇区 0 → 2", self.sent[-1][1])
 
     def test_metrics_baseline_missing_is_silent(self):
         # 老版本状态文件没有 metrics：这一轮只补基线，不能凭空判「恶化」
@@ -248,7 +248,7 @@ class NotifyBuildTest(unittest.TestCase):
         self.assertIn("【新增故障】", body)
         self.assertIn("【已恢复】", body)
         self.assertIn("sdk", body)
-        self.assertIn("增长缺陷 49", body)
+        self.assertIn("重映射扇区 49", body)
         self.assertIn("检测时间", body)
 
     def test_recovery_only_subject(self):
