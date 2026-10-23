@@ -39,6 +39,17 @@
 .set-row .hint a, .set-row .hint .mono { color: var(--ink-2); }
 .set-row .hint a { text-decoration: underline; text-underline-offset: 2px; }
 .auth-note { margin: var(--s5) 0 var(--s2); }
+/* 自定义设置卡片顶部的说明条：.set-card 只给了左右内边距，子元素的上外边距会「穿透」卡片
+   （margin 折叠），只把整张卡片往下推、说明条自己仍贴着卡片圆角。flow-root 建立 BFC 阻断折叠。 */
+.set-card { display: flow-root; }
+.set-card > .note:first-child { margin: var(--s5) 0 var(--s2); }
+.set-card > .note:first-child + .set-row { border-top: 0; }
+.notify-note { align-items: flex-start; }
+.notify-note > span { min-width: 0; }
+.notify-note b { color: var(--ink-1); font-weight: 600; }
+.test-msg { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
+.set-row.inline .ctl { flex-wrap: wrap; row-gap: 8px; }
+@media (max-width: 560px) { .test-msg { display: none; } }
 .pw-ctl { flex-wrap: wrap; }
 .update-card .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .update-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; }
@@ -132,4 +143,57 @@ dd .diag-link { margin: 0; height: 24px; }
 }
 @media (max-width: 960px) {
   .ctr.vm { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
+/* ---------- iDRAC 实时概览（设置 → iDRAC）---------- */
+.idrac-live:empty { display: none; }
+.idrac-live { border-top: 1px solid var(--line); margin-top: var(--s2); }
+/* 用行内流而不是 flex：flex 会把「功耗 <b>214</b> W」拆成三个 flex item，换行时把 W 甩到下一行 */
+.idrac-head { display: block; line-height: 1.95; padding: var(--s4) 0 var(--s3); font-size: 13px; color: var(--ink-2); }
+.idrac-head b { color: var(--ink-1); font-weight: 600; }
+.idrac-head .h-ok { color: var(--health-ok); font-weight: 600; }
+.idrac-head .h-warn { color: var(--warn); font-weight: 600; }
+.idrac-head .h-crit { color: var(--crit); font-weight: 600; }
+.idrac-fans { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding-bottom: var(--s3); }
+.idrac-fan { padding: 6px 8px; border-radius: 6px; background: color-mix(in srgb, var(--ink-1) 4%, transparent); font-size: 13px; font-variant-numeric: tabular-nums; }
+.idrac-fan b { display: block; font-size: 11px; font-weight: 600; color: var(--ink-3); margin-bottom: 1px; }
+.idrac-fan small { font-size: 10px; color: var(--ink-3); margin-left: 3px; }
+.idrac-fan.bad { box-shadow: inset 0 0 0 1px var(--crit); }
+.idrac-temps { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); padding-bottom: var(--s3); }
+.idrac-temps b { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+.idrac-sel { display: flex; flex-direction: column; gap: 3px; font-size: 12px; padding-bottom: var(--s3); }
+.idrac-sel .e { display: flex; gap: 8px; align-items: baseline; }
+.idrac-sel .t { color: var(--ink-3); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.idrac-sel .s { flex: 0 0 auto; font-weight: 600; min-width: 52px; }
+.idrac-sel .s.Critical { color: var(--crit); }
+.idrac-sel .s.Warning { color: var(--warn); }
+.idrac-sel .s.OK { color: var(--ink-3); }
+.idrac-sel .m { min-width: 0; color: var(--ink-2); }
+/* 明细分组：CPU / 内存 / 阵列卡 / 物理盘 / 固件 */
+.idrac-sec { padding: var(--s2) 0 var(--s3); border-top: 1px solid var(--line); }
+.idrac-sec-h { font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--ink-3); text-transform: uppercase; margin-bottom: 6px; }
+.idrac-sec-h .faint { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.idrac-line { font-size: 13px; color: var(--ink-2); line-height: 1.7; }
+.idrac-line .h-crit { color: var(--crit); font-weight: 600; }
+.idrac-line .h-ok { color: var(--health-ok); }
+.idrac-dimms { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 4px 10px; font-size: 12px; }
+.idrac-dimms > div { display: flex; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 5px; background: color-mix(in srgb, var(--ink-1) 4%, transparent); }
+.idrac-dimms > div span:nth-child(2) { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+.idrac-dimms > div.bad { box-shadow: inset 0 0 0 1px var(--crit); }
+/* 物理盘：每行自己是一个网格，列宽永远对齐（整体一个大 grid 会因为
+   minmax(0,…) 收缩把槽位和型号挤到一起，实测过） */
+.idrac-disks { display: flex; flex-direction: column; gap: 1px; font-size: 12px; font-variant-numeric: tabular-nums; max-width: 780px; }
+.idrac-disks .hr, .idrac-disks .dr { display: grid; grid-template-columns: 38px minmax(0, 1fr) 56px 74px 62px; gap: 10px; align-items: baseline; }
+.idrac-disks .hr { border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-bottom: 2px; }
+.idrac-disks .ih { color: var(--ink-3); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.idrac-disks .dr { padding: 3px 0; color: var(--ink-2); }
+.idrac-disks .dr + .dr { border-top: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
+.idrac-disks .dr > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.idrac-disks .dr.bad { color: var(--crit); }
+.idrac-disks .h-ok { color: var(--health-ok); }
+.idrac-disks .h-crit { color: var(--crit); font-weight: 600; }
+@media (max-width: 720px) {
+  .idrac-disks .hr, .idrac-disks .dr { grid-template-columns: 32px minmax(0, 1fr) 58px; }
+  .idrac-disks .hr > span:nth-child(3), .idrac-disks .hr > span:nth-child(4),
+  .idrac-disks .dr > span:nth-child(3), .idrac-disks .dr > span:nth-child(4) { display: none; }
 }

@@ -76,6 +76,10 @@ const S = {
   online: null, fails: 0, lastOk: 0, cpuHigh: 0,
   live: { cpu: [], mem: [], temp: [], tempMb: [], power: [], rx: [], tx: [], dr: [], dw: [], fan: [], disk: [], load: [] },
   ctrBuf: {}, vmBuf: {}, diskBuf: {}, visible: new Set(),
+  /** 单盘 SMART 明细（按需拉取）：dev → {at, data, loading} */
+  smartDetail: {},
+  /** 巡检缓存：/api/disk_health 的结果（盘位卡片的健康分级只读它，不触发 smartctl） */
+  diskHealth: null,
 };
 const BUF_N = 60;
 const push = (a, v, n = BUF_N) => { a.push(v); if (a.length > n) a.shift(); };
@@ -90,6 +94,25 @@ const ioOf = (o, name) => ((o && o.diskio) || []).find(z => z.name === name) || 
 const isSleep = d => !!(d && (d.standby || d.state === 'standby'));
 const diskKind = d => /^nvme/.test(d.name) ? 'nvme' : /solid state/i.test(d.rpm || '') ? 'ssd' : /rpm/i.test(d.rpm || '') ? 'hdd' : 'disk';
 const KIND_TXT = { nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD', disk: '硬盘' };
+/** 这块盘属于哪个存储空间：从挂载点 /volN 取 N；没挂载（或只是系统盘分区）返回 0。
+    fnOS 的「存储空间 4」就是 /vol4，二者编号一致，所以不需要问后端要名字。 */
+function volOf(d) {
+  for (const mp of (d && d.mounts) || []) {
+    const m = /^\/vol(\d+)(?:\/|$)/.exec(String(mp));
+    if (m) return +m[1];
+  }
+  return 0;
+}
+/** 盘位卡左上角的标签：原来印 HDD/SSD，现在换成存储空间编号（未挂载的显式标出来） */
+const volLabel = d => volOf(d) ? `vol${volOf(d)}` : '未挂载';
+/** 盘位排序：按存储空间号升序，同一空间内按设备名；未挂载的排最后 */
+const byVol = (a, b) => {
+  const va = volOf(a), vb = volOf(b);
+  if (va !== vb) return (va || 999) - (vb || 999);
+  return String(a.name).localeCompare(String(b.name));
+};
+/** 存储卡副标题里「隐藏本次提醒」的本地记录键（签名变了会自动重新出现） */
+const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
 /** SMART：通过 / 失败 / 未知；计数字段仅在后端提供时使用 */
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];
@@ -102,8 +125,34 @@ function smartState(d) {
   if (/PASS|OK/.test(h)) return { lv: '', text: 'SMART 通过' };
   return { lv: 'none', text: d.health && d.health !== '未知' ? d.health : '未读取到 SMART' };
 }
-const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;
-const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
+/* ---- 巡检分级（/api/disk_health）----
+   盘位卡片只读巡检缓存：open 页面时不跑 smartctl，分级来自后台定时巡检。
+   没有缓存时（首装 / 刚重启）一律 unknown，绝不能默认显示「正常」。 */
+const DISK_GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+const diskHealthOf = name => (S.diskHealth && S.diskHealth.items && S.diskHealth.items[name]) || null;
+/** 盘位卡片用的分级状态：休眠 > 巡检结论 > 未巡检 */
+function bayState(d) {
+  if (isSleep(d)) return { lv: 'standby', text: '休眠中', detail: '' };
+  const h = diskHealthOf(d.name);
+  if (!h) {
+    // 巡检还没跑过：用按需拿到的 SMART 兜底，但明确标注未巡检
+    const sm = smartState(d);
+    if (sm.lv === 'crit' || sm.lv === 'warn') return { lv: sm.lv, text: sm.text, detail: '' };
+    return { lv: 'unknown', text: '未巡检', detail: '' };
+  }
+  return { lv: h.grade || 'unknown', text: DISK_GRADE_TXT[h.grade] || '未巡检', detail: h.detail || '' };
+}
+/** 巡检时间描述：「巡检于 3 小时前」 */
+function scanAgo() {
+  const t = S.diskHealth && S.diskHealth.last_ts;
+  if (!t) return '';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (s < 90) return '刚刚';
+  if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
+  return `${Math.round(s / 86400)} 天前`;
+}
+const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
 const diskTemps = o => disksOf(o).filter(d => ok(d.temp) && !isSleep(d));
 const memParts = m => { const T = +m.total || 0, app = +m.used || 0, cache = +m.cached || 0, buf = +m.buffers || 0; return { app, cache, buf, free: Math.max(0, T - app - cache - buf) }; };
 const gb = b => ok(b) ? (b / GiB).toFixed(1) : '--';
@@ -215,6 +264,21 @@ const API = {
   /** 所有写操作统一走这里：POST + JSON + CSRF 标记头 */
   post(url, body) { return this.req(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body || {}) }); },
 };
+/** 单盘 SMART 明细：只在详情面板打开时按需拉取，后端另有 5 分钟缓存；同一盘在途请求合并 */
+const SMART_DETAIL_TTL = 300000;
+const smartDetailOf = dev => (S.smartDetail[dev] || {}).data || null;
+function loadSmartDetail(dev) {
+  const c = S.smartDetail[dev];
+  if (c && c.loading) return c.p;
+  if (c && c.data && Date.now() - c.at < SMART_DETAIL_TTL) return Promise.resolve(c.data);
+  const slot = S.smartDetail[dev] = { at: Date.now(), data: null, loading: true };
+  slot.p = API.get('/api/smart?dev=' + encodeURIComponent(dev)).then(d => {
+    slot.data = d; slot.loading = false; return d;
+  }, e => {
+    slot.data = { error: String((e && e.message) || e) }; slot.loading = false; return slot.data;
+  });
+  return slot.p;
+}
 /** 轮询调度：一个 1s 心跳驱动所有任务；document.hidden 时整体暂停 */
 const Poll = {
   jobs: {},

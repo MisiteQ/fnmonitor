@@ -29,8 +29,8 @@
 </script>
 <style>
 :root{--font-sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei UI",system-ui,sans-serif;--font-display:"SF Pro Display",-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei UI",system-ui,sans-serif;--font-mono:"SF Mono","JetBrains Mono","Cascadia Code",ui-monospace,Menlo,Consolas,monospace;--fs-hero:60px;--fs-display:38px;--fs-h2:26px;--fs-h3:17px;--fs-body:15px;--fs-sm:13px;--fs-xs:12px;--lh-tight:1.15;--lh-body:1.65;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s7:32px;--s8:40px;--s9:56px;--s10:80px;--section-gap:88px;--page-w:1280px;--page-pad:32px;--r-xs:6px;--r-sm:10px;--r-md:14px;--r-lg:26px;--r-pill:999px;--ease:cubic-bezier(.22,.8,.24,1);--ease-sheet:cubic-bezier(.32,.72,0,1);--dur-1:140ms;--dur-2:260ms;--dur-3:480ms;--dur-gauge:900ms}
-:root,[data-theme="light"]{color-scheme:light;--bg:#ECECEA;--bg-dot:rgba(14,14,14,.075);--bg-bar:rgba(236,236,234,.86);--card:#FFFFFF;--card-sunk:#F3F3F1;--card-hover:#FFFFFF;--fill-1:rgba(14,14,14,.045);--fill-2:rgba(14,14,14,.08);--fill-3:rgba(14,14,14,.15);--line:rgba(14,14,14,.08);--line-strong:rgba(14,14,14,.14);--ink-1:#0E0E0E;--ink-2:#6B6B6B;--ink-3:#A9A9A6;--ink-inv:#FFFFFF;--off:rgba(14,14,14,.075);--scrim:rgba(14,14,14,.26);--ok:var(--d-p);--ok-soft:color-mix(in srgb,var(--d-p) 10%,transparent);--warn:#CE5600;--warn-fill:#FA8233;--warn-soft:rgba(250,130,51,.14);--crit:#C2272D;--crit-soft:rgba(194,39,45,.10);--sleep:#7A8294;--sleep-soft:rgba(122,130,148,.12);--m-cpu:var(--d-p);--m-mem:var(--d-p);--m-io:var(--d-p);--m-temp:var(--d-p);--m-pwr:var(--d-p);--tint:48%;--c1:var(--m-cpu);--c2:color-mix(in srgb,var(--c1) var(--tint),var(--card));--c3:var(--m-pwr);--c4:var(--m-io);--on-accent:#FFFFFF;--hatch:repeating-linear-gradient(135deg,var(--ink-2) 0 1.5px,transparent 1.5px 3.5px);--gauge:var(--ink-1);--spark:var(--ink-1);--shadow-card:none;--shadow-raise:none;--shadow-pop:0 18px 50px -12px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.08);--shadow-thumb:0 1px 2px rgba(0,0,0,.08),0 0 0 .5px rgba(0,0,0,.04)}
-[data-theme="dark"]{color-scheme:dark;--bg:#000000;--bg-dot:rgba(255,255,255,.055);--bg-bar:rgba(0,0,0,.82);--card:#161616;--card-sunk:#1F1F1F;--card-hover:#1A1A1A;--fill-1:rgba(255,255,255,.055);--fill-2:rgba(255,255,255,.09);--fill-3:rgba(255,255,255,.17);--line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.14);--ink-1:#F2F2F0;--ink-2:#92928F;--ink-3:#64645F;--ink-inv:#0E0E0E;--off:rgba(255,255,255,.08);--scrim:rgba(0,0,0,.6);--ok:var(--d-p);--ok-soft:color-mix(in srgb,var(--d-p) 14%,transparent);--warn:#FF8F49;--warn-fill:#FF8F49;--warn-soft:rgba(255,143,73,.15);--crit:#E54C4A;--crit-soft:rgba(229,76,74,.15);--sleep:#8C93A3;--sleep-soft:rgba(140,147,163,.14);--tint:58%;--on-accent:#0E0E0E;--shadow-pop:0 18px 50px -12px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.07);--shadow-thumb:0 1px 2px rgba(0,0,0,.5)}
+:root,[data-theme="light"]{color-scheme:light;--bg:#ECECEA;--bg-dot:rgba(14,14,14,.075);--bg-bar:rgba(236,236,234,.86);--card:#FFFFFF;--card-sunk:#F3F3F1;--card-hover:#FFFFFF;--fill-1:rgba(14,14,14,.045);--fill-2:rgba(14,14,14,.08);--fill-3:rgba(14,14,14,.15);--line:rgba(14,14,14,.08);--line-strong:rgba(14,14,14,.14);--ink-1:#0E0E0E;--ink-2:#6B6B6B;--ink-3:#A9A9A6;--ink-inv:#FFFFFF;--off:rgba(14,14,14,.075);--scrim:rgba(14,14,14,.26);--ok:var(--d-p);--ok-soft:color-mix(in srgb,var(--d-p) 10%,transparent);--health-ok:#128A4E;--warn:#CE5600;--warn-fill:#FA8233;--warn-soft:rgba(250,130,51,.14);--crit:#C2272D;--crit-soft:rgba(194,39,45,.10);--sleep:#7A8294;--sleep-soft:rgba(122,130,148,.12);--m-cpu:var(--d-p);--m-mem:var(--d-p);--m-io:var(--d-p);--m-temp:var(--d-p);--m-pwr:var(--d-p);--tint:48%;--c1:var(--m-cpu);--c2:color-mix(in srgb,var(--c1) var(--tint),var(--card));--c3:var(--m-pwr);--c4:var(--m-io);--on-accent:#FFFFFF;--hatch:repeating-linear-gradient(135deg,var(--ink-2) 0 1.5px,transparent 1.5px 3.5px);--gauge:var(--ink-1);--spark:var(--ink-1);--shadow-card:none;--shadow-raise:none;--shadow-pop:0 18px 50px -12px rgba(0,0,0,.28),0 2px 6px rgba(0,0,0,.08);--shadow-thumb:0 1px 2px rgba(0,0,0,.08),0 0 0 .5px rgba(0,0,0,.04)}
+[data-theme="dark"]{color-scheme:dark;--bg:#000000;--bg-dot:rgba(255,255,255,.055);--bg-bar:rgba(0,0,0,.82);--card:#161616;--card-sunk:#1F1F1F;--card-hover:#1A1A1A;--fill-1:rgba(255,255,255,.055);--fill-2:rgba(255,255,255,.09);--fill-3:rgba(255,255,255,.17);--line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.14);--ink-1:#F2F2F0;--ink-2:#92928F;--ink-3:#64645F;--ink-inv:#0E0E0E;--off:rgba(255,255,255,.08);--scrim:rgba(0,0,0,.6);--ok:var(--d-p);--ok-soft:color-mix(in srgb,var(--d-p) 14%,transparent);--health-ok:#3BC47B;--warn:#FF8F49;--warn-fill:#FF8F49;--warn-soft:rgba(255,143,73,.15);--crit:#E54C4A;--crit-soft:rgba(229,76,74,.15);--sleep:#8C93A3;--sleep-soft:rgba(140,147,163,.14);--tint:58%;--on-accent:#0E0E0E;--shadow-pop:0 18px 50px -12px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.07);--shadow-thumb:0 1px 2px rgba(0,0,0,.5)}
 :root{--accent:#0E0E0E;--d-p:var(--accent);--e-blue:#3368D6;--e-coral:#A3489D;--e-teal:#1E9E8A;--e-violet:#AC8FF8}
 [data-theme="dark"]{--e-blue:#5585E8;--e-coral:#B761B1;--e-teal:#1F9C86;--e-violet:#BEA4FF}
 :root{--r-g:oklch(0.67 0.13 158);--r-y:oklch(0.82 0.16 115);--rt-g:oklch(0.52 0.12 158);--rt-l:oklch(0.55 0.13 122)}
@@ -115,6 +115,10 @@ to{opacity:1;transform:none}
 .mod-dek{margin:8px 0 0;color:var(--ink-2);max-width:64ch;font-size:var(--fs-body)}
 .mod-dek b{color:var(--ink-1);font-weight:600}
 .mod-dek .warn{color:var(--warn);font-weight:600}
+.mod-dek .warn.dismissible{display:inline-flex;align-items:flex-start;gap:6px}
+.mod-dek .warn-x{flex:none;width:16px;height:16px;margin-top:1px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;opacity:.55;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:opacity var(--dur-1),background var(--dur-1)}
+.mod-dek .warn-x:hover{opacity:1;background:var(--warn-soft)}
+.mod-dek .warn-x .i{width:10px;height:10px}
 .mod-actions{display:flex;align-items:center;gap:var(--s3);flex:none}
 .link-btn{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:var(--r-pill);color:var(--ink-2);font-size:var(--fs-sm);font-weight:500;transition:background var(--dur-1),color var(--dur-1)}
 .link-btn:hover{background:var(--fill-1);color:var(--ink-1)}
@@ -994,14 +998,20 @@ a{color:var(--ink-1)}
 .bay:active{transform:translateY(1px) scale(.985)}
 .bay:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .bay-top{display:flex;align-items:center;gap:6px;font:500 10.5px/1 var(--font-mono);color:var(--chassis-ink-2);letter-spacing:.06em}
-.bay-top>span:first-child{margin-right:auto}
+.bay-top>span:first-child{margin-right:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bay-led{width:7px;height:7px;border-radius:50%;background:var(--led-off);transition:background-color 60ms,box-shadow 60ms}
 .bay-led.on{background:var(--led-on);box-shadow:0 0 6px var(--led-glow)}
+.bay[data-st="ok"] .bay-led{background:var(--health-ok);box-shadow:0 0 6px color-mix(in srgb,var(--health-ok) 55%,transparent)}
 .bay[data-st="warn"] .bay-led{background:color-mix(in srgb,var(--warn-fill) 45%,var(--tray))}
 .bay[data-st="warn"] .bay-led.on{background:var(--warn-fill);box-shadow:0 0 8px var(--warn-fill)}
 .bay-warn{display:none;color:var(--warn-fill)}
 .bay-warn .i{width:13px;height:13px}
 .bay[data-st="warn"] .bay-warn{display:inline-flex}
+.bay[data-st="crit"] .bay-warn{display:inline-flex;color:var(--crit)}
+.bay[data-st="crit"] .bay-led{background:var(--crit);box-shadow:0 0 7px var(--crit)}
+.bay[data-st="crit"] .bay-led.on{background:var(--crit);box-shadow:0 0 9px var(--crit)}
+.bay[data-st="unknown"] .bay-led{background:var(--led-off);box-shadow:none}
+.bay[data-st="unknown"] .bay-cap{opacity:.75}
 .bay-body{position:relative;flex:1;display:flex;gap:12px;min-height:0}
 .bay-gauge{width:40px;flex:none;display:flex}
 .bay[data-type="nvme"] .bay-gauge{width:32px}
@@ -1029,8 +1039,11 @@ a{color:var(--ink-1)}
 .nas-foot{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:14px;padding:0 6px;font-size:12px;color:var(--ink-2)}
 .nas-foot span{display:inline-flex;align-items:center;gap:6px}
 .nas-foot .i{width:13px;height:13px}
-.nas-foot .led-key{width:7px;height:7px;border-radius:50%;background:var(--led-on);box-shadow:0 0 5px var(--led-glow)}
+.nas-foot .led-key{width:7px;height:7px;border-radius:50%;background:var(--health-ok);box-shadow:0 0 5px color-mix(in srgb,var(--health-ok) 45%,transparent)}
 .nas-foot .led-key.warn{background:var(--warn-fill);box-shadow:none}
+.nas-foot .led-key.crit{background:var(--crit);box-shadow:none}
+.nas-foot .led-key.off{background:var(--led-off);box-shadow:none}
+.nas-foot .scan-ago{margin-left:auto}
 .nas-foot .faint{margin-left:auto;color:var(--ink-3)}
 @media (prefers-reduced-motion: reduce){.bay-zz .dm{animation:none !important}
 }
@@ -1096,6 +1109,10 @@ a{color:var(--ink-1)}
 .cs-note{font-size:11.5px;color:var(--ink-3);line-height:1.5}
 @media (max-width: 760px){.colorspec{grid-template-columns:1fr}
 }
+.scanlog-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.scanlog-bar .faint{font-size:12.5px}
+@media (max-width: 520px){.scanlog-bar .btn{flex:1}
+}
 .bays{display:flex;flex-wrap:wrap}
 .bays>.bay{flex:1 1 170px;min-width:0}
 .bays:has(.bays-empty){display:block}
@@ -1132,6 +1149,16 @@ a{color:var(--ink-1)}
 .set-row .hint a,.set-row .hint .mono{color:var(--ink-2)}
 .set-row .hint a{text-decoration:underline;text-underline-offset:2px}
 .auth-note{margin:var(--s5) 0 var(--s2)}
+.set-card{display:flow-root}
+.set-card>.note:first-child{margin:var(--s5) 0 var(--s2)}
+.set-card>.note:first-child + .set-row{border-top:0}
+.notify-note{align-items:flex-start}
+.notify-note>span{min-width:0}
+.notify-note b{color:var(--ink-1);font-weight:600}
+.test-msg{font-size:var(--fs-xs);color:var(--ink-3);white-space:nowrap}
+.set-row.inline .ctl{flex-wrap:wrap;row-gap:8px}
+@media (max-width: 560px){.test-msg{display:none}
+}
 .pw-ctl{flex-wrap:wrap}
 .update-card .btns{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .update-notes{white-space:pre-wrap;max-height:220px;overflow:auto}
@@ -1215,6 +1242,51 @@ dd .diag-link{margin:0;height:24px}
 }
 @media (max-width: 960px){.ctr.vm{grid-template-columns:minmax(0,1fr) auto}
 }
+.idrac-live:empty{display:none}
+.idrac-live{border-top:1px solid var(--line);margin-top:var(--s2)}
+.idrac-head{display:block;line-height:1.95;padding:var(--s4) 0 var(--s3);font-size:13px;color:var(--ink-2)}
+.idrac-head b{color:var(--ink-1);font-weight:600}
+.idrac-head .h-ok{color:var(--health-ok);font-weight:600}
+.idrac-head .h-warn{color:var(--warn);font-weight:600}
+.idrac-head .h-crit{color:var(--crit);font-weight:600}
+.idrac-fans{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px;padding-bottom:var(--s3)}
+.idrac-fan{padding:6px 8px;border-radius:6px;background:color-mix(in srgb,var(--ink-1) 4%,transparent);font-size:13px;font-variant-numeric:tabular-nums}
+.idrac-fan b{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:1px}
+.idrac-fan small{font-size:10px;color:var(--ink-3);margin-left:3px}
+.idrac-fan.bad{box-shadow:inset 0 0 0 1px var(--crit)}
+.idrac-temps{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--ink-2);padding-bottom:var(--s3)}
+.idrac-temps b{color:var(--ink-1);font-variant-numeric:tabular-nums}
+.idrac-sel{display:flex;flex-direction:column;gap:3px;font-size:12px;padding-bottom:var(--s3)}
+.idrac-sel .e{display:flex;gap:8px;align-items:baseline}
+.idrac-sel .t{color:var(--ink-3);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.idrac-sel .s{flex:0 0 auto;font-weight:600;min-width:52px}
+.idrac-sel .s.Critical{color:var(--crit)}
+.idrac-sel .s.Warning{color:var(--warn)}
+.idrac-sel .s.OK{color:var(--ink-3)}
+.idrac-sel .m{min-width:0;color:var(--ink-2)}
+.idrac-sec{padding:var(--s2) 0 var(--s3);border-top:1px solid var(--line)}
+.idrac-sec-h{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--ink-3);text-transform:uppercase;margin-bottom:6px}
+.idrac-sec-h .faint{text-transform:none;letter-spacing:0;font-weight:400}
+.idrac-line{font-size:13px;color:var(--ink-2);line-height:1.7}
+.idrac-line .h-crit{color:var(--crit);font-weight:600}
+.idrac-line .h-ok{color:var(--health-ok)}
+.idrac-dimms{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:4px 10px;font-size:12px}
+.idrac-dimms>div{display:flex;gap:6px;align-items:baseline;padding:3px 6px;border-radius:5px;background:color-mix(in srgb,var(--ink-1) 4%,transparent)}
+.idrac-dimms>div span:nth-child(2){color:var(--ink-1);font-variant-numeric:tabular-nums}
+.idrac-dimms>div.bad{box-shadow:inset 0 0 0 1px var(--crit)}
+.idrac-disks{display:flex;flex-direction:column;gap:1px;font-size:12px;font-variant-numeric:tabular-nums;max-width:780px}
+.idrac-disks .hr,.idrac-disks .dr{display:grid;grid-template-columns:38px minmax(0,1fr) 56px 74px 62px;gap:10px;align-items:baseline}
+.idrac-disks .hr{border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:2px}
+.idrac-disks .ih{color:var(--ink-3);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.idrac-disks .dr{padding:3px 0;color:var(--ink-2)}
+.idrac-disks .dr + .dr{border-top:1px solid color-mix(in srgb,var(--line) 45%,transparent)}
+.idrac-disks .dr>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idrac-disks .dr.bad{color:var(--crit)}
+.idrac-disks .h-ok{color:var(--health-ok)}
+.idrac-disks .h-crit{color:var(--crit);font-weight:600}
+@media (max-width: 720px){.idrac-disks .hr,.idrac-disks .dr{grid-template-columns:32px minmax(0,1fr) 58px}
+.idrac-disks .hr>span:nth-child(3),.idrac-disks .hr>span:nth-child(4),.idrac-disks .dr>span:nth-child(3),.idrac-disks .dr>span:nth-child(4){display:none}
+}
 </style>
 </head>
 <body>
@@ -1270,6 +1342,7 @@ dd .diag-link{margin:0;height:24px}
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19v-8.5Z"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 3.6 1.5 5 1.5 5H5s1.5-1.4 1.5-5Z"/><path d="M10 18.2a2 2 0 0 0 4 0"/></symbol>
     <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3Z"/><circle cx="7.5" cy="11.5" r="1.1"/><circle cx="10.5" cy="7.5" r="1.1"/><circle cx="15" cy="7.8" r="1.1"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2.5h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11.5A8 8 0 0 0 5.6 7M4 12.5A8 8 0 0 0 18.4 17M5 3.5V7.5h4M19 20.5v-4h-4"/></symbol>
@@ -2002,6 +2075,8 @@ o: null, cfg: null, docker: null, vms: null, vmTab: store.get('vmTab', false), p
 online: null, fails: 0, lastOk: 0, cpuHigh: 0,
 live: { cpu: [], mem: [], temp: [], tempMb: [], power: [], rx: [], tx: [], dr: [], dw: [], fan: [], disk: [], load: [] },
 ctrBuf: {}, vmBuf: {}, diskBuf: {}, visible: new Set(),
+smartDetail: {},
+diskHealth: null,
 };
 const BUF_N = 60;
 const push = (a, v, n = BUF_N) => { a.push(v); if (a.length > n) a.shift(); };
@@ -2014,6 +2089,20 @@ const ioOf = (o, name) => ((o && o.diskio) || []).find(z => z.name === name) || 
 const isSleep = d => !!(d && (d.standby || d.state === 'standby'));
 const diskKind = d => /^nvme/.test(d.name) ? 'nvme' : /solid state/i.test(d.rpm || '') ? 'ssd' : /rpm/i.test(d.rpm || '') ? 'hdd' : 'disk';
 const KIND_TXT = { nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD', disk: '硬盘' };
+function volOf(d) {
+for (const mp of (d && d.mounts) || []) {
+const m = /^\/vol(\d+)(?:\/|$)/.exec(String(mp));
+if (m) return +m[1];
+}
+return 0;
+}
+const volLabel = d => volOf(d) ? `vol${volOf(d)}` : '未挂载';
+const byVol = (a, b) => {
+const va = volOf(a), vb = volOf(b);
+if (va !== vb) return (va || 999) - (vb || 999);
+return String(a.name).localeCompare(String(b.name));
+};
+const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];
 function smartState(d) {
@@ -2025,8 +2114,28 @@ if (bad.length) return { lv: 'warn', text: bad.map(([k, l]) => `${l} ${d[k]}`).j
 if (/PASS|OK/.test(h)) return { lv: '', text: 'SMART 通过' };
 return { lv: 'none', text: d.health && d.health !== '未知' ? d.health : '未读取到 SMART' };
 }
-const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;
-const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
+const DISK_GRADE_TXT = { ok: '正常', warn: '留意', crit: '故障', unknown: '未巡检' };
+const diskHealthOf = name => (S.diskHealth && S.diskHealth.items && S.diskHealth.items[name]) || null;
+function bayState(d) {
+if (isSleep(d)) return { lv: 'standby', text: '休眠中', detail: '' };
+const h = diskHealthOf(d.name);
+if (!h) {
+const sm = smartState(d);
+if (sm.lv === 'crit' || sm.lv === 'warn') return { lv: sm.lv, text: sm.text, detail: '' };
+return { lv: 'unknown', text: '未巡检', detail: '' };
+}
+return { lv: h.grade || 'unknown', text: DISK_GRADE_TXT[h.grade] || '未巡检', detail: h.detail || '' };
+}
+function scanAgo() {
+const t = S.diskHealth && S.diskHealth.last_ts;
+if (!t) return '';
+const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+if (s < 90) return '刚刚';
+if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
+return `${Math.round(s / 86400)} 天前`;
+}
+const cpuTemp = o => o && o.temp ? (ok(o.temp.cpu) ? +o.temp.cpu : null) : null;const mbTemp = o => o && o.temp && ok(o.temp.system) ? +o.temp.system : null;
 const diskTemps = o => disksOf(o).filter(d => ok(d.temp) && !isSleep(d));
 const memParts = m => { const T = +m.total || 0, app = +m.used || 0, cache = +m.cached || 0, buf = +m.buffers || 0; return { app, cache, buf, free: Math.max(0, T - app - cache - buf) }; };
 const gb = b => ok(b) ? (b / GiB).toFixed(1) : '--';
@@ -2121,6 +2230,20 @@ return r.json();
 get(url) { return this.req(url); },
 post(url, body) { return this.req(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body || {}) }); },
 };
+const SMART_DETAIL_TTL = 300000;
+const smartDetailOf = dev => (S.smartDetail[dev] || {}).data || null;
+function loadSmartDetail(dev) {
+const c = S.smartDetail[dev];
+if (c && c.loading) return c.p;
+if (c && c.data && Date.now() - c.at < SMART_DETAIL_TTL) return Promise.resolve(c.data);
+const slot = S.smartDetail[dev] = { at: Date.now(), data: null, loading: true };
+slot.p = API.get('/api/smart?dev=' + encodeURIComponent(dev)).then(d => {
+slot.data = d; slot.loading = false; return d;
+}, e => {
+slot.data = { error: String((e && e.message) || e) }; slot.loading = false; return slot.data;
+});
+return slot.p;
+}
 const Poll = {
 jobs: {},
 add(name, fn, every, when) { this.jobs[name] = { fn, every, when, last: 0, busy: false }; },
@@ -2470,17 +2593,19 @@ if (dmax != null && tv != null) tp.push(`硬盘最高 ${F.int(dmax)}℃`);
 setText(x.tempSub, tv == null && dmax == null ? '未读取到温度传感器' : tp.join(' · ') || 'CPU 封装温度');
 m.sp.temp.set([{ values: vals(tv != null ? (ct != null ? S.live.temp : S.live.tempMb) : []) }], {});
 const pw = o.power || {}, has3 = pwrOk(o), w = has3 ? +pw.total : null, ep = S.pstats && S.pstats.estimation_params;
-const capW = ep ? ep.tdp_w + ep.base_w + ep.disk_typical_w * Math.max(1, dd.length) + ep.nic_fixed_w * Math.max(1, ni.length) : Math.max(60, (w || 0) * 1.5);
+const capW = pw.capacity ? +pw.capacity : (ep ? ep.tdp_w + ep.base_w + ep.disk_typical_w * Math.max(1, dd.length) + ep.nic_fixed_w * Math.max(1, ni.length) : Math.max(60, (w || 0) * 1.5));
 dnum(x.pwrV, w, F.d1); m.g.pwr.set(w != null ? w / capW : 0, ''); m.g.pwr.tone(w != null ? rampAt(w / capW * 100, 'gen') : ''); inkTo(x.pwrV, w != null ? rampInk(w / capW * 100, 'gen') : '');
-st('pwr', '', !has3 ? '不可用' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
+st('pwr', '', !has3 ? '不可用' : pw.source === 'idrac' ? 'iDRAC 实测' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
 const en = S.pstats && S.pstats.energy, co = S.pstats && S.pstats.cost;
-setText(x.pwrSub, !has3 ? '无法读取或估算功耗' : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : (pw.source === 'rapl' ? '硬件 RAPL 读数' : '按部件模型估算'));
+const pwrSrc = pw.source === 'idrac' ? `iDRAC 整机读数${pw.capacity ? ` · 电源容量 ${F.int(pw.capacity)} W` : ''}`
+: pw.source === 'rapl' ? '硬件 RAPL 读数' : '按部件模型估算';
+setText(x.pwrSub, !has3 ? '无法读取或估算功耗' : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : pwrSrc);
 m.sp.pwr.set([{ values: vals(S.live.power) }], { min: 0 });
 },
 });
 defineModule({
 id: 'storage', page: 'overview', dc: 'util', kicker: 'STORAGE', title: '存储', dek: '存储池用量与每块物理硬盘的状态',
-actions: () => detailBtn('storage', '全部硬盘'),
+actions: () => [detailBtn('scanlog', '巡检历史'), detailBtn('storage', '全部硬盘')],
 build(body, m) {
 body.innerHTML = `<div class="card pool">
 <div><div class="eyebrow">存储池使用率</div><div class="dnum" style="margin-top:12px"><span class="dm" data-ref="poolV"></span><span class="unit">%</span></div></div>
@@ -2492,18 +2617,10 @@ body.innerHTML = `<div class="card pool">
 <div class="ch-top"><span class="pwr" title="电源"><i></i></span><span data-ref="chName"></span><span class="vent"></span><span data-ref="chModel">NAS</span></div>
 <div class="bays" data-ref="bays"></div>
 </div>
-<div class="nas-foot"><span><i class="led-key"></i>读写活动</span><span><i class="led-key warn"></i>需要留意</span><span>${ic('moon')}休眠中</span><span class="faint">点击盘位查看 SMART 详情 · 盘位按设备名排列，非实际槽位</span></div>
+<div class="nas-foot"><span><i class="led-key"></i>正常</span><span><i class="led-key warn"></i>留意</span><span><i class="led-key crit"></i>故障</span><span><i class="led-key off"></i>休眠 / 未巡检</span><span class="faint scan-ago" data-ref="scanAgo"></span><span class="faint">点击盘位查看 SMART 详情 · 盘位按存储空间排列</span></div>
 </div>
 <div data-ref="raid"></div>`;
 m.x = collect(body); m.bays = {}; m.io = {};
-setInterval(() => {
-if (S.page !== 'overview' || document.hidden || !m.vis || S.editing) return;
-for (const name in m.bays) {
-const el = m.bays[name], led = el._r.led, rate = m.io[name] || 0;
-const on = el.dataset.st !== 'standby' && rate > 0 && (reduced() ? true : Math.random() < clamp(Math.log10(1 + rate / 65536) / 3.2, 0.05, 0.92));
-if (led._on !== on) { led._on = on; led.classList.toggle('on', on); }
-}
-}, 220);
 },
 buildBays(dd, m) {
 m.x.bays.innerHTML = ''; m.bays = {};
@@ -2511,8 +2628,10 @@ m.x.bays.style.setProperty('--bays', clamp(dd.length, 1, 6));
 if (!dd.length) { m.x.bays.innerHTML = `<div class="bays-empty">${ic('hdd')}<span>未检测到物理硬盘（需要 lsblk 支持）</span></div>`; return; }
 dd.forEach(d => {
 const k = diskKind(d);
-const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，查看详情">
-<span class="bay-top"><span>${KIND_TXT[k]}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
+const v = volOf(d);
+const volTxt = v ? `存储空间 vol${v}` : '未挂载';
+const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
+<span class="bay-top"><span title="${esc(volTxt)}">${volLabel(d)}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
 <span class="bay-body">
 <span class="bay-gauge" data-ref="g"></span>
 <span class="bay-zz" aria-hidden="true"><span class="dm" data-dm="Zz"></span>休眠</span>
@@ -2532,33 +2651,59 @@ m.bays[d.name] = el; m.x.bays.append(el);
 },
 update(o, m) {
 if (!o) return;
-const x = m.x, dd = disksOf(o), has = +o.disk_size > 0;
+const x = m.x, dd = disksOf(o).slice().sort(byVol), has = +o.disk_size > 0;
 dnum(x.poolV, has ? o.disk_total : null); if (has) { rampBar(x.poolBar, +o.disk_total, 'cap'); inkTo(x.poolV, rampInk(+o.disk_total, 'cap')); } else { setW(x.poolBar, 0); inkTo(x.poolV, ''); }
 dnumU(x.poolFree, x.poolFreeU, has ? o.disk_size - o.disk_used : null, F.dsize);
 setHTML(x.poolLeg, has ? `<span>已用 <b>${F.dsizeStr(o.disk_used)}</b></span><span>总容量 <b>${F.dsizeStr(o.disk_size)}</b></span>${o.disk_pools ? `<span>${esc(o.disk_pools)} 个存储池</span>` : ''}` : '<span>未读取到存储池用量（fnOS 存储池挂载在 /vol*）</span>');
 const sy = o.system || {}, hw = (o.hardware || {}).board || {};
 setText(x.chName, sy.hostname || ''); setText(x.chModel, String(hw.product_name || hw.board_name || 'NAS').slice(0, 24) + ` · ${dd.length} 盘`);
-const sig = dd.map(d => d.name + diskKind(d)).join(',');
+const sig = dd.map(d => d.name + diskKind(d) + volOf(d)).join(',');
 if (m.sig !== sig) { m.sig = sig; this.buildBays(dd, m); }
 m.io = {}; (o.diskio || []).forEach(z => { m.io[z.name] = (+z.read_rate || 0) + (+z.write_rate || 0); });
 dd.forEach(d => {
 const el = m.bays[d.name]; if (!el) return; const r = el._r;
-const sm = smartState(d), sl = isSleep(d), warn = sm.lv === 'warn' || sm.lv === 'crit';
-const stt = sl ? 'standby' : warn ? 'warn' : 'ok';
-if (el.dataset.st !== stt) el.dataset.st = stt;
+const bs = bayState(d), sl = bs.lv === 'standby';
+if (el.dataset.st !== bs.lv) el.dataset.st = bs.lv;
 setText(r.t, sl || !ok(d.temp) ? '--' : F.int(d.temp)); inkTo(r.t, sl || !ok(d.temp) ? '' : rampInk(+d.temp, 'dtemp'));
 const hasCap = +d.total > 0;
-el._g.set(hasCap ? +d.percent / 100 : 0, LV.cap(d.percent) || (warn ? 'warn' : ''), 'cap');
+el._g.set(hasCap ? +d.percent / 100 : 0, bs.lv === 'crit' ? 'crit' : bs.lv === 'warn' ? 'warn' : (LV.cap(d.percent) || ''), 'cap');
 setText(r.cap, hasCap ? `${F.int(d.percent)}% · ${F.dsizeStr(d.used)} / ${F.dsizeStr(d.total)}` : `${F.dsizeStr(d.size)} · 未挂载`);
-el.title = sl ? `${d.name} 已停转，监控不会唤醒它` : `${d.name} · ${sm.text}`;
+el.title = sl ? `${d.name} 已停转，监控不会唤醒它`
+: `${d.name} · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
 });
+const ago = scanAgo();
+if (x.scanAgo) setText(x.scanAgo, S.diskHealth ? (ago ? `巡检于 ${ago}` : '尚未巡检') : '');
 const raid = o.raid || [], rc = o.raidcard || {};
 setHTML(x.raid, raid.length || (rc.type && rc.type !== 'none') ? `<div class="card pad raid-sum tap" data-sheet="storage" role="button" tabindex="0"><div class="label">${ic('server')}阵列<span class="faint" style="margin-left:auto;font-weight:400">${esc(rc.label || '')}</span></div><div class="raid-chips">${raid.map(r => `<span class="pill ${(r.members || []).some(z => /\(F\)/.test(z)) ? 'crit' : 'ok'}"><span class="dot"></span>${esc(r.device)} · ${esc(r.status)}</span>`).join('')}${(rc.controllers || []).map(c => (c.vd || []).map(v => `<span class="pill ${v.badge === 'off' ? 'crit' : v.badge === 'on' ? 'ok' : ''}"><span class="dot"></span>VD${esc(v.vd)} ${esc(v.type || '')} · ${esc(v.state_label || v.state || '--')}</span>`).join('')).join('')}${rc.type && rc.type !== 'none' && !(rc.controllers || []).length ? `<span class="pill">${esc(rc.detail || rc.error || '未读取到阵列卡详情')}</span>` : ''}</div></div>` : '');
-const warnD = dd.filter(d => ['warn', 'crit'].includes(smartState(d).lv)), sleepD = dd.filter(isSleep);
+const warnD = dd.filter(d => ['warn', 'crit'].includes(bayState(d).lv)), sleepD = dd.filter(isSleep);
 let dek = !dd.length ? '未检测到物理硬盘。' : `${dd.length} 块硬盘${has ? `，存储池共 <b>${F.dsizeStr(o.disk_size)}</b>，已用 ${F.int(o.disk_total)}%` : ''}。`;
-if (warnD.length) dek += `<span class="warn">${warnD.map(d => esc(d.name)).join('、')}：${esc(smartState(warnD[0]).text)}</span>，建议确认备份。`;
+const unknownD = dd.filter(d => bayState(d).lv === 'unknown');
+if (warnD.length) {
+const line = list => {
+const d0 = list[0], bs = bayState(d0), v = volOf(d0);
+const cap = d0.size ? ' ' + F.dsizeStr(d0.size) : '';
+const where = [v ? `vol${v}` : '未挂载', d0.slot != null ? `插槽 ${d0.slot}` : ''].filter(Boolean).join(' · ');
+const more = list.length > 1 ? ` 等 ${list.length} 块` : '';
+return `<b>${esc(d0.name)}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
+};
+const sig = warnD.map(d => `${d.name}:${bayState(d).lv}:${bayState(d).detail || ''}`).join('|');
+let hidden = '';
+try { hidden = localStorage.getItem(WARN_DISMISS_KEY) || ''; } catch (e) { hidden = ''; }
+if (hidden !== sig) {
+dek += `<span class="warn dismissible" data-warn="${esc(sig)}">${line(warnD)}<button class="warn-x" type="button" aria-label="隐藏本次提醒" title="隐藏本次提醒（状态有变化时会重新出现）">${ic('x')}</button></span>`;
+}
+}
+if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
 if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
 setHTML(m.r.dek, dek);
+const bx = m.r.dek && m.r.dek.querySelector ? m.r.dek.querySelector('.warn-x') : null;
+if (bx) bx.onclick = ev => {
+ev.preventDefault(); ev.stopPropagation();
+const host = bx.closest('.dismissible');
+const sig = host && host.getAttribute('data-warn');
+try { if (sig) localStorage.setItem(WARN_DISMISS_KEY, sig); } catch (e) { /* 隐私模式忽略 */ }
+if (host) host.remove();
+};
 },
 });
 const SERIES_SRC = { 'net.rx': ['net', 'rx'], 'net.tx': ['net', 'tx'], 'diskio.r': ['diskio', 'r'], 'diskio.w': ['diskio', 'w'], 'net_bytes.rx': ['net_bytes', 'rx'], 'net_bytes.tx': ['net_bytes', 'tx'] };
@@ -2869,6 +3014,7 @@ title: i => days[i] ? (days[i].getMonth() + 1) + '/' + days[i].getDate() + (i ==
 xLabel: i => { const n = days.length, step = n > 14 ? 7 : n > 7 ? 3 : 1; return i === n - 1 ? '今天' : ((n - 1 - i) % step === 0 && days[i] ? (days[i].getMonth() + 1) + '/' + days[i].getDate() : null); },
 });
 function powerParts(p) {
+if (p.source === 'idrac') return [['整机实测', +p.total || 0, 'var(--d-p)']];
 const parts = [];
 if (ok(p.package)) parts.push(['CPU 封装', +p.package, 'var(--d-p)']);
 if (ok(p.dram)) parts.push(['内存', +p.dram, 'color-mix(in srgb, var(--d-p) 55%, var(--card))']);
@@ -2879,7 +3025,7 @@ if (rest > 0.05) parts.push([p.source === 'estimated' ? 'CPU 与网卡等（估�
 return parts;
 }
 const ppI = c => c === 'hatch' ? '<i class="hatch"></i>' : `<i style="background:${c}"></i>`;
-const SRC_TXT = { rapl: '硬件 RAPL', estimated: '模型估算' };
+const SRC_TXT = { idrac: 'iDRAC 实测', rapl: '硬件 RAPL', estimated: '模型估算' };
 const monthProj = (mk, o) => { const a = avgW(o); if (!ok(mk) || !a) return null; const d = new Date(), end = new Date(d.getFullYear(), d.getMonth() + 1, 1); return { kwh: mk + a.w * (end - d) / 3.6e9, w: a.w, basis: a.basis }; };
 const yearProj = o => { const a = avgW(o); return a ? { kwh: a.w * 8.76, w: a.w, basis: a.basis } : null; };
 defineModule({
@@ -2932,7 +3078,9 @@ if (!o) return;
 const x = m.x, p = o.power || {}, has = pwrOk(o), ps = S.pstats, rate = ps && ps.cost ? ps.cost.rate_yuan_per_kwh : (S.cfg && S.cfg.power_rate_yuan);
 dnum(x.w, has ? +p.total : null, F.d1);
 setText(x.src, has ? (SRC_TXT[p.source] || '来源未知') : '不可用');
-setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗' : p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘' : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算');
+setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗'
+: p.source === 'idrac' ? `iDRAC 实测整机输出${ok(p.capacity) ? ` · 电源容量 ${F.int(p.capacity)} W` : ''}${ok(p.min) && ok(p.max) ? ` · 近 1 分钟 ${F.int(p.min)}–${F.int(p.max)} W` : ''}`
+: p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘' : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算');
 const parts = has ? powerParts(p) : [], sig = parts.map(q => q[0]).join();
 if (m.psig !== sig) { m.psig = sig; x.stack.innerHTML = parts.map(q => ppI(q[2])).join(''); }
 parts.forEach((q, i) => { if (x.stack.children[i]) x.stack.children[i].style.flexGrow = q[1].toFixed(2); });
@@ -3298,6 +3446,56 @@ ${sec('信息')}<div data-ref="info"></div>`;
 const x = collect(b);
 if (x.sp) x.sp.append(makeSpark());
 void sm0;
+const paintSmart = () => {
+const dd = disksOf(S.o).find(z => z.name === a); if (!dd) return;
+const slp = isSleep(dd), sd = smartDetailOf(a), sas = !!(sd && sd.scsi);
+const val = k => (sd && sd[k] != null ? sd[k] : dd[k]);
+const temp = (sd && sd.temp_c != null) ? sd.temp_c : dd.temp;
+const num = v => ok(v) ? esc(Number(v).toLocaleString()) : '<span class="faint">—</span>';
+const flag = v => (+v > 0 ? 'warn' : true);
+let rows = [['整体评估', dd.health ? esc(/PASS/i.test(dd.health) ? '通过' : dd.health) : '<span class="faint">未读取到</span>',
+/FAIL/i.test(dd.health || '') ? 'crit' : /PASS|OK/i.test(dd.health || '') ? true : null]];
+if (sas) {
+rows = rows.concat([
+['增长缺陷表', num(sd.grown_defects), sd.grown_defects != null ? flag(sd.grown_defects) : null],
+['待定缺陷', num(sd.scsi_pending_defects), sd.scsi_pending_defects != null ? flag(sd.scsi_pending_defects) : null],
+['不可纠正错误', num(sd.scsi_uncorrected), flag(sd.scsi_uncorrected || 0)],
+['ECC 纠正次数', num(sd.scsi_ecc) + ' <span class="faint">计数器会回绕</span>', null],
+['重读 / 重写', num(sd.scsi_rereads), null],
+['已处理数据', ok(sd.scsi_gb) ? esc(F.dsizeStr(sd.scsi_gb * 1e9)) : '<span class="faint">—</span>', null],
+]);
+} else {
+const cnt = SMART_KEYS.filter(([k]) => val(k) != null && val(k) !== '');
+rows = rows.concat(cnt.map(([k, l]) => [l, esc(val(k)), flag(val(k))]));
+}
+rows = rows.concat([
+['通电时间', val('power_on_hours') ? `${esc(Number(val('power_on_hours')).toLocaleString())} 小时（${F.hours(val('power_on_hours'))}）` : '<span class="faint">—</span>', null],
+['温度', ok(temp) ? `${F.int(temp)}℃` : '<span class="faint">—</span>', ok(temp) && !slp ? (LV.dtemp(temp) || true) : null],
+['转速', val('rpm') ? esc(val('rpm')) : '<span class="faint">—</span>', null]]);
+let hint = '';
+if (sas) hint = slp ? '休眠中，明细待硬盘唤醒后读取' : '';
+else if (!rows.some(r => r[2] === 'warn' || r[2] === 'crit') && !SMART_KEYS.some(([k]) => val(k) != null && val(k) !== '')) {
+hint = slp ? '休眠中，扇区计数待硬盘唤醒后读取' : (sd && sd.error ? `SMART 明细读取失败：${esc(sd.error)}` : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）');
+}
+setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${slp && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
++ (hint ? `<tr><td colspan="3" class="faint" style="font-size:12px">${hint}</td></tr>` : ''));
+const extra = [];
+if (sas && sd.manufactured) extra.push(['生产周期', esc(sd.manufactured)]);
+const slotTip = '机箱里的物理槽位，取 iDRAC 物理盘列表的「插槽编号」（从 0 起）';
+const slotState = (S.o && S.o.idrac_slot_state) || 'off';
+const slot = dd.slot != null
+? `<b class="mono" title="${slotTip}，对照 iDRAC 物理盘列表第 ${F.int(dd.slot)} 项">插槽 ${F.int(dd.slot)}</b> <span class="faint">iDRAC</span>`
+: slotState === 'warming'
+? '<span class="faint" title="iDRAC 明细正在后台读取，首次约 40~60 秒；读到后这里会自动出现槽位号，不用刷新">读取中…</span>'
+: slotState === 'ready'
+? '<span class="faint" title="iDRAC 明细里没有这块盘：可能不在阵列卡下，或序列号对不上">—</span>'
+: '<span class="faint" title="iDRAC 未启用，读不到机箱槽位（设置 → iDRAC 里填地址和账号即可）">—</span>';
+setHTML(x.info, kvHTML([['型号', dash(vendorModel(dd))], ['序列号', `<span class="mono">${dash(dd.serial)}</span>`],
+['类型', KIND_TXT[diskKind(dd)]], ['硬盘容量', F.dsizeStr(dd.size)],
+['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`],
+['实际硬盘位', slot]].concat(extra)));
+};
+if (!sl) loadSmartDetail(a).then(() => paintSmart());
 return o => {
 const d = disksOf(o).find(z => z.name === a); if (!d) return;
 const sm = smartState(d), sl2 = isSleep(d), hc = +d.total > 0;
@@ -3307,15 +3505,7 @@ setHTML(x.leg, hc ? `<span>已用 <b>${F.dsizeStr(d.used)}</b></span><span>可�
 setHTML(x.notes, (sl2 ? `<div class="note sleep">${ic('moon')}<span>这块硬盘已停转休眠。飞牛监控不会主动唤醒它：容量与温度为休眠前的最后读数，SMART 会在它下次被系统唤醒时更新。</span></div>` : '')
 + (sm.lv === 'warn' || sm.lv === 'crit' ? `<div class="note warn">${ic('alert')}<span><b>${esc(sm.text)}。</b>建议确认 ${esc((d.mounts || []).join('、') || '该盘上的数据')} 有备份，并留意数值是否继续增长。</span></div>` : '')
 + (!sl2 && LV.dtemp(d.temp) ? `<div class="note warn">${ic('temp')}<span>温度 ${F.int(d.temp)}℃，已超过${LV.dtemp(d.temp) === 'crit' ? '严重' : '警告'}阈值（${LV.dtemp(d.temp) === 'crit' ? TH.diskTempCrit : TH.diskTempWarn}℃）。</span></div>` : ''));
-const cnt = SMART_KEYS.filter(([k]) => d[k] != null && d[k] !== '');
-const rows = [['整体评估', d.health ? esc(/PASS/i.test(d.health) ? '通过' : d.health) : '<span class="faint">未读取到</span>', /FAIL/i.test(d.health || '') ? 'crit' : /PASS|OK/i.test(d.health || '') ? true : null]]
-.concat(cnt.map(([k, l]) => [l, esc(d[k]), +d[k] > 0 ? 'warn' : true]))
-.concat([['通电时间', d.power_on_hours ? `${esc(Number(d.power_on_hours).toLocaleString())} 小时（${F.hours(d.power_on_hours)}）` : '<span class="faint">—</span>', null],
-['温度', ok(d.temp) ? `${F.int(d.temp)}℃` : '<span class="faint">—</span>', ok(d.temp) && !sl2 ? (LV.dtemp(d.temp) || true) : null],
-['转速', d.rpm ? esc(d.rpm) : '<span class="faint">—</span>', null]]);
-setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${sl2 && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
-+ (cnt.length ? '' : `<tr><td colspan="3" class="faint" style="font-size:12px">${sl2 ? '休眠中，扇区计数待硬盘唤醒后读取' : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）'}</td></tr>`));
-setHTML(x.info, kvHTML([['型号', dash(vendorModel(d))], ['序列号', `<span class="mono">${dash(d.serial)}</span>`], ['类型', KIND_TXT[diskKind(d)]], ['硬盘容量', F.dsizeStr(d.size)], ['挂载点', `<span class="mono">${dash((d.mounts || []).join(', '))}</span>`]]));
+paintSmart();
 if (x.sp) { const bb = S.diskBuf[d.name]; if (bb && bb.r.length > 1) x.sp.firstChild.set([{ values: bb.r }, { values: bb.w }], { min: 0 }); const io = ioOf(o, d.name); setText(x.rv, io ? F.rateStr(io.read_rate) : '--'); setText(x.wv, io ? F.rateStr(io.write_rate) : '--'); }
 };
 },
@@ -3370,17 +3560,21 @@ b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">实时功耗</d
 <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
 sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
 b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
-<div class="note info">${ic('info')}<span>RAPL 只测得 CPU 封装（与内存）功耗；整机值叠加了主板底座与活动硬盘的典型功耗，可在设置中按插座实测补差。无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
+<div class="note info">${ic('info')}<span>接了 iDRAC 时直接用电源实测的整机输出，这是最准的口径（含主板、内存、网卡与全部硬盘）。没有 iDRAC 才会退回 RAPL：它只测得 CPU 封装（与内存）功耗，整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
 const x = collect(b);
 b.addEventListener('click', e => { const g = e.target.closest('[data-goset]'); if (g) { closeSheet(); focusGroup(g.dataset.goset); } });
 return o => {
 const p = o.power || {}, has = pwrOk(o), ps = S.pstats || {};
-dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
+dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'idrac' ? 'iDRAC 整机实测' : p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
 const parts = has ? powerParts(p) : [];
 setHTML(x.st, parts.map(q => ppI(q[2])).join('')); parts.forEach((q, i) => { x.st.children[i].style.flexGrow = q[1].toFixed(2); });
 setHTML(x.leg, parts.map(([l, v, c]) => `<span>${ppI(c)}${esc(l)} <b>${F.d1(v)} W</b></span>`).join('') || '<span>无功耗数据</span>');
 const w = v => ok(v) ? F.d1(v) + ' W' : '<span class="faint">—</span>';
-setHTML(x.parts, has ? kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]]) : '');
+const psuRows = (p.psu || []).map(u => [`电源 ${esc(u.name)}`,
+`${ok(u.volts) ? esc(String(u.volts)) + ' V' : '—'} · ${esc(u.health || '')}${u.model ? ' · ' + esc(u.model) : ''}`]);
+setHTML(x.parts, has ? (p.source === 'idrac'
+? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
+: kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
 const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
 setText(x.rate, ok(co.rate_yuan_per_kwh) ? `电价 ${co.rate_yuan_per_kwh} 元/kWh` : '');
 setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
@@ -3414,6 +3608,62 @@ dnumU(x.rx, x.rxU, rOk ? +c.rx_rate : null, F.rate); dnumU(x.tx, x.txU, rOk ? +c
 setText(x.netN, !run ? '容器未运行' : c.net_host ? 'host 网络模式：与宿主机共用网卡，Docker 不单独统计' : !rOk ? '采样中，约 30 秒后显示' : c.net_src === 'stats' ? '按 docker stats 的累计读数差分估算（只有 3 位有效数字，低速时偏粗）' : '容器网络命名空间计数器差分，精确到字节');
 const bb = S.ctrBuf[c.id]; sp.set([{ values: run && bb && bb.length > 1 ? bb : [0, 0] }], { min: 0, max: Math.max(5, ...(bb || [0])), live: run ? 'ink' : 'none' });
 setHTML(x.kv, kvHTML([['镜像', `<span class="mono">${esc(c.image)}</span>`], ['容器 ID', `<span class="mono">${esc(c.id)}</span>`], ['状态', esc(c.status_zh || zhStatus(c.status) || c.state || '--')], ['端口', ctrPorts(c.ports).length ? ctrPorts(c.ports).map(p => `<span class="port">${esc(p)}</span>`).join(' ') : '<span class="faint">无映射</span>'], ['内存', run && c.mem_usage ? `${esc(c.mem_usage)}${c.mem_percent ? `（${esc(c.mem_percent)}%）` : ''}` : '<span class="faint">—</span>'], ['累计流量', run && !c.net_host && (ok(c.net_in_bytes) || c.net) ? (ok(c.net_in_bytes) && ok(c.net_out_bytes) ? `↓ ${F.bytesStr(c.net_in_bytes)} · ↑ ${F.bytesStr(c.net_out_bytes)}<div class="sub">自容器启动</div>` : esc(c.net)) : '<span class="faint">—</span>'], ['创建时间', dash(c.created)]]));
+};
+},
+},
+scanlog: {
+icon: () => 'list', title: () => '巡检历史', sub: () => '每次巡检一行 · 有变化记详情，没变化记未见异常',
+build(b) {
+b.innerHTML = `<div class="card pad scanlog-bar"><span class="faint" data-ref="sum" style="flex:1;min-width:140px"></span><button class="btn sm ghost" type="button" data-clear="ok">${ic('eye-off')}清理未见异常</button><button class="btn sm ghost" type="button" data-clear="all">${ic('x')}清空全部</button></div>
+<div data-ref="list" style="margin-top:10px"></div>
+<p class="sub">每次巡检固定留一条记录：分级或计数（重映射扇区 / 待映射扇区 / 不可纠正错误）有变化就写清哪块盘、从多少变到多少；没有变化就记「未见异常」。温度、通电时长这类天天在动的量不算变化。未见异常的记录 7 天后自动清理，有变化的记录不会自动清理，只有点上面的按钮才删。</p>`;
+const x = collect(b), st = { rows: null, err: '', loading: false };
+const ago = ts => {
+const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+if (s < 90) return '刚刚';
+if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+return Math.round(s / 86400) + ' 天前';
+};
+const one = r => {
+const ch = !!r.changed, txt = r.summary || (ch ? '有变化' : '未见异常');
+return `<div class="row-i" style="grid-template-columns:auto 1fr auto">
+<span class="${ch ? 'st-warn' : 'st-ok'}">${ic(ch ? 'alert' : 'check-c')}</span>
+<div style="min-width:0"><b style="font-weight:600;${ch ? '' : 'color:var(--ink-2)'}">${esc(txt)}</b>
+<div class="sub">${esc(F.mdhm(r.ts))} · ${esc(ago(r.ts))}${+r.total ? ` · ${+r.total} 块盘` : ''}</div></div>
+<span class="pill ${ch ? 'warn' : 'ok'}">${ch ? '有变化' : '未见异常'}</span></div>`;
+};
+const draw = () => {
+if (!st.rows && st.loading) setHTML(x.list, `<div class="card pad">${emptyHTML('正在读取巡检流水…', '', 'clock')}</div>`);
+else if (st.err) setHTML(x.list, `<div class="card pad">${emptyHTML('读取失败', esc(st.err))}</div>`);
+else if (!st.rows || !st.rows.length) setHTML(x.list, `<div class="card pad">${emptyHTML('还没有巡检记录', '下一次巡检完成后这里会出现第一条记录', 'list')}</div>`);
+else setHTML(x.list, rowsCard(st.rows.map(one).join('')));
+const n = (st.rows || []).length, chg = (st.rows || []).filter(r => r.changed).length;
+setText(x.sum, st.rows ? `${n} 条记录${chg ? ` · ${chg} 条有变化` : ''}` : st.loading ? '读取中…' : '');
+};
+const load = async () => {
+st.loading = true; draw();
+try { const j = await API.get('/api/scan_log?limit=200'); st.rows = (j && j.items) || []; st.err = ''; }
+catch (e) { st.err = String((e && e.message) || e); }
+st.loading = false; draw();
+};
+b.addEventListener('click', async e => {
+const t = e.target.closest('[data-clear]'); if (!t) return;
+const onlyOk = t.dataset.clear === 'ok';
+if (!confirm(onlyOk ? '清理所有「未见异常」记录？有变化的记录会保留。' : '清空全部巡检记录？有变化的记录也会一起删掉，无法恢复。')) return;
+t.disabled = true;
+try {
+const j = await API.post('/api/scan_log/clear', onlyOk ? { only_ok: true } : {});
+toast((j && j.message) || '已清理', { key: 'scanlog', icon: 'check' });
+await load();
+} catch (err) { toast('清理失败 · ' + String((err && err.message) || err).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+t.disabled = false;
+});
+load();
+let seen = (S.diskHealth && S.diskHealth.last_ts) || 0;
+return () => {
+const lt = (S.diskHealth && S.diskHealth.last_ts) || 0;
+if (lt && lt !== seen) { seen = lt; load(); }
 };
 },
 },
@@ -4025,8 +4275,26 @@ cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0
 { id: 'disk', title: '网络与硬盘', icon: 'net', items: [
 cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
 cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
+cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
+cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
+{ k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
+hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
+run: async b => {
+b.disabled = true;
+try {
+const j = await API.post('/api/disk_scan/now', {});
+if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
+else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
+} catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+b.disabled = false;
+} },
+{ k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+run: () => openSheet('scanlog') },
 cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
 ] },
+{ id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
+{ id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
 { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
 { id: 'look', title: '外观', icon: 'palette', items: [
 uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
@@ -4143,6 +4411,316 @@ card._sync();
 };
 x.out.onclick = doLogout;
 card._sync();
+}
+let NB = null;
+const NOTIFY_PROVIDERS = [['qq', 'QQ 邮箱', 'smtp.qq.com', 465, 'ssl'], ['163', '163 邮箱', 'smtp.163.com', 465, 'ssl'],
+['126', '126 邮箱', 'smtp.126.com', 465, 'ssl'], ['exmail', '腾讯企业邮', 'smtp.exmail.qq.com', 465, 'ssl'],
+['outlook', 'Outlook', 'smtp.office365.com', 587, 'starttls'], ['custom', '自定义', '', 465, 'ssl']];
+async function loadNotify(force) {
+if (NB && !force) return NB;
+try { NB = await API.get('/api/notify'); }
+catch (e) { NB = Object.assign({}, NB || {}, { load_error: e.message || '读取失败' }); }
+return NB;
+}
+function renderNotify(card) {
+card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
+· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
+· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
+<div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
+<div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
+<div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
+<div class="set-row"><div><div class="lbl">发件账号</div><div class="hint">完整邮箱地址，同时作为发件人</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="you@qq.com" spellcheck="false" autocomplete="username" aria-label="发件账号"></div></div>
+<div class="set-row"><div><div class="lbl">授权码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="邮箱授权码" autocomplete="new-password" aria-label="授权码"></div></div>
+<div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
+<div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
+<div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+<div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
+<div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
+<div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
+const x = collect(card);
+const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
+password: '', sct_enabled: 0, sct_key: '', hw_enabled: 0, hw_time: '08:00' };
+const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
+f.provider = v;
+const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
+if (pv && pv[2]) { f.host = pv[2]; f.port = pv[3]; f.secure = pv[4]; x.host.value = pv[2]; x.port.value = pv[3]; segSec.set(pv[4]); }
+}, 'sm');
+const segSec = makeSeg([['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不加密']], 'ssl', v => { f.secure = v; }, 'sm');
+x.segP.append(segP); x.segSec.append(segSec);
+const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
+bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
+bind(x.pw, 'password'); bind(x.sctkey, 'sct_key'); bind(x.hwTime, 'hw_time');
+const setSw = (el, k) => el.addEventListener('click', () => {
+const on = el.getAttribute('aria-checked') !== 'true';
+el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
+});
+setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled'); setSw(x.swHw, 'hw_enabled');
+const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
+function sync() {
+const n = NB || {};
+x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
+x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
+segP.set(f.provider); segSec.set(f.secure);
+if (document.activeElement !== x.host) x.host.value = f.host || '';
+if (document.activeElement !== x.port) x.port.value = f.port || 465;
+if (document.activeElement !== x.user) x.user.value = f.user || '';
+if (document.activeElement !== x.to) x.to.value = f.to || '';
+if (document.activeElement !== x.hwTime) x.hwTime.value = f.hw_time || '08:00';
+x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
+x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
+setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
+setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
+setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+setText(x.hHw, +f.hw_enabled
+? `已开启：每天 ${f.hw_time || '08:00'} 汇总发一封，只发到点仍未恢复的`
+: '关闭：SEL 硬件日志与风扇 / 温度 / 电源不推送（硬盘巡检仍按上面的开关走）');
+const last = n.last || {};
+setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
+? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
+: '还没有推送记录：状态变化时才发消息。想现在确认配置可用，先「保存」再点上方对应通道的「发送测试」');
+}
+async function doSave() {
+x.save.disabled = true;
+const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
+user: f.user, to: f.to, sct_enabled: f.sct_enabled,
+hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00' };
+if (f.password) body.password = f.password;
+if (f.sct_key) body.sct_key = f.sct_key;
+try {
+const j = await API.post('/api/notify/save', body);
+if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+NB = Object.assign(await loadNotify(true), { last: (NB || {}).last || {} });
+f.password = ''; f.sct_key = ''; x.pw.value = ''; x.sctkey.value = '';
+toast('通知配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+} catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+x.save.disabled = false; sync();
+}
+x.save.onclick = doSave;
+const testOne = async (kind, btn, msg, name) => {
+btn.disabled = true; setText(msg, '发送中…');
+try {
+const j = await API.post('/api/notify/test', { channel: kind });
+if (j && j.ok) {
+setText(msg, '已发送');
+toast(name + '测试消息已发出，请查看' + (kind === 'mail' ? '邮箱收件箱' : '「方糖」服务号消息'), { icon: 'check', ms: 5000 });
+} else {
+setText(msg, '');
+toast(name + '测试失败 · ' + String(((j && j.error) || '未知错误')).slice(0, 100), { icon: 'alert', ms: 7000 });
+}
+} catch (e) { setText(msg, ''); toast(name + '测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 6000 }); }
+btn.disabled = false;
+};
+x.tMail.onclick = () => testOne('mail', x.tMail, x.mMail, '邮件');
+x.tSct.onclick = () => testOne('sct', x.tSct, x.mSct, '微信');
+card._sync = sync;
+loadNotify().then(() => {
+const n = NB || {};
+Object.keys(f).forEach(k => { if (n[k] !== undefined && k !== 'password' && k !== 'sct_key') f[k] = n[k]; });
+f.password = ''; f.sct_key = '';
+sync();
+});
+sync();
+}
+let IB = null;
+async function loadIdrac(opts) {
+opts = opts || {};
+if (IB && !opts.refresh && !opts.reload) return IB;
+try { IB = await API.get('/api/idrac?sel=1' + (opts.refresh ? '&refresh=1' : '')); }
+catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
+return IB;
+}
+function renderIdrac(card) {
+card.innerHTML = `<div class="note info notify-note">${ic('server')}<span><b>只读</b>：通过 Redfish 直连 iDRAC 读取风扇转速、温度、功耗与硬件日志，不会改动服务器任何设置。密码单独存 <span class="mono">idrac.json</span>（0600），接口只回「是否已填」。自签证书需要关闭校验，仅建议在内网使用。</span></div>
+<div class="set-row inline"><div><div class="lbl">iDRAC</div><div class="hint" data-ref="hOn"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swOn" aria-label="启用 iDRAC"></button></div></div>
+<div class="set-row"><div><div class="lbl">地址</div><div class="hint">iDRAC 管理口 IP 或主机名，只填地址，不要带 https://</div></div><div class="ctl"><input class="textfield mono" data-ref="host" placeholder="192.168.1.120" spellcheck="false" aria-label="iDRAC 地址"></div></div>
+<div class="set-row"><div><div class="lbl">用户名</div><div class="hint">建议在 iDRAC 里单建一个只读账号</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="root" spellcheck="false" autocomplete="username" aria-label="iDRAC 用户名"></div></div>
+<div class="set-row"><div><div class="lbl">密码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="iDRAC 登录密码" autocomplete="new-password" aria-label="iDRAC 密码"></div></div>
+<div class="set-row inline"><div><div class="lbl">跳过证书校验</div><div class="hint">iDRAC 出厂是自签证书，内网访问需要关闭校验</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swTls" aria-label="跳过证书校验"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">硬件日志纳入告警</div><div class="hint">SEL 出现新的 Critical / Warning 时，跟硬盘告警一起推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swSel" aria-label="硬件日志纳入告警"></button></div></div>
+<div class="set-row"><div><div class="lbl">连接与保存</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" data-ref="test">测试连接</button><button class="btn primary" type="button" data-ref="save">保存</button></div></div>
+<div class="set-row inline"><div><div class="lbl">固定信息</div><div class="hint" data-ref="hStatic">槽位 / 内存 / 阵列卡 / 物理盘 / 卷只在首次连接时读一次，之后不再自动刷新</div></div><div class="ctl"><button class="btn" type="button" data-ref="refresh">刷新固定信息</button></div></div>
+<div class="idrac-live" data-ref="live"></div>`;
+const x = collect(card);
+const f = { enabled: 0, host: '', user: '', password: '', verify_tls: 0, sel_alert: 1 };
+const bind = (el, k) => el.addEventListener('input', () => { f[k] = el.value; });
+bind(x.host, 'host'); bind(x.user, 'user'); bind(x.pw, 'password');
+const setSw = (el, k, invert) => el.addEventListener('click', () => {
+const on = el.getAttribute('aria-checked') !== 'true';
+el.setAttribute('aria-checked', String(on));
+f[k] = (invert ? !on : on) ? 1 : 0;
+sync();
+});
+setSw(x.swOn, 'enabled'); setSw(x.swTls, 'verify_tls', true); setSw(x.swSel, 'sel_alert');
+const hcls = h => /crit/i.test(h) ? 'h-crit' : /warn/i.test(h) ? 'h-warn' : 'h-ok';
+const when = s => { try { return new Date(s).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(s || ''); } };
+function renderLive() {
+const d = IB || {};
+const sts = Number(d.static_ts || 0);
+x.refresh.disabled = !d.configured;
+setText(x.hStatic, sts
+? `读取于 ${when(sts * 1000)}${d.static_from === 'disk' ? '' : '（刚读取）'} · 槽位 / 内存 / 阵列卡 / 物理盘 / 卷都来自这份台账，之后不再自动刷新`
+: '还没读到：iDRAC 连通后会自动读一次（1.5–3 分钟），之后不再自动刷新');
+if (!d.configured) { x.live.innerHTML = ''; return; }
+if (d.warming) {
+x.live.innerHTML = `<div class="idrac-head"><span class="h-ok">正在读取</span><span>iDRAC8 的 Redfish 每个请求约 5 秒，首次读取要 30–60 秒；后台会持续刷新，这里稍后自动出数据</span></div>`;
+return;
+}
+if (!d.ok) {
+x.live.innerHTML = `<div class="idrac-head"><span class="h-crit">读取失败</span><span>${esc(d.error || '未知错误')}</span></div>`;
+return;
+}
+const fs = d.fan_summary || {};
+const head = [
+`<b>${esc(d.model || 'Dell 服务器')}</b>`,
+d.service_tag ? `服务标签 ${esc(d.service_tag)}` : '',
+`整机 <span class="${hcls(d.health || '')}">${esc(d.health || '未知')}</span>`,
+d.power_state ? (d.power_state === 'On' ? '已开机' : esc(d.power_state)) : '',
+d.power_watts != null ? `功耗 <b>${esc(String(d.power_watts))}</b> W` : '',
+fs.count ? `风扇 ${fs.count} 颗 · ${fs.min}–${fs.max} RPM · 均 ${fs.avg}` : '',
+d.bios ? `BIOS ${esc(d.bios)}` : ''
+].filter(Boolean).join(' · ');
+const fans = (d.fans || []).map(v => `<div class="idrac-fan${v.health && v.health.toUpperCase() !== 'OK' ? ' bad' : ''}"><b>${esc(v.name)}</b>${esc(String(v.rpm))}<small>RPM</small></div>`).join('');
+const temps = (d.temps || []).slice(0, 8).map(t => `<span>${esc(String(t.name))} <b>${esc(String(t.c))}</b>°C${t.crit != null ? `<small class="faint"> / ${esc(String(t.crit))}</small>` : ''}</span>`).join('');
+const cpus = d.cpus || [];
+const cpuLine = cpus.length ? cpus.map(c => `${esc(c.model || 'CPU')} <span class="faint">${c.cores ? c.cores + ' 核' : ''}${c.threads ? ' / ' + c.threads + ' 线程' : ''}${c.mhz ? ' · ' + (c.mhz / 1000).toFixed(1) + 'GHz' : ''}</span>`).join('　') : '';
+const dimms = d.dimms || [];
+const dimmHead = dimms.length
+? `${dimms.length} 条 · ${d.dimm_gib || 0} GiB${d.dimm_bad ? ` · <span class="h-crit">${d.dimm_bad} 条异常</span>` : ' · 全部正常'}`
+: '';
+const dimmRows = dimms.map(m => `<div class="${m.health && m.health.toUpperCase() !== 'OK' ? 'bad' : ''}"><span class="mono">${esc(m.slot)}</span><span>${Math.round(m.mb / 1024)} GB</span><span class="faint">${esc(m.type)}${m.mhz ? ' · ' + m.mhz + 'MHz' : ''}</span><span class="faint">${esc(m.vendor || '')}</span></div>`).join('');
+const ctrls = d.controllers || [];
+const disks = d.disks || [];
+const vols = (d.volumes || []).filter(v => v.raid && v.raid.toUpperCase() !== 'NONE');
+const ctrlLine = ctrls.map(c => `${esc(c.model || c.id)}${c.firmware ? ` <span class="faint">固件 ${esc(c.firmware)}</span>` : ''}${c.health && c.health.toUpperCase() !== 'OK' ? ` <span class="h-crit">${esc(c.health)}</span>` : ''}`).join('　');
+const diskHead = disks.length
+? `${disks.length} 块${d.disk_bad ? ` · <span class="h-crit">${d.disk_bad} 块异常</span>` : ' · 全部正常'}${vols.length ? ` · ${vols.length} 个卷` : ''}`
+: '';
+const diskRows = disks.map(k => {
+const bad = k.fail_pred || (k.health && k.health.toUpperCase() !== 'OK');
+const st = k.fail_pred ? '预测故障' : (k.health && k.health.toUpperCase() !== 'OK' ? k.health : '正常');
+return `<div class="dr${bad ? ' bad' : ''}"><span class="mono">${esc(String(k.bay))}</span><span class="mono" title="${esc(k.serial || '')}">${esc(k.model || '?')}</span><span>${k.cap_gb ? k.cap_gb + 'G' : '-'}</span><span class="faint">${esc(k.protocol || k.media || '')}${k.rpm ? ' ' + (k.rpm / 1000).toFixed(1) + 'k' : ''}</span><span class="${bad ? 'h-crit' : 'h-ok'}">${esc(st)}</span></div>`;
+}).join('');
+const fw = [
+d.idrac_fw ? `iDRAC ${esc(d.idrac_fw)}` : '',
+d.bios ? `BIOS ${esc(d.bios)}` : '',
+...ctrls.filter(c => c.firmware).map(c => `${esc(c.model || '阵列卡')} ${esc(c.firmware)}`)
+].filter(Boolean).join(' · ');
+const sel = ((d.sel && d.sel.entries) || []).slice(0, 5);
+const selHtml = sel.length ? `<div class="idrac-sec"><div class="idrac-sec-h">硬件日志 <span class="faint">最近 ${sel.length} 条</span></div><div class="idrac-sel">${sel.map(e => `<div class="e"><span class="t">${esc(when(e.created))}</span><span class="s ${esc(e.severity)}">${esc(e.severity || '-')}</span><span class="m">${esc(e.message)}</span></div>`).join('')}</div></div>` : '';
+x.live.innerHTML = `<div class="idrac-head">${head}</div>`
++ (fans ? `<div class="idrac-fans">${fans}</div>` : '')
++ (temps ? `<div class="idrac-temps">${temps}</div>` : '')
++ (cpuLine ? `<div class="idrac-sec"><div class="idrac-sec-h">处理器</div><div class="idrac-line">${cpuLine}</div></div>` : '')
++ (dimms.length ? `<div class="idrac-sec"><div class="idrac-sec-h">内存 <span class="faint">${dimmHead}</span></div><div class="idrac-dimms">${dimmRows}</div></div>` : '')
++ (ctrlLine ? `<div class="idrac-sec"><div class="idrac-sec-h">阵列卡</div><div class="idrac-line">${ctrlLine}</div></div>` : '')
++ (disks.length ? `<div class="idrac-sec"><div class="idrac-sec-h">物理盘 <span class="faint">${diskHead}</span></div><div class="idrac-disks"><div class="hr"><span class="ih">槽位</span><span class="ih">型号</span><span class="ih">容量</span><span class="ih">接口</span><span class="ih">状态</span></div>${diskRows}</div></div>` : '')
++ (fw ? `<div class="idrac-sec"><div class="idrac-sec-h">固件</div><div class="idrac-line faint">${fw}</div></div>` : '')
++ selHtml;
+}
+function sync() {
+const n = (IB && IB.config) || {};
+x.swOn.setAttribute('aria-checked', String(!!+f.enabled));
+x.swTls.setAttribute('aria-checked', String(!+f.verify_tls));
+x.swSel.setAttribute('aria-checked', String(!!+f.sel_alert));
+if (document.activeElement !== x.host) x.host.value = f.host || '';
+if (document.activeElement !== x.user) x.user.value = f.user || '';
+x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : 'iDRAC 登录密码';
+setText(x.hPw, n.password_set ? '已保存过密码，留空表示不修改' : 'iDRAC 的登录密码（就是打开 iDRAC 网页时用的那个）');
+setText(x.hOn, +f.enabled ? (+f.host && n.password_set && f.user ? '已启用：巡检时一并读取整机硬件状态' : '已启用，保存前请补全地址、用户名与密码') : '关闭：不读取 iDRAC');
+if (document.activeElement !== x.host && !x.hMsg.textContent) {
+setText(x.hMsg, (IB && IB.ok) ? '最近一次读取成功 · 打开设置页会自动刷新状态' : ((IB && IB.error) || '填好地址与账号后点「测试连接」'));
+}
+renderLive();
+}
+async function doSave() {
+x.save.disabled = true;
+const body = { enabled: f.enabled, host: f.host, user: f.user, verify_tls: f.verify_tls, sel_alert: f.sel_alert };
+if (f.password) body.password = f.password;
+try {
+const j = await API.post('/api/idrac/save', body);
+if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+f.password = ''; x.pw.value = '';
+IB = await loadIdrac({ refresh: true });
+toast('iDRAC 配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+setText(x.hMsg, (IB && IB.ok) ? '已保存并读取成功' : ('已保存 · ' + ((IB && IB.error) || '尚未读取到数据')));
+} catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+x.save.disabled = false; sync();
+}
+x.save.onclick = doSave;
+x.test.onclick = async () => {
+x.test.disabled = true; setText(x.hMsg, '正在读取 iDRAC…（iDRAC8 每个请求约 5 秒，首次要 30–60 秒）');
+const body = { host: f.host, user: f.user };
+if (f.password) body.password = f.password;
+try {
+const j = await API.post('/api/idrac/test', body);
+const steps = (j && j.steps) || [];
+const bad = steps.find(s => !s.ok);
+if (j && j.ok) {
+const ov = j.overview || {};
+setText(x.hMsg, `连接成功 · ${ov.model || 'Dell'} · 服务标签 ${j.service_tag || ov.service_tag || '-'} · 风扇 ${(ov.fan_summary || {}).count || 0} 颗 · 物理盘 ${(j.disks || []).length} 块 · 内存 ${(j.dimms || []).length} 条 · 硬件日志 ${(j.sel || {}).count || 0} 条`);
+toast('iDRAC 连接成功', { icon: 'check', ms: 4000 });
+} else {
+setText(x.hMsg, '连接失败：' + String((bad && (bad.error || bad.detail)) || (j && j.error) || '未知错误'));
+toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 });
+}
+IB = await loadIdrac({ refresh: true }); sync();
+} catch (e) { setText(x.hMsg, '连接失败：' + String(e.message).slice(0, 80)); toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 }); }
+x.test.disabled = false;
+};
+card._sync = sync;
+x.refresh.onclick = async () => {
+const label = x.refresh.textContent;
+const base = Number((IB || {}).static_ts || 0);
+x.refresh.disabled = true;
+x.refresh.textContent = '读取中…';
+setText(x.hStatic, '正在重读固定信息（CPU / 内存 / 阵列卡 / 物理盘 / 卷），iDRAC8 一轮要 1.5–3 分钟，读完自动更新');
+let done = false;
+try {
+const j = await API.post('/api/idrac/refresh', {});
+if (!j || !j.ok) {
+toast('刷新失败 · ' + String((j && j.error) || '未知错误').slice(0, 90), { icon: 'alert', ms: 7000 });
+return;
+}
+if (j.busy) toast('已经有一轮在读取了，等它跑完会自动更新');
+const t0 = Date.now();
+while (Date.now() - t0 < 300000) {
+await new Promise(r => setTimeout(r, 4000));
+IB = await loadIdrac({ reload: true });
+if (Number((IB || {}).static_ts || 0) > base) {
+done = true;
+renderLive(); sync();
+toast('固定信息已更新', { icon: 'check', ms: 4000 });
+return;
+}
+}
+toast('读取超过 5 分钟还没回来，稍后再点一次', { icon: 'alert', ms: 7000 });
+} catch (e) {
+toast('刷新失败 · ' + String(e.message || e).slice(0, 90), { icon: 'alert', ms: 6000 });
+} finally {
+x.refresh.textContent = label;
+x.refresh.disabled = false;
+if (!done) renderLive();
+}
+};
+let warmTries = 0;
+function retryWarm() {
+if (!IB || !IB.warming || warmTries >= 8) return;
+warmTries += 1;
+setTimeout(async () => {
+await loadIdrac({ reload: true });
+sync();
+retryWarm();
+}, 15000);
+}
+loadIdrac().then(() => {
+const c = (IB && IB.config) || {};
+['enabled', 'host', 'user', 'verify_tls', 'sel_alert'].forEach(k => { if (c[k] !== undefined) f[k] = c[k]; });
+f.password = '';
+sync();
+retryWarm();
+});
+sync();
 }
 async function doLogout() {
 try { await API.post('/api/auth/logout', {}); } catch (e) { /* 仍然跳转 */ }
@@ -4584,6 +5162,9 @@ if (S.online !== false && S.fails >= 2) { S.online = false; toast('与 NAS 的�
 if (S.online === false || !S.o) { if (S.fails >= 2) S.online = false; setStatus(); renderNow(); }
 }
 }, () => S.online === false ? Math.min(30000, 3000 * Math.pow(1.6, S.fails)) : S.page === 'overview' ? 5000 : 15000);
+Poll.add('diskhealth', async () => {
+try { S.diskHealth = await API.get('/api/disk_health'); renderNow(); } catch (e) { /* 保留旧值 */ }
+}, 60000, () => S.page === 'overview' || sheetIs('disk'));
 Poll.add('docker', async () => { S.docker = await API.get('/api/docker'); dockerAt = Date.now(); feedDocker(S.docker); renderNow(); }, 10000, () => S.page === 'docker' || sheetIs('ctr'));
 Poll.add('vms', async () => {
 S.vms = await API.get('/api/vms'); feedVms(S.vms); if (S.vms.installed) setVmTab(true);
@@ -4602,7 +5183,7 @@ Poll.add('config', async () => { await loadConfig(); syncSettings(); }, 1800000)
 function onPageChange(p) {
 if (p === 'docker') Poll.runAll(['docker', 'ports', 'apps']);
 if (p === 'vms') Poll.run('vms');
-if (p === 'overview') Poll.runAll(['overview']);
+if (p === 'overview') Poll.runAll(['overview', 'diskhealth']);
 }
 function globalRefresh() {
 const b = $('#btnRefresh'); b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 800);

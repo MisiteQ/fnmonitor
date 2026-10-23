@@ -60,6 +60,7 @@
 
   /* 状态色：只在需要提醒时出现。健康绿只用于小圆点；休眠用中性石板灰 */
   --ok: var(--d-p);  --ok-soft: color-mix(in srgb, var(--d-p) 10%, transparent);
+  --health-ok: #128A4E;   /* 健康绿：盘位「正常」档专用，固定色不跟着主色走 */
   --warn: #CE5600;   --warn-fill: #FA8233;  --warn-soft: rgba(250, 130, 51, .14);   /* 偏高 / 警告：暖橙 OKLCH h50 */
   --crit: #C2272D;   --crit-soft: rgba(194, 39, 45, .10);   /* 严重：深红 */
   --sleep: #7A8294;  --sleep-soft: rgba(122, 130, 148, .12);
@@ -104,6 +105,7 @@
   --scrim: rgba(0, 0, 0, .6);
 
   --ok: var(--d-p);  --ok-soft: color-mix(in srgb, var(--d-p) 14%, transparent);
+  --health-ok: #3BC47B;   /* 健康绿（暗色）：提亮一档，深底上够辨识 */
   --warn: #FF8F49;   --warn-fill: #FF8F49;  --warn-soft: rgba(255, 143, 73, .15);
   --crit: #E54C4A;   --crit-soft: rgba(229, 76, 74, .15);
   --sleep: #8C93A3;  --sleep-soft: rgba(140, 147, 163, .14);
@@ -251,6 +253,11 @@ a { color: var(--accent); text-decoration: none; }
 .mod-dek { margin: 8px 0 0; color: var(--ink-2); max-width: 64ch; font-size: var(--fs-body); }
 .mod-dek b { color: var(--ink-1); font-weight: 600; }
 .mod-dek .warn { color: var(--warn); font-weight: 600; }
+/* 存储卡副标题里的告警条：右侧可点 × 隐藏本次，状态变化后自动重现 */
+.mod-dek .warn.dismissible { display: inline-flex; align-items: flex-start; gap: 6px; }
+.mod-dek .warn-x { flex: none; width: 16px; height: 16px; margin-top: 1px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; opacity: .55; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: opacity var(--dur-1), background var(--dur-1); }
+.mod-dek .warn-x:hover { opacity: 1; background: var(--warn-soft); }
+.mod-dek .warn-x .i { width: 10px; height: 10px; }
 .mod-actions { display: flex; align-items: center; gap: var(--s3); flex: none; }
 .link-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: var(--r-pill); color: var(--ink-2); font-size: var(--fs-sm); font-weight: 500; transition: background var(--dur-1), color var(--dur-1); }
 .link-btn:hover { background: var(--fill-1); color: var(--ink-1); }
@@ -1225,14 +1232,21 @@ a { color: var(--ink-1); }
 .bay:active { transform: translateY(1px) scale(.985); }
 .bay:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bay-top { display: flex; align-items: center; gap: 6px; font: 500 10.5px/1 var(--font-mono); color: var(--chassis-ink-2); letter-spacing: .06em; }
-.bay-top > span:first-child { margin-right: auto; }
+.bay-top > span:first-child { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bay-led { width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); transition: background-color 60ms, box-shadow 60ms; }
 .bay-led.on { background: var(--led-on); box-shadow: 0 0 6px var(--led-glow); }
+.bay[data-st="ok"] .bay-led { background: var(--health-ok); box-shadow: 0 0 6px color-mix(in srgb, var(--health-ok) 55%, transparent); }
 .bay[data-st="warn"] .bay-led { background: color-mix(in srgb, var(--warn-fill) 45%, var(--tray)); }
 .bay[data-st="warn"] .bay-led.on { background: var(--warn-fill); box-shadow: 0 0 8px var(--warn-fill); }
 .bay-warn { display: none; color: var(--warn-fill); }
 .bay-warn .i { width: 13px; height: 13px; }
 .bay[data-st="warn"] .bay-warn { display: inline-flex; }
+/* 巡检分级：故障（crit）与未巡检（unknown）——之前只有 ok/warn/standby 三态 */
+.bay[data-st="crit"] .bay-warn { display: inline-flex; color: var(--crit); }
+.bay[data-st="crit"] .bay-led { background: var(--crit); box-shadow: 0 0 7px var(--crit); }
+.bay[data-st="crit"] .bay-led.on { background: var(--crit); box-shadow: 0 0 9px var(--crit); }
+.bay[data-st="unknown"] .bay-led { background: var(--led-off); box-shadow: none; }
+.bay[data-st="unknown"] .bay-cap { opacity: .75; }
 .bay-body { position: relative; flex: 1; display: flex; gap: 12px; min-height: 0; }
 .bay-gauge { width: 40px; flex: none; display: flex; }
 .bay[data-type="nvme"] .bay-gauge { width: 32px; }
@@ -1259,8 +1273,11 @@ a { color: var(--ink-1); }
 .nas-foot { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 14px; padding: 0 6px; font-size: 12px; color: var(--ink-2); }
 .nas-foot span { display: inline-flex; align-items: center; gap: 6px; }
 .nas-foot .i { width: 13px; height: 13px; }
-.nas-foot .led-key { width: 7px; height: 7px; border-radius: 50%; background: var(--led-on); box-shadow: 0 0 5px var(--led-glow); }
+.nas-foot .led-key { width: 7px; height: 7px; border-radius: 50%; background: var(--health-ok); box-shadow: 0 0 5px color-mix(in srgb, var(--health-ok) 45%, transparent); }
 .nas-foot .led-key.warn { background: var(--warn-fill); box-shadow: none; }
+.nas-foot .led-key.crit { background: var(--crit); box-shadow: none; }
+.nas-foot .led-key.off { background: var(--led-off); box-shadow: none; }
+.nas-foot .scan-ago { margin-left: auto; }
 .nas-foot .faint { margin-left: auto; color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) { .bay-zz .dm { animation: none !important; } }
 .reduce-motion .bay-zz .dm { animation: none !important; }
@@ -1329,3 +1346,8 @@ a { color: var(--ink-1); }
 .cs-rdemo i { display: block; height: 100%; border-radius: 3px; }
 .cs-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; }
 @media (max-width: 760px) { .colorspec { grid-template-columns: 1fr; } }
+
+/* ---- 巡检流水抽屉 ---- */
+.scanlog-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scanlog-bar .faint { font-size: 12.5px; }
+@media (max-width: 520px) { .scanlog-bar .btn { flex: 1; } }

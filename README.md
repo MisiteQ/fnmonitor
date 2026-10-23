@@ -9,7 +9,7 @@
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
 - 当前版本：**v2.18.4**
-- 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）
+- 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
 - 运行身份：**root**（需访问 sysfs 风扇转速读取、docker.sock、virsh（libvirt）、smartctl 与 /proc 跨用户进程信息）
@@ -95,6 +95,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 - 飞牛 fnOS 与 [FnDepot](https://github.com/EWEDLCM/FnDepot)
 - 特别感谢 **[iqiuzixuan](https://github.com/iqiuzixuan)**：fnmonitor迎来了他的神，感谢iqiuzixuan为本项目贡献了全新界面与设计体系、虚拟机（QEMU/KVM）监控页、后端安全加固，以及回归测试套件与 GitHub Actions CI（上游 PR [#8](https://github.com/MisiteQ/fnmonitor/pull/8) / [#9](https://github.com/MisiteQ/fnmonitor/pull/9) / [#10](https://github.com/MisiteQ/fnmonitor/pull/10) / [#12](https://github.com/MisiteQ/fnmonitor/pull/12)）
+- 感谢 **[ttkl9559-cell](https://github.com/ttkl9559-cell)**：贡献 SAS/SCSI 硬盘 SMART 解析（增长缺陷表、不可纠正错误计数）、硬盘后台巡检与邮件/Server酱告警、iDRAC Redfish 带外监控（PR [#17](https://github.com/MisiteQ/fnmonitor/pull/17) / [#18](https://github.com/MisiteQ/fnmonitor/pull/18) / [#19](https://github.com/MisiteQ/fnmonitor/pull/19)）
 
 ## 📋 版本历史
 

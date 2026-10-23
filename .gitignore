@@ -5,6 +5,25 @@ __pycache__/
 # 打包产物与工具
 *.fpk
 fnpack.exe
+fnpack
+
+# 运行时数据目录：含 iDRAC 账号密码、SMTP 授权码、Server酱 SendKey，
+# 一旦提交就是公开泄露。本地跑服务请用 --data-dir 指到工程外。
+localdata/
+app/localdata/
+**/localdata/
+
+# 运行时生成的账号配置（与上面的目录等价，双保险：有人改过数据目录也拦住）
+idrac.json
+idrac-static.json
+notify.json
+notify_state.json
+notify-hw.json
+config.json
+ui.json
+metrics.db
+*.db-wal
+*.db-shm
 
 # 系统文件
 Thumbs.db

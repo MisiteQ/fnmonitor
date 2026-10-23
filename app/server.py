@@ -16,6 +16,7 @@ fnMonitor - 飞牛 fnOS 系统监控后端
 import argparse
 import base64
 import csv
+import functools
 import gzip
 import hashlib
 import hmac
@@ -29,6 +30,7 @@ import shutil
 import signal
 import socket
 import sqlite3
+import ssl
 import subprocess
 import sys
 import threading
@@ -37,6 +39,7 @@ import traceback
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+import urllib.parse
 import urllib.request
 
 def _read_manifest_version():
@@ -63,7 +66,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -346,6 +349,9 @@ VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "
 # 开启后容量 statvfs / SMART / 温度 / 历史库写入 / 应用目录扫描等磁盘访问
 # 对已 STANDBY 的硬盘一律跳过或走缓存，避免周期性轮询把机械硬盘唤醒
 RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10}
+# 巡检结果的内存副本：dev → 与 smart_detail 同形状的 dict。
+# 60 秒采集循环与详情面板都从这里取，避免反复跑 smartctl（真正的读盘只发生在后台巡检线程）。
+_DISK_HEALTH_MEM = {}
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -770,10 +776,14 @@ def collect_disks_detail(prev=None):
         # 未知（NVMe / 读取失败）为 None
         for _k in SMART_COUNTER_KEYS:
             entry[_k] = old.get(_k)
-        # SMART 健康 / 转速 / 通电时长（最多对前 8 块盘读取；休眠盘跳过，
-        # smartctl -n standby 虽不唤醒盘，但此时直接复用上一次活跃值即可）
-        if state != "standby" and len(result) < 8:
-            sd = smart_detail(name)
+        # SMART 健康 / 转速 / 通电时长 / 各类计数：优先取巡检缓存（后台线程每 6 小时
+        # 全盘扫一次），这样 60 秒采集循环对任何盘数都不再跑 smartctl——原来「只读前
+        # 8 块盘」的上限就是为了压制这个开销，缓存到位后上限没有存在意义，直接解掉。
+        # 巡检还没覆盖到的盘（首装的前 60 秒）沿用旧行为：最多补读 8 块，避免首屏空白。
+        if state != "standby":
+            sd = _DISK_HEALTH_MEM.get(name)
+            if sd is None:
+                sd = smart_detail(name) if len(result) < 8 else {}
             if sd.get("standby"):
                 entry["state"] = "standby"
                 entry["standby"] = True
@@ -2371,10 +2381,39 @@ def _classify_temp(name):
     return "board"
 
 
-def collect_sensors():
-    """sensors -j 解析：温度分类 / 风扇转速 / 电压（参照网络主流硬件监控面板）。"""
+def collect_sensors(idr=None):
+    """sensors -j 解析：温度分类 / 风扇转速 / 电压（参照网络主流硬件监控面板）。
+
+    idr 传 iDRAC 的「快组」缓存时，机箱风扇与进排风温度也并进来——
+    Dell 服务器把风扇交给 iDRAC 管，内核 hwmon 里一个通道都没有，
+    所以本机永远是「未检测到风扇」；带外读数才是唯一来源。
+    """
     data = {"temps": [], "fans": [], "volts": [], "available": False, "fans_source": ""}
+    # ---- 带外（iDRAC）：先记下来，稍后并进风扇列表 ----
+    bmc_fans, bmc_temps = [], []
+    if idr and idr.get("ok"):
+        for i, f in enumerate(_idrac_items(idr, "fans")):
+            rpm = _nz(f.get("rpm"))
+            if rpm is None:
+                continue
+            bmc_fans.append({"name": str(f.get("name") or ("Fan%d" % (i + 1))),
+                             "rpm": int(rpm)})
+        for t in _idrac_items(idr, "temps"):
+            cel = _nz(t.get("c"))
+            nm = str(t.get("name") or "")
+            if cel is None or not nm:
+                continue
+            # CPU 温度由 thermal zone / coretemp 给，带外只补机箱级测点，免得同一行出现两次
+            if nm.upper().startswith("CPU"):
+                continue
+            bmc_temps.append({"name": nm, "raw": nm, "chip": "iDRAC",
+                              "type": "board", "value": round(float(cel), 1),
+                              "max": t.get("warn"), "crit": t.get("crit")})
     if not is_linux():
+        data["fans"] = bmc_fans
+        data["fans_source"] = "idrac" if bmc_fans else ""
+        data["temps"] = bmc_temps
+        data["available"] = bool(bmc_fans or bmc_temps)
         return data
     out, rc = run_cmd(["sensors", "-j"], timeout=10)
     data["available"] = (rc == 0 and bool(out.strip()))
@@ -2495,9 +2534,15 @@ def collect_sensors():
     if len(merged_fans) > n_hw:
         fan_src.append("hwmon")
     # ---- 标准 hwmon / sensors 均无风扇时，启用补充数据源（自动识别）----
-    # 覆盖标准内核驱动未接管的机型：IPMI/BMC 服务器、ThinkPad ACPI（均为只读）。
+    # 覆盖标准内核驱动未接管的机型：iDRAC 带外、IPMI/BMC、ThinkPad ACPI（均为只读）。
     # EC 硬件监控邮箱（0xA20）需要向 IO 端口 0xA20/0xA21 写入选通 / bank / 寄存器
     # 字节，属于硬件访问，默认关闭；仅在用户于设置中开启 ec_fan_probe 后才尝试。
+    if not merged_fans and bmc_fans:
+        # Dell 服务器：风扇全交给 iDRAC 管，内核 hwmon 一个通道都没有。
+        # 带外读数比 ipmitool 更准（直接是 iDRAC 风扇表），所以排在最前。
+        fan_src.append("idrac")
+        for bf in bmc_fans:
+            merged_fans.append({"name": bf["name"], "rpm": int(bf["rpm"])})
     if not merged_fans:
         sources = [("ipmi", _ipmi_fans), ("ibm-acpi", _ibm_acpi_fans)]
         if RUNTIME.get("ec_fan_probe"):
@@ -2518,6 +2563,13 @@ def collect_sensors():
                 merged_fans.append({"name": ef["name"], "rpm": int(ef["rpm"])})
     data["fans"] = merged_fans
     data["fans_source"] = "+".join(fan_src)
+    # 带外温度（进风口 / 排风口）并进来；CPU 温度已由 thermal zone 提供，不重复
+    if bmc_temps:
+        have = set(str(t.get("name") or "") for t in data["temps"])
+        for t in bmc_temps:
+            if t["name"] not in have:
+                data["temps"].append(t)
+                have.add(t["name"])
     # 温度按 CPU / 芯片组 / 主板 / ACPI 顺序排列
     order = {"cpu": 0, "pch": 1, "board": 2, "acpi": 3, "disk": 4, "gpu": 5}
     data["temps"].sort(key=lambda t: (order.get(t["type"], 9), t["name"]))
@@ -2772,10 +2824,12 @@ def smart_detail(dev):
     # -n standby：盘处于 STANDBY 时 smartctl 直接 exit(2)、不执行任何命令，
     # 从而不会唤醒休眠硬盘；此处明确返回 standby 标记供调用方复用上一次结果
     out, rc = run_cmd(["smartctl", "-n", "standby", "-i", "-H", "-A", "/dev/" + dev], timeout=8)
-    if not out.strip():
-        return {}
+    # 先判 exit(2)：smartctl -n standby 命中休眠盘时执行 exit(2)，stdout 可能完全为空，
+    # 若先判空输出就会把「休眠」误判成「读取失败」
     if rc == 2 or "STANDBY" in out.upper() or "SLEEP" in out.upper():
         return {"standby": True}
+    if not out.strip():
+        return {}
     if rc != 0:
         return {}
     d = {"health": "未知"}
@@ -2787,9 +2841,10 @@ def smart_detail(dev):
         k, v = k.strip(), v.strip()
         if k == "SMART overall-health self-assessment test result" or k == "SMART Health Status":
             d["health"] = v
-        elif k == "Device Model" or k == "Model Number":
+        elif k == "Device Model" or k == "Model Number" or k == "Product":
             d["model2"] = v
-        elif k == "Serial Number":
+        elif k.lower() == "serial number":
+            # SAS 设备写 "Serial number"（小写 n），SATA/NVMe 写 "Serial Number"
             d["serial"] = v
         elif k == "Rotation Rate":
             d["rpm"] = v
@@ -2798,6 +2853,11 @@ def smart_detail(dev):
                 d["temp_c"] = int(v.split()[0])
             except Exception:
                 pass
+        elif k == "Current Drive Temperature" or k == "Drive Temperature":
+            # SAS/SCSI 温度写法：Current Drive Temperature:     33 C
+            m = re.search(r"(-?\d+)", v)
+            if m:
+                d["temp_c"] = int(m.group(1))
         elif k == "SMART/Health Information" or k == "SMART Attributes":
             pass
     # ATA 告警计数（硬盘 SMART 健康：Reallocated / Pending / Uncorrectable / UDMA CRC）
@@ -2830,7 +2890,2362 @@ def smart_detail(dev):
                 d["temp_c"] = int(s.split()[1])
             except Exception:
                 pass
+    # SAS/SCSI：没有 ATA 属性表，健康数据在 grown defect list 与 Error counter log 里。
+    # 前端 SMART_KEYS 只认 ATA 键名，所以同时给出 SAS 原始键和映射键——不改前端也能判红黄绿：
+    #   grown_defects    -> reallocated_sectors（增长缺陷表，语义最接近 ATA 重映射）
+    #   scsi_uncorrected -> uncorrectable（read/write/verify 三向不可纠正错误合计）
+    scsi = False
+    grown = None
+    power_on = None
+    ecc_fast = ecc_delayed = rereads = corrected = algo = unc = 0
+    gigabytes = 0.0
+    in_err_log = False
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("Error counter log"):
+            in_err_log, scsi = True, True
+            continue
+        if in_err_log and not s:
+            in_err_log = False
+            continue
+        m = re.match(r"Elements in grown defect list:\s*(\d+)", s)
+        if m:
+            grown, scsi = int(m.group(1)), True
+            continue
+        m = re.match(r"Pending defects:\s*(\d+)", s)
+        if m:
+            # 部分 SAS 盘（如 ST4000NM019B）会额外给出待定缺陷计数
+            d["scsi_pending_defects"] = int(m.group(1))
+            scsi = True
+            continue
+        m = re.match(r"Accumulated power on time,\s*hours:minutes\s+(\d+):(\d+)", s)
+        if m:
+            # SAS 写法：Accumulated power on time, hours:minutes 21456:23（含冒号，不能用 partition）
+            power_on, scsi = int(m.group(1)), True
+            continue
+        m = re.match(r"Manufactured in week\s+(\d+)\s+of year\s+(\d+)", s)
+        if m:
+            # SAS 写法：Manufactured in week 15 of year 2019
+            d["manufactured"] = "%s-W%s" % (m.group(2), m.group(1).zfill(2))
+            continue
+        if in_err_log:
+            m = re.match(r"(read|write|verify):\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\d+)", s)
+            if m:
+                ecc_fast += int(m.group(2))
+                ecc_delayed += int(m.group(3))
+                rereads += int(m.group(4))
+                corrected += int(m.group(5))
+                algo += int(m.group(6))
+                try:
+                    gigabytes += float(m.group(7))
+                except Exception:
+                    pass
+                unc += int(m.group(8))
+    if scsi:
+        d["scsi"] = True
+        if grown is not None:
+            d["grown_defects"] = grown
+            d.setdefault("reallocated_sectors", grown)
+        d["scsi_uncorrected"] = unc
+        # 0 也是有意义的读数（盘干净），必须落键：否则盘位表里「不可纠正」永远显示 None，
+        # 看不出到底是 0 还是没读到。ATA 侧已给出 uncorrectable 时以 ATA 为准。
+        d.setdefault("uncorrectable", unc)
+        if d.get("scsi_pending_defects") is not None:
+            d.setdefault("pending_sectors", d["scsi_pending_defects"])
+        if ecc_fast or ecc_delayed or rereads:
+            # 注意：errors_corrected_by_eccfast 是 32 位计数器，会回绕到 40 亿量级，
+            # 只反映设备读过多少数据、不反映盘的健康度——真机实测同型号三块盘分别为
+            # 41.6 亿 / 0.26 亿 / 14.7 亿，没有一块故障。所以它单独暴露为 scsi_ecc，
+            # 不映射到任何告警键；健康判定只看 grown_defects 与 scsi_uncorrected。
+            d["scsi_ecc"] = ecc_fast + ecc_delayed
+            d["scsi_rereads"] = rereads
+        if corrected or algo or gigabytes:
+            d["scsi_corrected"] = corrected
+            d["scsi_gb"] = round(gigabytes, 3)
+        if power_on is not None:
+            d["power_on_hours"] = str(power_on)
     return d
+
+
+_SMART_CACHE = {}
+_SMART_TTL = 300.0
+# 同盘在途请求合并：多客户端同时打开同一盘详情时只跑一轮 smartctl
+_SMART_LOCKS = {}
+_SMART_LOCKS_GUARD = threading.Lock()
+# /api/smart 只接受内核设备名，避免把任意字符串拼进 smartctl 的 argv
+_DEV_NAME_RE = re.compile(r"^(?:sd[a-z]{1,3}|nvme\d+n\d+|hd[a-z]{1,3}|vd[a-z]{1,3})$")
+
+
+def smart_detail_cached(dev):
+    """按需读取单盘 SMART 明细（详情面板打开时才调用），5 分钟内复用上次结果。
+
+    与 60 秒后台采集循环解耦：后台只做 lsblk / sysfs 这类轻量采集，
+    重量级的 smartctl 留到用户真正打开详情时再跑，避免每轮扫全部硬盘。
+    休眠保护由 smart_detail 的 -n standby 保证：命中休眠盘直接返回 standby，
+    不会为了读详情把它唤醒。
+    standby 结果不进缓存：盘随时可能被系统唤醒，缓存 standby 会让唤醒后的
+    5 分钟内面板一直停在「休眠」空态；standby 读取本身极廉价（smartctl 直接
+    exit 2），每次重查没有代价。
+    """
+    now = time.time()
+    hit = _SMART_CACHE.get(dev)
+    if hit and now - hit[0] < _SMART_TTL:
+        d = dict(hit[1])
+        d["cached"] = True
+        return d
+    with _SMART_LOCKS_GUARD:
+        lock = _SMART_LOCKS.setdefault(dev, threading.Lock())
+    with lock:
+        # 双检：等锁期间另一个线程可能已读完并写入缓存
+        now = time.time()
+        hit = _SMART_CACHE.get(dev)
+        if hit and now - hit[0] < _SMART_TTL:
+            d = dict(hit[1])
+            d["cached"] = True
+            return d
+        data = smart_detail(dev) or {}
+        if not data.get("standby"):
+            _SMART_CACHE[dev] = (now, data)
+        d = dict(data)
+        d["cached"] = False
+        return d
+
+
+# ===========================================================================
+# 硬盘巡检：后台定时全盘扫 SMART → 分级入库 → 盘位卡片只读缓存
+# ===========================================================================
+# 为什么必须做成后台线程（而不是像 sashealth 那样在 /api/data 里懒触发）：
+#   sashealth 的自动快照写在 collect() 内部，由页面请求驱动，没人打开页面就永不
+#   检测——在它自己是「手动打开查看」的工具，问题不大；合进常驻监控面板后，这个
+#   懒触发会直接让告警失效。所以巡检独立成线程，看数据按需、发告警定时。
+#
+# 分级口径（SAS / ATA 统一）：
+#   crit     SMART 自检 FAIL / 不可纠正错误 > 0 / 缺陷较上次增长 ≥ 10
+#   warn     增长缺陷 > 0 或待处理扇区 > 0（含小幅增长）
+#   ok       计数全 0 且 SMART 给出 PASSED
+#   unknown  读不到（休眠未唤醒、盘不支持 SMART、smartctl 不可用）
+# 注意 ECC 计数（scsi_ecc）不参与判定：它是 32 位计数器会回绕，只反映读过多少数据。
+DISK_SCAN_PRESETS_H = (6, 12, 24, 72, 168)   # 与 sashealth 自动快照档位一致
+DISK_SCAN_GROWTH_CRIT = 10                   # 一次巡检内缺陷增长到这个数就判故障
+DISK_SCAN_LOG_KEEP_OK = 7 * 86400            # 巡检流水：「未见异常」保留 7 天；有变化的永久保留
+
+
+def _scan_change_text(items, prev):
+    """把本次巡检相对上次的变化压成一句话列表（供巡检流水使用）。
+
+    只比等级与三个计数：温度、通电时长这类自然变量天天在动，算「变化」会把
+    「未见异常」的记录淹掉。
+    """
+    out = []
+    for it in items or []:
+        dev = it.get("dev") or ""
+        if not dev or it.get("standby"):
+            continue
+        old = (prev or {}).get(dev) or {}
+        if not old:
+            continue                      # 新接进来的盘不算「变化」
+        og, ng = old.get("grade") or "", it.get("grade") or ""
+        if og and ng and og != ng:
+            out.append("%s 由「%s」变为「%s」" % (dev, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
+            continue
+        bits = []
+        for key, label in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
+                           ("uncorr", "不可纠正错误")):
+            a, b = _nz(old.get(key)), _nz(it.get(key))
+            if a is not None and b is not None and a != b:
+                bits.append("%s %s→%s" % (label, a, b))
+        if bits:
+            out.append("%s %s" % (dev, "，".join(bits)))
+    return out
+
+
+_disk_scan_state = {"running": False, "last_ts": 0.0, "summary": {}, "error": ""}
+_DISK_SCAN_LOCK = threading.Lock()
+
+
+def disk_scan_interval_h(config):
+    """巡检间隔（小时），0 表示关闭。非法值就近取档位，最小 6 小时。"""
+    try:
+        if int((config or {}).get("disk_scan_enabled", DEFAULT_CONFIG["disk_scan_enabled"])) == 0:
+            return 0
+        raw = int((config or {}).get("disk_scan_interval_h", DEFAULT_CONFIG["disk_scan_interval_h"]))
+    except Exception:
+        raw = DEFAULT_CONFIG["disk_scan_interval_h"]
+    if raw <= 0:
+        return 0
+    return min(DISK_SCAN_PRESETS_H, key=lambda x: abs(x - raw))
+
+
+def _nz(v):
+    """把计数归一成 int / None，避免 0 与 None 在「有无变化」比较里来回跳。"""
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(v))
+    except Exception:
+        return None
+
+
+def grade_disk(rec, prev=None):
+    """给单盘定级，返回 (grade, reasons)。rec 为 smart_detail() 结果。
+
+    prev 是上一次巡检记录（disk_health 行），用于判定缺陷增长。"""
+    if not rec:
+        return "unknown", ["未读取到 SMART"]
+    if rec.get("error"):
+        return "unknown", ["读取失败：%s" % rec["error"]]
+    health = str(rec.get("health") or "").strip()
+    unc = _nz(rec.get("uncorrectable")) or 0
+    reall = _nz(rec.get("reallocated_sectors"))
+    pend = _nz(rec.get("pending_sectors")) or 0
+    if re.search(r"FAIL", health, re.I):
+        return "crit", ["SMART 自检未通过"]
+    if unc > 0:
+        return "crit", ["不可纠正错误 %d 个" % unc]
+    delta = None
+    if reall is not None and prev is not None:
+        old = _nz(prev.get("defects"))
+        if old is not None:
+            delta = reall - old
+    if delta is not None and delta >= DISK_SCAN_GROWTH_CRIT:
+        return "crit", ["重映射扇区增长 %+d 个（%d → %d）" % (delta, reall - delta, reall)]
+    reasons = []
+    if reall:
+        reasons.append("重映射扇区 %d 个" % reall)
+    if pend:
+        reasons.append("待处理扇区 %d 个" % pend)
+    if delta and delta > 0:
+        reasons.append("较上次 +%d" % delta)
+    if reasons:
+        # 有计数但没给总体评估时也按计数判，不要因为缺 PASSED 就退回 unknown
+        return "warn", reasons
+    if not health:
+        return "unknown", ["SMART 未提供总体评估"]
+    return "ok", ["SMART 通过"]
+
+
+def disk_scan_devices():
+    """要巡检的物理盘：lsblk -d 只列整盘，排除分区 / loop / 只读 / 可移动介质。"""
+    out, rc = run_cmd(["lsblk", "-b", "-J", "-d", "-o", "NAME,TYPE,SIZE,RO,RM,MODEL"], timeout=10)
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        data = json.loads(out)
+    except Exception:
+        return []
+    devs = []
+    for b in data.get("blockdevices", []) or []:
+        name = str(b.get("name") or "")
+        if str(b.get("type") or "").lower() != "disk":
+            continue
+        if str(b.get("ro")) in ("1", "True", "true") or str(b.get("rm")) in ("1", "True", "true"):
+            continue
+        if not _DEV_NAME_RE.match(name):
+            continue
+        devs.append({"dev": name, "size": _nz(b.get("size")) or 0, "model": str(b.get("model") or "").strip()})
+    return devs
+
+
+def _health_row_rec(r):
+    """disk_health 行 → smart_detail 同形状的 dict，供采集循环与详情面板复用。"""
+    hrs = r.get("power_on_hours")
+    return {
+        "health": r.get("health") or "",
+        "serial": r.get("serial") or "",
+        "model2": r.get("model") or "",
+        "temp_c": r.get("temp_c"),
+        "power_on_hours": "" if hrs is None else str(hrs),
+        "rpm": r.get("rpm") or "",
+        "manufactured": r.get("manufactured") or "",
+        "reallocated_sectors": r.get("defects"),
+        "pending_sectors": r.get("pending_defects"),
+        "uncorrectable": r.get("uncorr"),
+        "scsi": (r.get("proto") or "") == "SAS",
+    }
+
+
+def disk_scan_once(db, config=None):
+    """执行一次全盘巡检并入库。返回摘要，异常不外抛（线程里靠它活命）。"""
+    if not is_linux():
+        return {"ok": False, "error": "仅支持 Linux"}
+    if not _DISK_SCAN_LOCK.acquire(False):
+        return {"ok": False, "error": "已有巡检正在进行"}
+    try:
+        ts = time.time()
+        _disk_scan_state["running"] = True
+        try:
+            prev = db.disk_health_read() if db else {}
+        except Exception:
+            prev = {}
+        items, skipped, errors = [], [], []
+        for d in disk_scan_devices():
+            dev = d["dev"]
+            try:
+                rec = smart_detail(dev) or {}
+            except Exception as e:
+                errors.append("%s 读取异常：%s" % (dev, e))
+                continue
+            # 顺手刷新按需读的缓存：巡检刚读到的数据，详情面板不必再跑一次 smartctl
+            if rec and not rec.get("standby"):
+                _SMART_CACHE[dev] = (ts, rec)
+                _DISK_HEALTH_MEM[dev] = rec
+            old = prev.get(dev) or {}
+            if rec.get("standby"):
+                # 休眠盘不唤醒：沿用上次分级与计数，只标记状态
+                if old:
+                    item = dict(old)
+                    item.update({"dev": dev, "standby": True})
+                    items.append(item)
+                else:
+                    items.append({"dev": dev, "standby": True, "grade": "unknown",
+                                  "scan_ts": ts, "detail": "休眠中，尚未读取过"})
+                skipped.append(dev)
+                continue
+            grade, reasons = grade_disk(rec, old if old else None)
+            items.append({
+                "dev": dev,
+                "serial": rec.get("serial") or "",
+                "model": rec.get("model2") or d.get("model") or "",
+                "proto": "SAS" if rec.get("scsi") else "",
+                "health": str(rec.get("health") or ""),
+                "grade": grade,
+                "defects": _nz(rec.get("reallocated_sectors")),
+                "pending_defects": _nz(rec.get("pending_sectors")),
+                "uncorr": _nz(rec.get("uncorrectable")),
+                "temp_c": _nz(rec.get("temp_c")),
+                "power_on_hours": _nz(rec.get("power_on_hours")),
+                "rpm": str(rec.get("rpm") or ""),
+                "manufactured": str(rec.get("manufactured") or ""),
+                "standby": False,
+                "scan_ts": ts,
+                "detail": "；".join(reasons),
+            })
+        changed = []
+        if db:
+            try:
+                changed = db.disk_health_save(items, prev)
+            except Exception as e:
+                errors.append("写库失败：%s" % e)
+        # 巡检流水：**每次**巡检都留一行（disk_health_hist 只在有变化时记）。
+        # 没变化也要记——「上周三巡检过一次，未见异常」本身就是有用的信息。
+        diff = []
+        try:
+            diff = _scan_change_text(items, prev)
+            if db:
+                db.disk_scan_log_add(
+                    ts, len(items), bool(diff),
+                    "；".join(diff) if diff else "未见异常（%d 块盘分级与计数均无变化）" % len(items))
+        except Exception:
+            traceback.print_exc()
+        summary = {
+            "ok": True, "ts": ts, "total": len(items), "changed": changed,
+            "skipped_standby": skipped, "errors": errors,
+            "log": ({"changed": True, "text": "；".join(diff)} if diff else {"changed": False}),
+            "counts": {g: sum(1 for i in items if i.get("grade") == g) for g in ("ok", "warn", "crit", "unknown")},
+        }
+        # 状态有变化才推送（新增 / 加重 / 恢复）；通知失败只记日志，不影响巡检结果
+        try:
+            note = notify_after_scan(items, ts, db, config)
+        except Exception:
+            traceback.print_exc()
+            note = None
+        if note:
+            summary["notify"] = note
+        _disk_scan_state.update({"last_ts": ts, "summary": summary, "error": ""})
+        return summary
+    except Exception as e:
+        traceback.print_exc()
+        _disk_scan_state["error"] = str(e)
+        return {"ok": False, "error": str(e)}
+    finally:
+        _disk_scan_state["running"] = False
+        _DISK_SCAN_LOCK.release()
+
+
+class DiskScanner(threading.Thread):
+    """巡检线程：按配置间隔全盘扫一遍，首次上电 60 秒后先补扫一次。
+
+    60 秒延迟是刻意的：别让人刚装完/刚重启就看到一片「未巡检」，也不必等满一个周期。
+    """
+
+    STARTUP_DELAY = 60
+
+    def __init__(self, db, config):
+        super().__init__(daemon=True, name="fnmonitor-disk-scan")
+        self.db = db
+        self.config = config
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        # 重启后沿用库里上一次的巡检时间与结果：否则每次重启都会重新全盘扫一遍，
+        # 而且首屏会退回到「只有前 8 块盘有 SMART」
+        try:
+            rows = self.db.disk_health_read() if self.db else {}
+            last = max([float(r.get("scan_ts") or 0) for r in rows.values()] or [0])
+            if last:
+                _disk_scan_state["last_ts"] = last
+            for dev, r in (rows or {}).items():
+                if not r.get("standby") and dev not in _DISK_HEALTH_MEM:
+                    _DISK_HEALTH_MEM[dev] = _health_row_rec(r)
+        except Exception:
+            pass
+        startup = self.STARTUP_DELAY
+        while not self._stop.is_set():
+            try:
+                hours = disk_scan_interval_h(self.config)
+                if hours <= 0:
+                    if self._stop.wait(60):
+                        return
+                    continue
+                last = float(_disk_scan_state.get("last_ts") or 0)
+                if last:
+                    remain = last + hours * 3600 - time.time()
+                    if remain > 0:
+                        # 分段睡，配置改了（间隔调短/关闭）能很快生效
+                        if self._stop.wait(min(remain, 300)):
+                            return
+                        continue
+                elif startup:
+                    if self._stop.wait(startup):
+                        return
+                    startup = 0
+                    continue
+                disk_scan_once(self.db, self.config)
+            except Exception:
+                traceback.print_exc()
+                if self._stop.wait(300):
+                    return
+
+
+# ---------------------------------------------------------------------------
+# 硬盘告警通知（SMTP 邮件 / Server酱，移植自 sashealth）
+# ---------------------------------------------------------------------------
+# 只在巡检发现状态变化时发一条：新增故障 / 故障加重 / 已恢复。同一块盘的同一
+# 状态不重复发；发送失败不落「已通知」状态，下一轮巡检自动重试。休眠盘（沿用
+# 上次分级）不参与判定，避免把「没读到」误报成故障。
+# 配置独立存放在 notify.json（0600），不进 config.json，也不经过 /api/config
+# 回传——授权码 / SendKey 只写不读，前端只知道「是否已填」。
+NOTIFY_FILE = "notify.json"
+NOTIFY_STATE_FILE = "notify_state.json"
+NOTIFY_PROVIDERS = (
+    ("qq", "QQ 邮箱", "smtp.qq.com", 465, "ssl"),
+    ("163", "163 邮箱", "smtp.163.com", 465, "ssl"),
+    ("126", "126 邮箱", "smtp.126.com", 465, "ssl"),
+    ("exmail", "腾讯企业邮", "smtp.exmail.qq.com", 465, "ssl"),
+    ("outlook", "Outlook / Office365", "smtp.office365.com", 587, "starttls"),
+    ("custom", "自定义", "", 465, "ssl"),
+)
+NOTIFY_DEFAULT = {"enabled": 0, "provider": "qq", "host": "smtp.qq.com", "port": 465,
+                  "secure": "ssl", "user": "", "password": "", "sender": "", "to": "",
+                  "sct_enabled": 0, "sct_key": "",
+                  # 硬件告警（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）单独一组：
+                  # 默认关闭，开启了也只在你指定的时刻统一发一封，恢复的不发、没恢复的才发
+                  "hw_enabled": 0, "hw_time": "08:00"}
+NOTIFY_SECRET_KEYS = ("password", "sct_key")
+GRADE_LABEL = {"ok": "正常", "warn": "留意", "crit": "故障", "unknown": "未知"}
+
+# 同一条硬件告警一直没恢复时，隔多久再提醒一次（天）
+HW_REMIND_DAYS = 7
+# 发送失败后的退避：避免采集线程每 10 秒重试一次把SMTP打爆
+HW_RETRY_GAP = 600
+
+
+def notify_hw_time(cfg):
+    """解析 hw_time（HH:MM）→ (时, 分)。非法值回落 08:00。"""
+    raw = str((cfg or {}).get("hw_time") or "").strip()
+    m = re.match(r"^(\d{1,2})\s*:\s*(\d{1,2})$", raw)
+    if not m:
+        return 8, 0
+    h, mi = int(m.group(1)), int(m.group(2))
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return 8, 0
+    return h, mi
+
+
+def notify_load(data_dir):
+    """读 notify.json；缺字段回落默认值，格式错误不影响其余字段。"""
+    cfg = dict(NOTIFY_DEFAULT)
+    if not data_dir:
+        return cfg
+    try:
+        with open(os.path.join(data_dir, NOTIFY_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            user = json.load(f)
+        if not isinstance(user, dict):
+            user = {}
+    except Exception:
+        user = {}
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "sct_enabled", "hw_enabled"):
+        if k in user:
+            cfg[k] = onoff(user[k])
+    if "hw_time" in user:
+        hh, mm = notify_hw_time({"hw_time": user["hw_time"]})
+        cfg["hw_time"] = "%02d:%02d" % (hh, mm)
+    if str(user.get("provider") or "") in [p[0] for p in NOTIFY_PROVIDERS]:
+        cfg["provider"] = str(user["provider"])
+    for k in ("host", "user", "sender", "to", "password", "sct_key"):
+        if k in user:
+            cfg[k] = str(user[k] or "")
+    if "port" in user:
+        try:
+            cfg["port"] = max(1, min(65535, int(user["port"])))
+        except Exception:
+            pass
+    if str(user.get("secure") or "").lower() in ("ssl", "starttls", "none"):
+        cfg["secure"] = str(user["secure"]).lower()
+    return cfg
+
+
+def notify_public(cfg):
+    """对外配置：授权码 / SendKey 换成「是否已填」，绝不回传明文。"""
+    out = {k: v for k, v in cfg.items() if k not in NOTIFY_SECRET_KEYS}
+    out["password_set"] = bool(cfg.get("password"))
+    out["sct_key_set"] = bool(cfg.get("sct_key"))
+    return out
+
+
+def notify_save(data_dir, data, cur=None):
+    """合并保存通知配置：空值 / 未提供的密码项保留原值，返回 (配置, 错误)。"""
+    cfg = dict(cur) if cur else notify_load(data_dir)
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "sct_enabled", "hw_enabled"):
+        if k in data:
+            cfg[k] = onoff(data[k])
+    if "hw_time" in data:
+        hh, mm = notify_hw_time({"hw_time": data["hw_time"]})
+        cfg["hw_time"] = "%02d:%02d" % (hh, mm)
+    if "provider" in data:
+        p = str(data["provider"] or "")
+        if p in [x[0] for x in NOTIFY_PROVIDERS]:
+            cfg["provider"] = p
+            for pid, _l, host, port, sec in NOTIFY_PROVIDERS:
+                if pid == p and host:      # 选预设就把服务器参数一起带过来
+                    cfg["host"], cfg["port"], cfg["secure"] = host, port, sec
+    if "host" in data:
+        cfg["host"] = clean_text(data["host"], 128)
+    if "port" in data:
+        try:
+            cfg["port"] = max(1, min(65535, int(data["port"])))
+        except Exception:
+            return cfg, "端口须为 1–65535 的整数"
+    if "secure" in data:
+        s = str(data["secure"] or "").lower()
+        if s in ("ssl", "starttls", "none"):
+            cfg["secure"] = s
+    for k, n in (("user", 128), ("sender", 128), ("to", 400)):
+        if k in data:
+            cfg[k] = clean_text(data[k], n)
+    # 密码 / SendKey：只有前端真的传了新值才覆盖；传空串按「不改」处理，
+    # 想清除请显式传 clear_password / clear_sct_key（前端未使用，保留 API 能力）
+    if str(data.get("password") or ""):
+        cfg["password"] = str(data["password"])[:256]
+    if str(data.get("sct_key") or ""):
+        cfg["sct_key"] = str(data["sct_key"])[:256]
+    if data.get("clear_password"):
+        cfg["password"] = ""
+    if data.get("clear_sct_key"):
+        cfg["sct_key"] = ""
+    if cfg.get("enabled"):
+        miss = [name for name, ok in (("SMTP 服务器", cfg.get("host")), ("发件账号", cfg.get("user")),
+                                      ("授权码", cfg.get("password")), ("收件人", cfg.get("to"))) if not ok]
+        if miss:
+            return cfg, "邮件通知缺少：%s" % "、".join(miss)
+    if cfg.get("sct_enabled") and not cfg.get("sct_key"):
+        return cfg, "微信通知缺少 SendKey"
+    write_json_secure(os.path.join(data_dir, NOTIFY_FILE), cfg)
+    return cfg, ""
+
+
+def notify_short_err(msg):
+    """把 SMTP / HTTP 的原始报错翻成一句能看懂的话。"""
+    m = (msg or "").strip().replace("\n", " ")
+    low = m.lower()
+    if "auth" in low or "535" in m or "username and password" in low:
+        return "认证失败（账号或授权码错误）"
+    if "timed out" in low or "timeout" in low:
+        return "连接超时"
+    if "getaddrinfo" in low or "name or service not known" in low or "11001" in m:
+        return "无法解析服务器地址"
+    if "refused" in low:
+        return "服务器拒绝连接"
+    if "550" in m or "recipient" in low:
+        return "收件人被拒"
+    if "ssl" in low or "certificate" in low:
+        return "SSL/TLS 握手失败"
+    if "unreachable" in low:
+        return "网络不可达"
+    if "400" in m or "bad request" in low or "404" in m:
+        return "请求被拒（SendKey 可能无效）"
+    if "证书" in m or "certificate" in m:
+        return "SSL/TLS 握手失败"
+    return (m[:60] + "…") if len(m) > 60 else (m or "未知错误")
+
+
+def notify_mail_send(cfg, subject, body):
+    """发一封纯文本邮件。返回 (成功, 错误描述)。"""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header
+    host = (cfg.get("host") or "").strip()
+    user = (cfg.get("user") or "").strip()
+    pwd = cfg.get("password") or ""
+    sender = (cfg.get("sender") or "").strip() or user
+    to = (cfg.get("to") or "").strip()
+    if not host or not user or not pwd or not to:
+        return False, "配置不完整（缺少服务器 / 账号 / 授权码 / 收件人）"
+    try:
+        port = int(cfg.get("port") or 465)
+    except Exception:
+        port = 465
+    sec = str(cfg.get("secure") or "ssl").lower()
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = sender
+    msg["To"] = to
+    srv = None
+    try:
+        if sec == "ssl":
+            srv = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            srv = smtplib.SMTP(host, port, timeout=15)
+            if sec == "starttls":
+                srv.starttls()
+        srv.login(user, pwd)
+        rcpts = [x.strip() for x in to.split(",") if x.strip()]
+        srv.sendmail(sender, rcpts, msg.as_string())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if srv is not None:
+            try:
+                srv.quit()
+            except Exception:
+                pass
+
+
+def notify_sct_send(cfg, title, desp):
+    """Server酱：POST https://sctapi.ftqq.com/<SendKey>.send。返回 (成功, 错误描述)。"""
+    key = (cfg.get("sct_key") or "").strip()
+    if not key:
+        return False, "未配置 SendKey"
+    url = "https://sctapi.ftqq.com/%s.send" % key
+    data = urllib.parse.urlencode({"title": title, "desp": desp}).encode()
+    try:
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        try:
+            j = json.loads(raw)
+        except Exception:
+            j = {}
+        if j.get("code") == 0:
+            return True, ""
+        return False, str(j.get("message") or raw[:80] or "未知错误")
+    except Exception as e:
+        return False, str(e)
+
+
+def notify_lan_ip():
+    """本机局域网 IP（UDP connect 不实际发包），用来在通知里放一行详情链接。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("223.5.5.5", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return ""
+
+
+def _dur_cn(sec):
+    """秒数转「1 天 3 小时」这类中文时长。"""
+    sec = max(0, int(sec or 0))
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    if d:
+        return "%d 天 %d 小时" % (d, h)
+    if h:
+        return "%d 小时 %d 分" % (h, m)
+    return "%d 分钟" % m
+
+
+def notify_build(events, ts, port=8777):
+    """生成通知标题与正文：按 新增 / 加重 / 恢复 分组。"""
+    new = [e for e in events if e["act"] == "new"]
+    worse = [e for e in events if e["act"] == "worse"]
+    rec = [e for e in events if e["act"] == "recovered"]
+    bad = len(new) + len(worse)
+    has_idrac = any((e.get("d") or {}).get("kind") == "idrac" for e in events)
+    title = "硬件告警" if has_idrac else "硬盘告警"
+    if bad:
+        subject = "[飞牛监控] %s · %d %s异常" % (title, bad, "项" if has_idrac else "块")
+    else:
+        subject = "[飞牛监控] %s解除 · %d %s恢复" % (title, len(rec), "项" if has_idrac else "块")
+    lines = ["检测时间：%s" % time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)), ""]
+
+    def section(title, group):
+        lines.append("【%s】" % title)
+        for e in group:
+            d = e["d"] or {}
+            if d.get("kind") == "idrac":
+                lines.append("iDRAC · %s · %s" % (d.get("model") or "硬件告警",
+                                                  GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
+                # 硬件类必须把发生时间写清楚：定时发送意味着「什么时候出的问题」和
+                # 「什么时候收到信」可能差好几天，不写时间根本对不上号
+                first = float(d.get("first_ts") or 0)
+                rec_ts = float(d.get("recovered_ts") or 0)
+                if e["act"] == "recovered" and first > 0 and rec_ts > 0:
+                    lines.append("  发生：%s　恢复：%s"
+                                 % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
+                                    time.strftime("%Y-%m-%d %H:%M", time.localtime(rec_ts))))
+                elif first > 0:
+                    lines.append("  发生时间：%s（已持续 %s）"
+                                 % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
+                                    _dur_cn(ts - first)))
+            else:
+                lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
+                                                    d.get("serial") or "无序列号",
+                                                    GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
+            lines.append("  %s" % (e.get("text") or ""))
+            bits = []
+            if d.get("defects") is not None:
+                bits.append("重映射扇区 %s" % d["defects"])
+            if d.get("pending_defects"):
+                bits.append("待处理 %s" % d["pending_defects"])
+            if d.get("uncorr"):
+                bits.append("不可纠正 %s" % d["uncorr"])
+            if d.get("temp_c") is not None:
+                bits.append("%s°C" % d["temp_c"])
+            if d.get("power_on_hours"):
+                bits.append("通电 %s 小时" % d["power_on_hours"])
+            if bits:
+                lines.append("  " + " / ".join(bits))
+            lines.append("")
+
+    if new:
+        section("新增故障", new)
+    if worse:
+        section("故障加重", worse)
+    if rec:
+        section("已恢复", rec)
+    ip = notify_lan_ip()
+    if ip:
+        lines.append("详情：http://%s:%d" % (ip, port))
+    return subject, "\n".join(lines)
+
+
+def notify_state_load(data_dir):
+    try:
+        with open(os.path.join(data_dir, NOTIFY_STATE_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
+def notify_send_all(cfg, subject, body):
+    """按已启用的通道发送，任一失败即视为失败（下一轮重试）。返回 (全部成功, 明细)。"""
+    res = {"mail": None, "sct": None}
+    ok_all = True
+    if cfg.get("enabled"):
+        ok, err = notify_mail_send(cfg, subject, body)
+        res["mail"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+        ok_all = ok_all and ok
+    if cfg.get("sct_enabled"):
+        ok, err = notify_sct_send(cfg, subject, body)
+        res["sct"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+        ok_all = ok_all and ok
+    return ok_all, res
+
+
+DISK_METRIC_KEYS = (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
+                    ("uncorr", "不可纠正"))
+
+
+def _disk_metrics(item):
+    """同档内比较用的恶化指标：只取计数，不取温度 / 通电时长这类自然变量。"""
+    out = {}
+    for key, _label in DISK_METRIC_KEYS:
+        v = _nz(item.get(key))
+        if v is not None:
+            out[key] = int(v)
+    return out
+
+
+def _disk_metrics_worse(cur, old):
+    """同档内的恶化：任一计数比上次大就算，返回 [(标签, 上次, 本次)]。"""
+    out = []
+    for key, label in DISK_METRIC_KEYS:
+        a, b = old.get(key), cur.get(key)
+        if a is None or b is None:
+            continue
+        if int(b) > int(a):
+            out.append((label, int(a), int(b)))
+    return out
+
+
+def notify_after_scan(items, ts, db, config=None):
+    """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。
+
+    判定口径：
+      · 首次巡检（state 里还没有基线）只落状态、不发信 —— 否则刚配好通知就会收到
+        一封「一直都在」的故障清单；
+      · 新增故障 / 升级 / 同档内计数上涨 / 恢复 才发；
+      · 同一状态且计数没变，不重复发；
+      · crit → warn 降级静默（只更新状态），避免刚处理完又响一次；
+      · 发送失败不落「已通知」，下一轮重新判定同一批事件；
+      · 休眠盘沿用上次分级，不参与判定。
+    """
+    try:
+        data_dir = os.path.dirname(getattr(db, "db_path", "") or "")
+        if not data_dir:
+            return None
+        cfg = notify_load(data_dir)
+        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+            return None
+        st = notify_state_load(data_dir)
+        notified = dict(st.get("notified") or {})
+        old_metrics = dict(st.get("metrics") or {})
+        cur, cur_metrics, events = {}, {}, []
+        for it in items or []:
+            dev = str(it.get("dev") or "")
+            if not dev:
+                continue
+            if it.get("standby"):
+                # 休眠盘沿用上次分级，不参与判定。这里必须把旧状态原样带进 cur，
+                # 否则本轮 cur 里少了它，会被当成「已恢复」而清掉已通知标记，
+                # 盘一醒又判一次「新增」——同一块盘重复通知。
+                if dev in notified:
+                    cur[dev] = notified[dev]
+                    if dev in old_metrics:
+                        cur_metrics[dev] = old_metrics[dev]
+                continue
+            grade = str(it.get("grade") or "")
+            met = _disk_metrics(it)
+            if grade in ("warn", "crit"):
+                cur[dev] = grade
+                cur_metrics[dev] = met
+            old = str(notified.get(dev) or "")
+            if grade not in ("warn", "crit"):
+                if grade == "ok" and old in ("warn", "crit"):
+                    events.append({"act": "recovered", "dev": dev, "d": it,
+                                   "text": "故障消失，SMART 通过"})
+                continue
+            if not old:
+                events.append({"act": "new", "dev": dev, "d": it,
+                               "text": it.get("detail") or GRADE_LABEL.get(grade, grade)})
+                continue
+            if old == "crit" and grade == "warn":
+                continue                      # 降级单独提醒太吵，静默更新状态
+            if old == "warn" and grade == "crit":
+                events.append({"act": "worse", "dev": dev, "d": it,
+                               "text": "等级由「留意」升为「故障」：%s"
+                                       % (it.get("detail") or "")})
+                continue
+            # 同档：计数上涨也算恶化，不该等到跨档才提醒
+            grew = _disk_metrics_worse(met, old_metrics.get(dev) or {})
+            if grew:
+                events.append({"act": "worse", "dev": dev, "d": it,
+                               "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
+        # iDRAC 硬件类（SEL 硬件日志 + 实时风扇/温度/电源）**不在这里发**：
+        # 已改成「攒批 + 每日定时」，见 notify_hw_collect / notify_hw_merge / notify_hw_tick。
+        # 硬盘巡检仍然「有变化立刻发」，两条线互不影响。
+        # 首次：只记基线不发信（老版本状态文件没有 inited，但 notified 非空说明早已在工作）
+        if not (st.get("inited") or notified):
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": cur, "metrics": cur_metrics, "ts": ts})
+            print("[fnmonitor] 硬盘巡检首次记录基线，本轮不发通知")
+            return {"ok": True, "inited": True, "silent": True, "notified": cur}
+        if not events:
+            if cur != notified or cur_metrics != old_metrics:
+                keep = {"inited": 1, "notified": cur, "metrics": cur_metrics, "ts": ts}
+                if st.get("last"):
+                    keep["last"] = st["last"]
+                write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE), keep)
+            return None
+        try:
+            port = int((config or {}).get("port") or 0) or 8777
+        except Exception:
+            port = 8777
+        subject, body = notify_build(events, ts, port)
+        ok, res = notify_send_all(cfg, subject, body)
+        summary = {"ts": ts, "ok": ok, "subject": subject,
+                   "acts": [e["act"] for e in events], "channels": res}
+        if ok:
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": cur, "metrics": cur_metrics,
+                               "ts": ts, "last": summary})
+        else:
+            # 发送失败：保留旧状态与旧指标，下一轮巡检重试同一批事件
+            write_json_secure(os.path.join(data_dir, NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": notified, "metrics": old_metrics,
+                               "ts": st.get("ts") or 0,
+                               "last": summary})
+            print("[fnmonitor] 硬盘告警通知发送失败：%s" % res)
+        return summary
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+# ---------------------------------------------------------------- 硬件告警：攒批 + 定时
+#
+# 硬盘巡检通知是「有变化立刻发」；硬件（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）
+# 是「到点统一发一封」：
+#   · 到点前就恢复的，整条不发（这就是「配对后不发」）；
+#   · 到点仍没恢复的才发，正文带发生时间；
+#   · 一直不修的，每 7 天再提醒一次；
+#   · 发过通知、后来恢复的，补一封「已恢复」。
+# 状态单独存 notify-hw.json：notify_after_scan 每轮都会整体重写 notify-state.json，
+# 混在一起会被冲掉。
+HW_STATE_FILE = "notify-hw.json"
+_HW_LOCK = threading.Lock()
+
+
+def hw_state_load(data_dir):
+    """读硬件告警状态；没有 / 损坏返回 None（调用方据此走「首次基线」）。"""
+    try:
+        with open(os.path.join(data_dir, HW_STATE_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def hw_state_save(data_dir, hw):
+    try:
+        write_json_secure(os.path.join(data_dir, HW_STATE_FILE), dict(hw or {}, ts=time.time()))
+    except Exception as e:
+        print("[fnmonitor] 硬件告警状态写入失败：%s" % str(e)[:120])
+
+
+def _hw_fingerprint(a):
+    """SEL 条目的稳定指纹：MessageId + 监控对象。
+
+    原来用 SensorType，但 iDRAC8 回的是 `[{'Member': '...'}]` 这种结构字符串，
+    同一路传感器也可能算出不同值，指纹一抖就被当成「新告警」重复发信。
+    改用从消息里抽出的对象，稳定得多。
+    """
+    mid = str(a.get("msg_id") or a.get("id") or "")
+    obj = _sel_object(a.get("message") or "")
+    if not mid and not obj:
+        return ""
+    return "%s|%s" % (mid, obj)
+
+
+def notify_hw_collect(data_dir, icfg, force_sel=False):
+    """拉一次「当前仍未恢复」的硬件异常清单。
+
+    force_sel=True 会强制重读 SEL（到点发送前用，否则「到点前刚恢复」判不出来）。
+    返回 {指纹: {...}}；iDRAC 读不到返回 None——调用方必须保留旧清单，
+    绝不能把「读不到」当成「全部恢复」。
+    """
+    try:
+        if force_sel:
+            idrac_sel(icfg, force=True)
+        snap = idrac_snapshot(icfg, data_dir=data_dir)
+    except Exception as e:
+        print("[fnmonitor] 硬件告警采集异常：%s" % str(e)[:120])
+        return None
+    if not snap.get("ok"):
+        return None
+    cur = {}
+    # ① 实时硬件状态：风扇 / 温度 / 电源 / CPU / 内存
+    #    盘 / 卷 / 阵列卡的健康**故意不收**：v12 起它们是「固定信息台账」，只在第一次
+    #    连接时读一次、之后不再更新，拿来当告警会天天报一条几周前的陈旧故障。
+    #    盘的退化交给硬盘巡检（SMART），那个才是实时的。
+    for p in snap.get("problems") or []:
+        if str(p.get("kind") or "") in ("disk", "volume", "controller"):
+            continue
+        cur["hw|" + str(p.get("key") or "")] = {
+            "message": p.get("text") or "",
+            "sensor": p.get("kind") or "",
+            "severity": p.get("severity") or "crit"}
+    # ② SEL 硬件日志：只收配对后仍没恢复的（sel_pair_active 已处理）
+    if icfg.get("sel_alert"):
+        for a in snap.get("active") or []:
+            fp = _hw_fingerprint(a)
+            if not fp:
+                continue
+            cur[fp] = {"message": a.get("message") or "",
+                       "sensor": "硬件日志",
+                       "severity": a.get("severity") or ""}
+    return cur
+
+
+def notify_hw_merge(hw, cur, now):
+    """把这轮的真实状态合进待发清单：新出现的开始计时，消失的转成「待发恢复」。"""
+    base = dict(hw or {})
+    act = {k: dict(v) for k, v in (base.get("active") or {}).items()}
+    rec = [dict(r) for r in (base.get("recovered") or [])]
+    for k, v in (cur or {}).items():
+        if k in act:
+            e = act[k]
+            e["message"] = v.get("message") or e.get("message") or ""
+            e["severity"] = v.get("severity") or e.get("severity") or ""
+            e["last"] = now
+            continue
+        # 同一条又出现了：把还没发出去的「已恢复」撤回，别自相矛盾
+        rec = [r for r in rec if r.get("key") != k]
+        act[k] = {"message": v.get("message") or "", "sensor": v.get("sensor") or "",
+                  "severity": v.get("severity") or "", "first": now, "last": now,
+                  "sent": 0, "sent_ts": 0}
+    for k in list(act.keys()):
+        if k in (cur or {}):
+            continue
+        e = act.pop(k)
+        if e.get("sent"):
+            # 只给「已经通知过」的补恢复信；从没通知过的恢复了也不该打扰
+            rec.append({"key": k, "message": e.get("message") or "",
+                        "sensor": e.get("sensor") or "", "severity": e.get("severity") or "",
+                        "first": e.get("first") or 0, "recovered_ts": now})
+    base["active"] = act
+    base["recovered"] = rec
+    return base
+
+
+def _hw_event(act, k, e, now):
+    """把清单条目转成 notify_build 认识的事件（带发生时间）。"""
+    sev = str(e.get("severity") or "").lower()
+    first = float(e.get("first") or 0)
+    return {"act": act, "dev": "iDRAC",
+            "d": {"dev": "iDRAC", "kind": "idrac", "key": k,
+                  "model": e.get("sensor") or "硬件告警",
+                  "grade": "crit" if sev in ("crit", "critical") else "warn",
+                  "detail": e.get("message") or "",
+                  "first_ts": first,
+                  "recovered_ts": float(e.get("recovered_ts") or 0)},
+            "text": e.get("message") or ""}
+
+
+def notify_hw_tick(data_dir, config=None):
+    """采集线程每 10 秒调用一次：到点（且今天还没发）就把硬件告警汇总发一封。
+
+    没到点 / 今天发过 / 开关关着，都在毫秒级返回，**不产生任何 iDRAC 请求**。
+    与硬盘巡检通知完全独立。
+    """
+    try:
+        cfg = notify_load(data_dir)
+        if not cfg.get("hw_enabled"):
+            return None
+        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+            return None
+        icfg = idrac_load(data_dir)
+        if not (icfg.get("enabled") and icfg.get("host")):
+            return None
+        now = time.time()
+        lt = time.localtime(now)
+        hh, mm = notify_hw_time(cfg)
+        if (lt.tm_hour, lt.tm_min) < (hh, mm):
+            return None
+        today = time.strftime("%Y-%m-%d", lt)
+        hw = hw_state_load(data_dir)
+        if hw and hw.get("day") == today:
+            return None
+        if hw and now - float(hw.get("last_try") or 0) < HW_RETRY_GAP:
+            return None
+        if not _HW_LOCK.acquire(False):
+            return None
+        try:
+            cur = notify_hw_collect(data_dir, icfg, force_sel=True)
+            if cur is None:
+                return None                    # iDRAC 暂时读不到：保留清单，不改也不发
+            first = hw is None
+            hw = notify_hw_merge(hw, cur, now)
+            hw["last_try"] = now
+            if first:
+                # 首次接入只记基线：机器上现存的异常不倒一遍，避免刚开启就被历史问题刷屏
+                for e in hw["active"].values():
+                    e["sent"] = 1
+                    e["sent_ts"] = now
+                hw["recovered"] = []
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                print("[fnmonitor] 硬件告警首次记录基线（%d 条未恢复），本轮不发通知"
+                      % len(hw["active"]))
+                return {"ok": True, "baseline": True, "active": len(hw["active"])}
+            events, marked = [], []
+            for k, e in hw["active"].items():
+                if not e.get("sent"):
+                    events.append(_hw_event("new", k, e, now))
+                    marked.append(k)
+                elif now - float(e.get("sent_ts") or 0) >= HW_REMIND_DAYS * 86400:
+                    events.append(_hw_event("worse", k, e, now))
+                    marked.append(k)
+            for r in hw["recovered"]:
+                events.append(_hw_event("recovered", r.get("key") or "", r, now))
+            if not events:
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                return {"ok": True, "events": 0}
+            try:
+                port = int((config or {}).get("port") or 0) or 8777
+            except Exception:
+                port = 8777
+            subject, body = notify_build(events, now, port)
+            ok, res = notify_send_all(cfg, subject, body)
+            if ok:
+                for k in marked:
+                    hw["active"][k]["sent"] = 1
+                    hw["active"][k]["sent_ts"] = now
+                hw["recovered"] = []
+                hw["day"] = today
+                hw_state_save(data_dir, hw)
+                print("[fnmonitor] 硬件告警已发送：%s" % subject)
+                return {"ok": True, "events": len(events), "subject": subject}
+            # 失败：不回写 sent 状态，10 分钟后再试（每次 10 秒重试会把 SMTP 打爆）
+            hw_state_save(data_dir, hw)
+            print("[fnmonitor] 硬件告警发送失败：%s" % res)
+            return {"ok": False, "error": res}
+        finally:
+            _HW_LOCK.release()
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+# 采集线程调用的入口：只做「到点没到点」的判断，真正的读取与发信丢后台线程。
+# iDRAC8 一个请求 5 秒，绝不能放进采集主循环——那会让风扇/功耗/温度停更十几秒。
+_HW_JOB = [None]
+_HW_CHECK_TS = [0.0]
+
+
+def _hw_due(data_dir, now=None):
+    """毫秒级判断：现在是否该发硬件告警汇总（不碰 iDRAC，不写盘）。"""
+    now = now or time.time()
+    if now - _HW_CHECK_TS[0] < 30:        # 最多 30 秒检查一次，省掉无谓的文件读
+        return False
+    _HW_CHECK_TS[0] = now
+    cfg = notify_load(data_dir)
+    if not cfg.get("hw_enabled"):
+        return False
+    if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+        return False
+    lt = time.localtime(now)
+    hh, mm = notify_hw_time(cfg)
+    if (lt.tm_hour, lt.tm_min) < (hh, mm):
+        return False
+    hw = hw_state_load(data_dir)
+    if hw and hw.get("day") == time.strftime("%Y-%m-%d", lt):
+        return False
+    if hw and now - float(hw.get("last_try") or 0) < HW_RETRY_GAP:
+        return False
+    return True
+
+
+def notify_hw_schedule(data_dir, config=None):
+    """采集线程每轮调用一次：到点就起一条后台线程去发，立刻返回。"""
+    try:
+        if _HW_JOB[0] is not None and _HW_JOB[0].is_alive():
+            return False
+        if not _hw_due(data_dir):
+            return False
+        t = threading.Thread(target=notify_hw_tick, args=(data_dir, config),
+                             name="fnm-hw-notify", daemon=True)
+        _HW_JOB[0] = t
+        t.start()
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def notify_test(data_dir, channel="all"):
+    """设置页「发送测试」：发一条样例消息验证单个通道（mail / sct）。
+
+    默认 all 只在巡检推送路径与旧前端上使用；设置页每个通道一个按钮，传 channel
+    就只发那一条，避免「点一次邮件测试、微信也跟着响」。
+    """
+    cfg = notify_load(data_dir)
+    ch = str(channel or "all").strip().lower()
+    if ch not in ("mail", "sct"):
+        ch = "all"
+    label = {"mail": "邮件", "sct": "微信"}
+    if ch == "all":
+        want = [c for c, k in (("mail", "enabled"), ("sct", "sct_enabled")) if cfg.get(k)]
+        if not want:
+            return {"ok": False, "error": "请先开启邮件或微信通知并保存", "channels": {}, "channel": ch}
+    else:
+        if not cfg.get("enabled" if ch == "mail" else "sct_enabled"):
+            return {"ok": False, "channels": {}, "channel": ch,
+                    "error": "%s通知当前是关闭的：先打开开关并「保存」，再点发送测试" % label[ch]}
+        want = [ch]
+    sample = [{"dev": "sdz", "model": "ST300MP0026（示例）", "serial": "WAE0J50J", "grade": "warn",
+               "detail": "增长缺陷 49 个；待处理扇区 0 个", "defects": 49, "pending_defects": 0,
+               "uncorr": 0, "temp_c": 32, "power_on_hours": 52032}]
+    subject, body = notify_build([{"act": "new", "dev": "sdz", "d": sample[0],
+                                   "text": sample[0]["detail"]}], time.time())
+    subject = "【测试】" + subject
+    body = "这是一条来自飞牛监控「设置 → 通知」的测试消息，收到即表示%s通道配置可用。\n\n" % (
+        "邮件" if ch == "mail" else "微信") + body
+    res = {}
+    for c in want:
+        if c == "mail":
+            ok, err = notify_mail_send(cfg, subject, body)
+        else:
+            ok, err = notify_sct_send(cfg, subject, body)
+        res[c] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+    ok = all(v.get("ok") for v in res.values())
+    return {"ok": ok, "channels": res, "channel": ch,
+            "error": "" if ok else "；".join(
+                "%s：%s" % (label[k], v.get("err")) for k, v in res.items() if v and not v.get("ok"))}
+
+
+# ---------------------------------------------------------------------------
+# iDRAC（Dell PowerEdge 带外管理）：Redfish 读风扇转速 / 温度 / 功耗 / 硬件日志
+# ---------------------------------------------------------------------------
+# 只依赖标准库 urllib。R730/R740 这一代的 iDRAC8 固件 ≥ 2.40 自带 Redfish 1.x。
+# 密码存独立文件 idrac.json（0600），GET /api/idrac 只回 password_set，明文不出网络
+# —— 和 notify.json 同一套口径。
+IDRAC_FILE = "idrac.json"
+# 固定信息台账：机型 / CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件。
+# 装机时定死，一个月都不会变，所以只读一次落盘，之后只看文件（见 idrac_static_read）。
+IDRAC_STATIC_FILE = "idrac-static.json"
+IDRAC_TTL = 60.0                   # 概览缓存：页面刷新不打爆 iDRAC
+IDRAC_SLOW_TTL = 600.0             # 旧版「慢组」周期，现已改为只读一次，仅保留兼容
+IDRAC_SEL_LIMIT = 20               # 只取最近 N 条硬件日志
+# iDRAC8 的 Redfish 慢得出奇：每个请求固定 4.5~6 秒（固件内部逐请求鉴权 + 查询，
+# 不是网络问题）。所以：① 一律带 $expand 把一个集合成员一次取全（35 请求 → 8）；
+# ② 绝不在采集主线程里同步发请求，改由 IdracPoller 后台线程刷缓存，主线程只读缓存。
+# 超时也要放宽，8 秒卡在正常耗时边缘会误判成"连接超时"。
+IDRAC_TIMEOUT = 25
+_IDRAC_CACHE = {}
+_IDRAC_LOCK = threading.Lock()
+# 保存配置后立刻唤醒后台轮询，不用等下一个周期（用户刚填完就盼着看到数据）
+_IDRAC_WAKE = threading.Event()
+_IDRAC_SLOW_WAKE = threading.Event()
+
+IDRAC_DEFAULT = {"enabled": 0, "host": "", "user": "", "password": "",
+                 "verify_tls": 0, "sel_alert": 1}
+
+# iDRAC8 的 SEL 在 OEM 的 Logs 下，iDRAC9 走标准 LogServices；两个都试
+IDRAC_SEL_PATHS = ("/Managers/iDRAC.Embedded.1/LogServices/Sel/Entries",
+                   "/Managers/iDRAC.Embedded.1/Logs/Sel")
+
+
+def idrac_load(data_dir):
+    """读 idrac.json；缺字段回落默认值，格式错误不影响其余字段。"""
+    cfg = dict(IDRAC_DEFAULT)
+    if not data_dir:
+        return cfg
+    try:
+        with open(os.path.join(data_dir, IDRAC_FILE), "r", encoding="utf-8", errors="ignore") as f:
+            user = json.load(f)
+        if not isinstance(user, dict):
+            user = {}
+    except Exception:
+        user = {}
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "verify_tls", "sel_alert"):
+        if k in user:
+            cfg[k] = onoff(user[k])
+    for k in ("host", "user", "password"):
+        if k in user:
+            cfg[k] = str(user[k] or "")
+    return cfg
+
+
+def idrac_static_path(data_dir):
+    return os.path.join(data_dir, IDRAC_STATIC_FILE) if data_dir else ""
+
+
+def idrac_static_read(data_dir, cfg):
+    """读「固定信息」台账，不发任何请求。
+
+    机型 / 服务标签 / CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件，装机时就定下来了，
+    一个月甚至几个月都不会变；但 iDRAC8 读一轮要 1.5~3 分钟、三十来个请求。
+    所以只在第一次连接时读一次落盘，之后每次启动直接从文件灌回内存。
+
+    台账里记着读取时的 host：地址变了（换机器 / 换了 iDRAC）就作废重读，
+    免得拿旧机器的槽位张冠李戴。读残的（一块盘都没有）也不认。
+    """
+    p = idrac_static_path(data_dir)
+    if not p or not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            d = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(d, dict) or not d.get("ok") or not d.get("disks"):
+        return None
+    if str(d.get("host") or "") != str(cfg.get("host") or ""):
+        return None
+    return d
+
+
+def idrac_static_write(data_dir, cfg, out):
+    """把固定信息落盘（0600）。写失败只打日志：下次启动重读，不影响当前显示。"""
+    p = idrac_static_path(data_dir)
+    if not p:
+        return
+    try:
+        body = {k: v for k, v in out.items()
+                if k not in ("cached", "from_disk", "partial", "busy", "ts",
+                             "error", "refresh_error")}
+        body["host"] = str(cfg.get("host") or "")
+        body["static_ts"] = float(out.get("static_ts") or time.time())
+        write_json_secure(p, body)
+    except Exception as e:
+        print("[fnmonitor] iDRAC 固定信息写盘失败：%s" % str(e)[:120])
+
+
+def idrac_static_ensure_loaded(data_dir, cfg=None):
+    """内存里没有台账时，从磁盘灌一次（零请求）。返回内存里是否已有可用台账。"""
+    if cfg is None:
+        cfg = idrac_load(data_dir)
+    host = str(cfg.get("host") or "")
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("slow")
+    if c and c.get("ok") and c.get("disks") and str(c.get("host") or "") == host:
+        return True
+    d = idrac_static_read(data_dir, cfg)
+    if not d:
+        return False
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["slow"] = dict(d, ts=float(d.get("static_ts") or 0),
+                                    from_disk=True, host=host)
+    return True
+
+
+def idrac_static_valid(data_dir, cfg=None):
+    """台账是否已就绪（只看有没有，不加载）。"""
+    if cfg is None:
+        cfg = idrac_load(data_dir)
+    return bool(idrac_static_read(data_dir, cfg))
+
+
+def idrac_public(cfg):
+    """对外可见的配置：只回「密码是否已填」，明文不出网络。"""
+    return {"enabled": cfg.get("enabled") or 0,
+            "host": cfg.get("host") or "",
+            "user": cfg.get("user") or "",
+            "verify_tls": cfg.get("verify_tls") or 0,
+            "sel_alert": cfg.get("sel_alert") or 0,
+            "password_set": bool(str(cfg.get("password") or "").strip())}
+
+
+def idrac_save(data_dir, data):
+    """合并保存。password 传空串 = 不修改（占位符提示「留空不改」）。"""
+    cfg = idrac_load(data_dir)
+    data = data or {}
+    if "host" in data:
+        host = str(data.get("host") or "").strip()
+        host = re.sub(r"^https?://", "", host).split("/")[0]
+        cfg["host"] = clean_text(host, 64)
+    if "user" in data:
+        cfg["user"] = clean_text(str(data.get("user") or ""), 64)
+    pw = str(data.get("password") or "")
+    if pw:
+        cfg["password"] = pw
+    if data.get("clear_password"):
+        cfg["password"] = ""
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    for k in ("enabled", "verify_tls", "sel_alert"):
+        if k in data:
+            cfg[k] = onoff(data[k])
+    if cfg["enabled"]:
+        if not cfg["host"]:
+            return cfg, "请填写 iDRAC 地址"
+        if not cfg["user"]:
+            return cfg, "请填写 iDRAC 用户名"
+        if not cfg["password"]:
+            return cfg, "请填写 iDRAC 密码（红帽账号授权码那类不行，要 iDRAC 的登录密码）"
+    write_json_secure(os.path.join(data_dir, IDRAC_FILE), cfg)
+    _IDRAC_WAKE.set()          # 配置变了：让后台轮询立刻重读，不必等周期
+    _IDRAC_SLOW_WAKE.set()     # 慢组同样要立刻刷（换机器 / 刚填完地址时）
+    return cfg, ""
+
+
+def idrac_short_err(e):
+    """把 urllib / socket 的原始报错翻成人话。"""
+    s = str(getattr(e, "reason", None) or e or "")
+    low = s.lower()
+    if "timed out" in low or "timeout" in low:
+        return "连接超时（地址或网络不通）"
+    if "certificate" in low or "ssl" in low or "tls" in low:
+        return "TLS 握手失败（可尝试关闭证书校验）"
+    if "name or service not known" in low or "getaddrinfo" in low or "nodename" in low:
+        return "无法解析 iDRAC 地址"
+    if "connection refused" in low:
+        return "iDRAC 拒绝连接（443 端口未开放）"
+    if "network is unreachable" in low or "no route" in low:
+        return "网络不可达（网段或路由问题）"
+    return "连接失败：%s" % s[:120]
+
+
+def _idrac_request(cfg, path, timeout=IDRAC_TIMEOUT, query=None):
+    """GET 一个 Redfish 路径（path 相对 /redfish/v1）。返回 (json 或 None, 错误文案)。"""
+    host = str(cfg.get("host") or "").strip()
+    if not host:
+        return None, "未配置 iDRAC 地址"
+    if not re.match(r"^[A-Za-z0-9_.\-:]+$", host):
+        return None, "iDRAC 地址格式不对（只填 IP 或主机名，不要带路径）"
+    url = "https://%s/redfish/v1%s" % (host, path)
+    if query:
+        url += ("&" if "?" in url else "?") + query
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    token = base64.b64encode(("%s:%s" % (cfg.get("user") or "", cfg.get("password") or "")
+                              ).encode("utf-8")).decode("ascii")
+    req.add_header("Authorization", "Basic " + token)
+    ctx = None if cfg.get("verify_tls") else ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            body = resp.read().decode("utf-8", "replace")
+        return (json.loads(body) if body.strip() else {}), ""
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, "认证失败（用户名或密码错误）"
+        if e.code == 403:
+            return None, "权限不足（建议用管理员或只读管理员账号）"
+        if e.code == 404:
+            return None, "该机型/固件不支持此接口（HTTP 404）"
+        return None, "iDRAC 返回 HTTP %s" % e.code
+    except urllib.error.URLError as e:
+        return None, idrac_short_err(e)
+    except Exception as e:
+        return None, idrac_short_err(e)
+
+
+def _idrac_name(s):
+    """'System Board Fan1A' / 'System Board Fan6 RPM' → 'Fan1A' / 'Fan6'。"""
+    s = str(s or "").strip()
+    s = re.sub(r"^(System Board|System)\s+", "", s, flags=re.I)
+    s = re.sub(r"\s+RPM$", "", s, flags=re.I)
+    return s or "?"
+
+
+def _idrac_fan_sort(name):
+    m = re.search(r"(\d+)([A-Za-z]?)", name or "")
+    return (int(m.group(1)) if m else 99, (m.group(2) or "").upper())
+
+
+def _idrac_items(d, key):
+    """取集合成员，兼容三种形态：list / 单成员 dict / {"@odata.id": ...} 引用。"""
+    if not isinstance(d, dict):
+        return []
+    v = d.get(key)
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, dict)]
+    if isinstance(v, dict):
+        # 单成员时 iDRAC8 会退化成 dict；纯引用（只有 @odata.id）也在这里返回
+        return [v]
+    return []
+
+
+def _idrac_try_fetch(cfg, m):
+    """$expand 没生效时成员只剩 @odata.id，补一次请求。
+
+    正常路径（expand 生效）不会走到这里；一旦走到也只是多几次请求，
+    上限 20 条，避免 expand 失效时把 14 块盘拆成 78 秒。
+    """
+    if not isinstance(m, dict):
+        return {}
+    if len(m) > 2 or not m.get("@odata.id"):
+        return m
+    path = str(m["@odata.id"]).replace("/redfish/v1", "", 1)
+    d, err = _idrac_request(cfg, path)
+    return d if (not err and isinstance(d, dict)) else m
+
+
+def _idrac_parallel(cfg, items, workers=3):
+    """把一串「只剩 @odata.id 的引用」并发补全。
+
+    iDRAC8 的 `/Storage/.../Drives` 集合只回引用，14 块盘得一个个取；单请求固定
+    5 秒左右，串行要 70~170 秒，槽位就迟迟出不来。实测 3 路并发不会被限流
+    （再多就开始回连接超时，连快组都被带崩），一轮压到 40~60 秒。
+    已经展开过完整字段的条目不会再发请求。
+    """
+    items = [x for x in (items or [])]
+    todo = [i for i, m in enumerate(items)
+            if isinstance(m, dict) and len(m) <= 2 and m.get("@odata.id")]
+    if len(todo) < 2:
+        return [_idrac_try_fetch(cfg, m) for m in items]
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+    except Exception:                                  # 极端裁剪的解释器里退回串行
+        return [_idrac_try_fetch(cfg, m) for m in items]
+    out = list(items)
+    with ThreadPoolExecutor(max_workers=min(workers, len(todo))) as ex:
+        for i, doc in zip(todo, ex.map(lambda i: _idrac_try_fetch(cfg, items[i]), todo)):
+            if isinstance(doc, dict) and doc:
+                out[i] = doc
+    return out
+
+
+def _idrac_members(cfg, d, key):
+    """取集合成员，兼容 iDRAC8 的三种形态。
+
+    $expand 只展开一层，而 Volumes 在控制器里可能以三种样子出现：
+      ① 数组（Drives 就是这种，成员字段已展开）
+      ② 已展开的集合对象（有 Members 键）—— expand 命中时就是它
+      ③ 纯集合引用（只有 @odata.id）—— 得再发一次请求取
+    不区分就会出现「卷 3 个、名字全是 ?」：三个控制器各算了一个引用。
+    """
+    v = d.get(key) if isinstance(d, dict) else None
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, dict)]
+    if isinstance(v, dict):
+        if "Members" in v:                      # ② 已展开的集合对象
+            return [x for x in (v.get("Members") or []) if isinstance(x, dict)]
+        if len(v) <= 2 and v.get("@odata.id"):  # ③ 纯引用
+            path = str(v["@odata.id"]).replace("/redfish/v1", "", 1)
+            sub, err = _idrac_request(cfg, path, query="$expand=*($levels=1)")
+            if err or not isinstance(sub, dict):
+                return []
+            return _idrac_members(cfg, sub, "Members") or _idrac_items(sub, "Members")
+        return [v]
+    return []
+
+
+def _idrac_slot(raw):
+    """"iDRAC.Embedded.1#DIMMSLOTA1" → "A1"；取不到就原样回。"""
+    s = str(raw or "")
+    if "#" in s:
+        s = s.split("#", 1)[1]
+    m = re.search(r"DIMM\s*SLOT\s*([A-Z]\d+)", s, re.I)
+    if m:
+        return m.group(1).upper()
+    m = re.search(r"([A-Z]\d+)$", s)
+    return m.group(1) if m else s
+
+
+def _idrac_dimm_sort(x):
+    m = re.match(r"([A-Z])(\d+)", x.get("slot") or "")
+    return (m.group(1), int(m.group(2))) if m else ("Z", 99)
+
+
+def _idrac_bay(raw):
+    """"Disk.Bay.7:Enclosure.Internal.0-1:..." → 7（槽位号，前端按它排序）。"""
+    m = re.search(r"Disk\.Bay\.(\d+)", str(raw or ""))
+    return int(m.group(1)) if m else (str(raw or "")[-18:] or "?")
+
+
+_SERIAL_JUNK_RE = re.compile(r"[^0-9A-Z]")
+
+
+def _serial_norm(s):
+    """序列号归一：去空格 / 连字符 / 大小写差异。
+
+    iDRAC 的 SerialNumber 与 smartctl 的 Serial Number 绝大多数一致，但有的盘
+    带尾随空格、有的带连字符（SAS 的 "Z1Z0ABCD" vs "Z1Z0-ABCD"），直接字符串相等
+    会漏配，所以两边都过一遍这个函数。"""
+    return _SERIAL_JUNK_RE.sub("", str(s or "").upper())
+
+
+def idrac_slot_map():
+    """iDRAC 物理盘 → {归一序列号: 槽位号}。
+
+    用来把 /dev/sdX 映射到机箱的实际槽位：Linux 侧拿不到机箱槽位（HBA 直通时背板
+    通常不暴露 SES enclosure），iDRAC 侧又不知道设备名，只有序列号两边都有且唯一。
+    iDRAC 未配置 / 还没预热完成 / 盘不在阵列卡下时返回空 dict，前端就不显示槽位。"""
+    with _IDRAC_LOCK:
+        slow = dict(_IDRAC_CACHE.get("slow") or {})
+    out = {}
+    for d in (slow.get("disks") or []):
+        sn = _serial_norm(d.get("serial"))
+        bay = d.get("bay")
+        if sn and isinstance(bay, int):
+            out.setdefault(sn, bay)
+    return out
+
+
+def _idrac_temp_zh(raw):
+    """iDRAC 的英文测点名翻成面板用语：Inlet Temp → 进风口。"""
+    s = _idrac_name(raw)
+    low = s.lower()
+    if "inlet" in low:
+        return "进风口"
+    if "exhaust" in low:
+        return "排风口"
+    m = re.match(r"(CPU\s*\d+)\s*Temp", s, re.I)
+    if m:
+        return m.group(1).upper().replace(" ", "")
+    return s
+
+
+def apply_idrac_slots(disks, slots):
+    """给 disks_detail 的每块盘补 slot（机箱实际槽位）；对不上的写 None。
+
+    None 而不是省略键：前端靠 d.slot == null 判断「这块盘没有槽位信息」，
+    iDRAC 中途被关掉时也要能把上一轮的值清掉，不能留着旧槽位骗人。"""
+    for d in (disks or []):
+        d["slot"] = (slots or {}).get(_serial_norm(d.get("serial")))
+    return disks
+
+
+def idrac_collect(cfg, force=False):
+    """「快组」概览（3 个请求）：机型 / 整机健康 / 风扇 / 温度 / 功耗。60 秒缓存。"""
+    now = time.time()
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("fast")
+        if not force and c and now - c.get("ts", 0) < IDRAC_TTL:
+            return dict(c, cached=True)
+    out = {"ok": False, "host": cfg.get("host") or "", "ts": now}
+
+    sysd, err = _idrac_request(cfg, "/Systems/System.Embedded.1")
+    if err:
+        out["error"] = err
+        with _IDRAC_LOCK:
+            _IDRAC_CACHE["fast"] = dict(out, ts=now)
+        return out
+    st = sysd.get("Status") or {}
+    # 只留界面和告警真用得上的：机型 / 服务标签 / BIOS / 整机健康 / 电源状态 /
+    # CPU 与内存的汇总 health。
+    # 曾经解析过的 mem_gib / cpu（颗数）/ cpu_model / hostname / health_rollup 全部删掉：
+    # 本机 /proc/meminfo、lscpu、/proc/cpuinfo 更准更全，而 hostname 更是个坑 ——
+    # Redfish 的 HostName 是上一个装过的系统注册进去的（这台至今停在 DESKTOP-NTRSKPB，
+    # 实际主机名是 R730XD），fnOS 不跑 OpenManage 就永不同步，显示出来纯属误导。
+    out.update({
+        "model": str(sysd.get("Model") or ""),
+        "service_tag": str(sysd.get("SKU") or ""),
+        "bios": str(sysd.get("BiosVersion") or ""),
+        "health": str(st.get("Health") or ""),
+        "power_state": str(sysd.get("PowerState") or ""),
+        "cpu_health": str(((sysd.get("ProcessorSummary") or {}).get("Status") or {}).get("Health") or ""),
+        "mem_health": str(((sysd.get("MemorySummary") or {}).get("Status") or {}).get("Health") or ""),
+    })
+
+    th, err_th = _idrac_request(cfg, "/Chassis/System.Embedded.1/Thermal")
+    fans, temps = [], []
+    if not err_th:
+        for f in _idrac_items(th, "Fans"):
+            rpm = _nz(f.get("Reading"))
+            if rpm is None:
+                continue
+            fs = f.get("Status") or {}
+            fans.append({"name": _idrac_name(f.get("Name") or f.get("FanName")),
+                         "rpm": int(rpm),
+                         "health": str(fs.get("Health") or ""),
+                         "state": str(fs.get("State") or ""),
+                         "min": _nz(f.get("LowerThresholdCritical"))})
+        fans.sort(key=lambda x: _idrac_fan_sort(x["name"]))
+        for t in _idrac_items(th, "Temperatures"):
+            cel = _nz(t.get("ReadingCelsius"))
+            if cel is None:
+                continue
+            ts_ = t.get("Status") or {}
+            temps.append({"name": _idrac_temp_zh(t.get("Name")),
+                          "c": int(cel),
+                          "health": str(ts_.get("Health") or ""),
+                          "warn": _nz(t.get("UpperThresholdNonCritical")),
+                          "crit": _nz(t.get("UpperThresholdCritical"))})
+        # 进风口在前：它是机箱散热的第一手指标
+        temps.sort(key=lambda x: (0 if x["name"] == "进风口" else
+                                  1 if x["name"] == "排风口" else 2, x["name"]))
+    out["fans"] = fans
+    out["temps"] = temps
+    if fans:
+        rpms = [f["rpm"] for f in fans]
+        out["fan_summary"] = {"count": len(rpms), "min": min(rpms), "max": max(rpms),
+                              "avg": int(sum(rpms) / len(rpms)),
+                              "bad": sum(1 for f in fans
+                                         if f["health"] and f["health"].upper() != "OK")}
+    if err_th:
+        out["thermal_error"] = err_th
+
+    pw, err_pw = _idrac_request(cfg, "/Chassis/System.Embedded.1/Power")
+    if not err_pw:
+        pcs = _idrac_items(pw, "PowerControl")
+        pc = pcs[0] if pcs else {}
+        out["power_watts"] = _nz(pc.get("PowerConsumedWatts"))
+        out["power_capacity_watts"] = _nz(pc.get("PowerCapacityWatts"))
+        pm = pc.get("PowerMetrics") or {}
+        out["power_min"] = _nz(pm.get("MinConsumedWatts"))
+        out["power_max"] = _nz(pm.get("MaxConsumedWatts"))
+        out["power_avg"] = _nz(pm.get("AverageConsumedWatts"))
+        psu = []
+        for p in _idrac_items(pw, "PowerSupplies"):
+            ps = p.get("Status") or {}
+            psu.append({"name": str(p.get("Name") or p.get("MemberId") or "?"),
+                        "health": str(ps.get("Health") or ""),
+                        "state": str(ps.get("State") or ""),
+                        "watts": _nz(p.get("LastPowerOutputWatts")),
+                        "volts": _nz(p.get("LineInputVoltage")),
+                        "model": str(p.get("Model") or ""),
+                        "firmware": str(p.get("FirmwareVersion") or "")})
+        out["psu"] = psu
+
+    out["ok"] = True
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["fast"] = dict(out, ts=now)
+    return out
+
+
+def _slow_single_flight(fn):
+    """同一时刻只允许一轮明细在跑。
+
+    iDRAC8 不吃并发：实测 8 个同时进行的请求就开始回连接超时，连快组（风扇、功耗）
+    也一起断更，像整机掉线。常驻轮询线程、页面触发的兜底补读、"测试连接"三条路
+    都可能同时想刷明细，所以在这里串起来——撞上了就回缓存，不叠加请求。
+    force=True（用户点「测试连接」）时最多等 4 分钟，等不到才回忙。
+    """
+    running = threading.Lock()
+
+    @functools.wraps(fn)
+    def wrap(*a, **kw):
+        force = kw.get("force")
+        if force is None and len(a) > 1:
+            force = a[1]
+        got = running.acquire(timeout=240 if force else 0)
+        if not got:
+            with _IDRAC_LOCK:
+                c = _IDRAC_CACHE.get("slow")
+            if c:
+                return dict(c, busy=True)
+            return {"ok": False, "ts": time.time(), "busy": True,
+                    "error": "上一轮明细还在读取（iDRAC8 单个请求约 5 秒，一轮 40~60 秒），稍后自动刷新"}
+        try:
+            return fn(*a, **kw)
+        finally:
+            running.release()
+    return wrap
+
+
+@_slow_single_flight
+def idrac_collect_slow(cfg, force=False, data_dir=None):
+    """「固定信息」台账：CPU / 内存条 / 阵列卡 / 物理盘 / 卷 / 固件。
+
+    **只读一次。** 这些信息装机时就定死了（换盘、加内存、换阵列卡才会变），
+    但 iDRAC8 读一轮要 1.5~3 分钟、三十来个请求。所以：第一次连接读一轮存进
+    idrac-static.json，之后每次启动只从文件灌回内存，想更新就在设置里点
+    「刷新固定信息」。
+
+    代价说清楚：盘和卷的健康状态也在这份数据里，所以它不会自动刷新。盘故障改由
+    SEL（60 秒一刷）与本机 SMART 巡检（6 小时）两条线盯，而且那两条更细
+    （重映射扇区 / 待处理扇区比 iDRAC 的 OK / 非 OK 早得多）。
+    """
+    now = time.time()
+    with _IDRAC_LOCK:
+        c = _IDRAC_CACHE.get("slow")
+    # 内存里有且是同一台机器才算数：改过地址（换机器）必须重读，不能拿旧槽位充数
+    if (not force and c and c.get("ok") and c.get("disks")
+            and str(c.get("host") or "") == str(cfg.get("host") or "")):
+        return dict(c, cached=True)
+    # 内存里没有 → 从磁盘台账灌回来（零请求），这就是「之后只显示不更新」
+    if not force and data_dir and idrac_static_ensure_loaded(data_dir, cfg):
+        with _IDRAC_LOCK:
+            c = dict(_IDRAC_CACHE.get("slow") or {})
+        return dict(c, cached=True)
+    out = {"ok": False, "ts": now, "host": str(cfg.get("host") or "")}
+    exp = "$expand=*($levels=1)"
+    got = 0
+
+    # ---- iDRAC 自身：固件版本 / 时间（时间戳要按它的 offset 换算，见 idrac_ts） ----
+    mg, err = _idrac_request(cfg, "/Managers/iDRAC.Embedded.1")
+    if not err:
+        got += 1
+        out["idrac_fw"] = str(mg.get("FirmwareVersion") or "")
+        out["idrac_model"] = str(mg.get("Model") or "")
+        out["idrac_time"] = str(mg.get("DateTime") or "")
+        out["idrac_offset"] = str(mg.get("DateTimeLocalOffset") or "")
+        out["idrac_health"] = str((mg.get("Status") or {}).get("Health") or "")
+
+    # ---- CPU ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Processors", query=exp)
+    cpus = []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            cpus.append({"id": str(m.get("Id") or m.get("Socket") or "?"),
+                         "model": str(m.get("Model") or ""),
+                         "cores": _nz(m.get("TotalCores")),
+                         "threads": _nz(m.get("TotalThreads")),
+                         "mhz": _nz(m.get("MaxSpeedMHz")),
+                         "health": str((m.get("Status") or {}).get("Health") or "")})
+    out["cpus"] = cpus
+
+    # ---- 内存条 ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Memory", query=exp)
+    dimms = []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            cap = _nz(m.get("CapacityMiB"))
+            if not cap:
+                continue
+            dimms.append({"slot": _idrac_slot(m.get("Id")),
+                          "mb": int(cap),
+                          "type": str(m.get("MemoryDeviceType") or ""),
+                          "mhz": _nz(m.get("OperatingSpeedMhz")),
+                          "vendor": str(m.get("Manufacturer") or ""),
+                          "part": str(m.get("PartNumber") or ""),
+                          "health": str((m.get("Status") or {}).get("Health") or "")})
+    dimms.sort(key=_idrac_dimm_sort)
+    out["dimms"] = dimms
+    if dimms:
+        out["dimm_count"] = len(dimms)
+        out["dimm_gib"] = round(sum(x["mb"] for x in dimms) / 1024.0, 1)
+        out["dimm_bad"] = sum(1 for x in dimms if x["health"] and x["health"].upper() != "OK")
+
+    # ---- 阵列卡 / 物理盘 / 卷 ----
+    d, err = _idrac_request(cfg, "/Systems/System.Embedded.1/Storage", query=exp)
+    ctrls, disks, vols = [], [], []
+    if not err:
+        got += 1
+        for m in _idrac_items(d, "Members"):
+            m = _idrac_try_fetch(cfg, m)
+            scs = _idrac_items(m, "StorageControllers")
+            sc = scs[0] if scs else {}
+            cid = str(m.get("Id") or "")
+            drives = _idrac_members(cfg, m, "Drives")
+            vols_raw = _idrac_members(cfg, m, "Volumes")
+            ctrls.append({"id": cid,
+                          "model": str(sc.get("Model") or m.get("Name") or ""),
+                          "firmware": str(sc.get("FirmwareVersion") or ""),
+                          "health": str((m.get("Status") or {}).get("Health") or ""),
+                          "drives": len(drives)})
+            # 14 块盘 / 14 个卷都只有引用，并发补全（串行要 70~170 秒）
+            drives = _idrac_parallel(cfg, drives)
+            # HBA 直通（非 RAID）时 iDRAC 会把每块物理盘额外伪装成一个「卷」，
+            # id 与物理盘完全相同（Physical Disk 0:1:N、raid 字段为空），
+            # 前端 filter(raid && raid !== 'NONE') 本来就会把它们丢掉。
+            # 真 RAID 卷的 id 含 Disk.Virtual —— 只给这种逐条取详情，
+            # 你这台没做阵列的机器能省 14 个请求（约 70 秒）。
+            vols_raw = [v for v in vols_raw
+                        if "Disk.Virtual" in str(v.get("@odata.id") or "")
+                        or "Disk.Bay" not in str(v.get("@odata.id") or "")]
+            vols_raw = _idrac_parallel(cfg, vols_raw)
+            for dv in drives:
+                cap = _nz(dv.get("CapacityBytes"))
+                stt = dv.get("Status") or {}
+                oem = (dv.get("Oem") or {}).get("Dell") or {}
+                disks.append({
+                    "bay": _idrac_bay(dv.get("Id")),
+                    "model": str(dv.get("Model") or ""),
+                    "serial": str(dv.get("SerialNumber") or ""),
+                    "cap_gb": int(round(cap / 1e9)) if cap else None,
+                    "media": str(dv.get("MediaType") or ""),
+                    "protocol": str(dv.get("Protocol") or ""),
+                    "rpm": _nz(dv.get("RotationSpeedRPM")),
+                    "firmware": str(dv.get("Revision") or ""),
+                    "link_gbs": _nz(dv.get("NegotiatedSpeedGbs")),
+                    "health": str(stt.get("Health") or ""),
+                    "state": str(stt.get("State") or ""),
+                    "fail_pred": bool(dv.get("FailurePredicted")),
+                    "life": _nz(dv.get("PredictedMediaLifeLeftPercent")),
+                    "hotspare": str(dv.get("HotspareType") or ""),
+                    "encrypted": str(dv.get("EncryptionStatus") or ""),
+                    "ctrl": cid,
+                })
+            for vv in vols_raw:
+                vcap = _nz(vv.get("CapacityBytes"))
+                vs = vv.get("Status") or {}
+                vols.append({"name": str(vv.get("Name") or vv.get("Id") or "?"),
+                             "raid": str(vv.get("RAIDType") or ""),
+                             "cap_gb": int(round(vcap / 1e9)) if vcap else None,
+                             "health": str(vs.get("Health") or ""),
+                             "state": str(vs.get("State") or ""),
+                             "bay": _idrac_bay(vv.get("Id"))})
+    disks.sort(key=lambda x: x["bay"] if isinstance(x["bay"], int) else 999)
+    vols.sort(key=lambda x: x["bay"] if isinstance(x["bay"], int) else 999)
+    out["controllers"] = ctrls
+    out["disks"] = disks
+    out["volumes"] = vols
+    if disks:
+        out["disk_total"] = len(disks)
+        out["disk_bad"] = sum(1 for x in disks
+                              if x["fail_pred"] or (x["health"] and x["health"].upper() != "OK"))
+    if vols:
+        out["vol_bad"] = sum(1 for x in vols if x["health"] and x["health"].upper() != "OK")
+
+    out["ok"] = got > 0
+    out["partial"] = not disks        # 一块盘都没拿到 → 不算读成功，不落盘、下次重试
+    out["static_ts"] = now
+    out["from_disk"] = False
+    if not out["ok"]:
+        out["error"] = err or "iDRAC 明细读取失败"
+    # 读失败 / 读残时不许覆盖上一份好台账：内存里的、磁盘上的都留着，
+    # 界面继续显示上一次读到的固定信息（手动刷新失败也不该把表清空）。
+    if not out["ok"] or not disks:
+        with _IDRAC_LOCK:
+            prev = _IDRAC_CACHE.get("slow") or {}
+        if not (prev.get("ok") and prev.get("disks")):
+            prev = idrac_static_read(data_dir, cfg) or {}
+        if prev.get("ok") and prev.get("disks"):
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["slow"] = dict(prev, ts=prev.get("static_ts") or now,
+                                            from_disk=True)
+            return dict(prev, cached=True,
+                        refresh_error=out.get("error") or "本轮读取不完整，沿用上一份台账")
+    with _IDRAC_LOCK:
+        _IDRAC_CACHE["slow"] = dict(out, ts=now)
+    if out["ok"] and disks:
+        idrac_static_write(data_dir, cfg, out)
+    return out
+
+
+# 固定信息「首次读取」的在飞标记：0 表示没有正在跑的一轮
+_SLOW_LOCK = threading.Lock()
+_SLOW_INFLIGHT = [0.0]
+
+
+def idrac_ensure_slow_async(data_dir):
+    """台账还没有时踢一轮首次读取；已经有台账就什么都不做（零请求）。
+
+    固定信息只读一次，所以这条兜底只在两种情况下起作用：刚配好 iDRAC 还没读过、
+    或者上一轮读残了（一块盘都没拿到，没敢落盘）。为什么要兜：那条常驻线程一旦
+    没起来（打包漏带、异常退出），槽位就永远是空的，而界面上跟「iDRAC 没配」
+    长得一模一样，排查很费劲。返回是否真的踢了新的一轮。
+    """
+    cfg = idrac_load(data_dir)
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return False
+    # 有磁盘台账就直接灌进来，不发请求
+    if idrac_static_ensure_loaded(data_dir, cfg):
+        return False
+    now = time.time()
+    # 常驻线程活着就交给它：两边同时抓会把 iDRAC8 打爆（实测并发 8 个请求就
+    # 开始连接超时，风扇/功耗也跟着断更）。这条兜底只在「线程没了」时才顶上。
+    if any(t.name == "fnm-idrac-slow" and t.is_alive() for t in threading.enumerate()):
+        return False
+    with _SLOW_LOCK:
+        # 一轮最长也就 2~3 分钟，超过 5 分钟说明上一轮已经卡死，允许再踢
+        if _SLOW_INFLIGHT[0] and now - _SLOW_INFLIGHT[0] < 300:
+            return False
+        _SLOW_INFLIGHT[0] = now
+
+    def _work():
+        try:
+            if (cfg.get("enabled") and cfg.get("host")
+                    and cfg.get("user") and cfg.get("password")):
+                idrac_collect_slow(cfg, data_dir=data_dir)
+        except Exception as e:
+            print("[fnmonitor] iDRAC 固定信息后台读取异常：%s" % str(e)[:120])
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
+
+    try:
+        threading.Thread(target=_work, daemon=True, name="fnm-idrac-slow-once").start()
+    except Exception as e:
+        print("[fnmonitor] iDRAC 固定信息补读线程启动失败：%s" % str(e)[:120])
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = 0.0
+        return False
+    return True
+
+
+def idrac_refresh_static_async(data_dir):
+    """手动「刷新固定信息」：后台重读一轮，立刻返回。
+
+    一轮 1.5~3 分钟，同步等必然超时，所以起线程；前端轮询 /api/idrac 看
+    static_ts 变了就知道读完了。撞上已经在跑的（常驻线程首读 / 上一次手动刷新）
+    直接返回 busy，绝不叠请求——iDRAC8 并发一叠就连接超时。
+    """
+    cfg = idrac_load(data_dir)
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return {"ok": False, "error": "iDRAC 未启用或未填地址"}
+    if not (cfg.get("user") and cfg.get("password")):
+        return {"ok": False, "error": "iDRAC 用户名或密码未填"}
+    # 只看「真正在跑」的标记，不看线程存活——fnm-idrac-slow 是常驻线程，
+    # 它平时只是睡着，按线程名判会永远回 busy，按钮就点不动了。
+    with _SLOW_LOCK:
+        if _SLOW_INFLIGHT[0] and time.time() - _SLOW_INFLIGHT[0] < 300:
+            return {"ok": True, "started": False, "busy": True}
+        _SLOW_INFLIGHT[0] = time.time()
+
+    def _work():
+        try:
+            idrac_collect_slow(cfg, force=True, data_dir=data_dir)
+        except Exception as e:
+            print("[fnmonitor] iDRAC 固定信息刷新异常：%s" % str(e)[:120])
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
+
+    try:
+        threading.Thread(target=_work, daemon=True, name="fnm-idrac-static-refresh").start()
+    except Exception as e:
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = 0.0
+        return {"ok": False, "error": "刷新线程启动失败：%s" % str(e)[:80]}
+    return {"ok": True, "started": True}
+
+
+def idrac_diag():
+    """/api/idrac 的排障块：缓存几秒前刷的、有没有慢组、线程在不在。
+
+    「槽位是空的」这类问题光看返回的空数组分不清是没配置、没跑起来还是没对上，
+    所以把年龄和线程名一起给出来。"""
+    now = time.time()
+    with _IDRAC_LOCK:
+        fast = dict(_IDRAC_CACHE.get("fast") or {})
+        slow = dict(_IDRAC_CACHE.get("slow") or {})
+        sel = dict(_IDRAC_CACHE.get("sel") or {})
+    names = sorted(t.name for t in threading.enumerate() if "idrac" in t.name)
+    return {
+        "fast_age": int(now - fast["ts"]) if fast.get("ts") else None,
+        "fast_ok": bool(fast.get("ok")),
+        "slow_age": int(now - slow["ts"]) if slow.get("ts") else None,
+        "slow_ok": bool(slow.get("ok")) if slow else None,
+        "slow_partial": bool(slow.get("partial")) if slow else None,
+        "slow_disks": len(slow.get("disks") or []),
+        "slow_dimms": len(slow.get("dimms") or []),
+        "slow_volumes": len(slow.get("volumes") or []),
+        "sel_age": int(now - sel["ts"]) if sel.get("ts") else None,
+        "slow_inflight": bool(_SLOW_INFLIGHT[0]),
+        "threads": names,
+    }
+
+
+def _sel_entry(m):
+    code = m.get("EntryCode")
+    if isinstance(code, list):
+        code = (code[0] or {}).get("Member") if code and isinstance(code[0], dict) else ""
+    elif isinstance(code, dict):
+        code = code.get("Member") or ""
+    code = str(code or "")
+    sev = str(m.get("Severity") or "")
+    return {"id": str(m.get("Id") or m.get("RecordId") or ""),
+            "created": str(m.get("Created") or ""),
+            "severity": sev,
+            "message": str(m.get("Message") or m.get("Description") or "").strip(),
+            "code": code,
+            "assert": code.lower() != "deassert",
+            "sensor": str(m.get("SensorType") or ""),
+            "msg_id": str(m.get("MessageId") or "")}
+
+
+# SEL 里表示「已回到正常」的英文句式。iDRAC 固件换了文案可能变，所以集中放这里；
+# 认不出的一律按「仍活跃」处理——宁可多报一次，也不能把真故障当成已恢复。
+_SEL_RECOVER_RE = re.compile(
+    r"is within range|has been restored|is closed|"
+    r"has been (?:deasserted|cleared)|returned to normal|is no longer", re.I)
+
+# 从消息里抽「被监控对象」。顺序敏感：先具体（带编号）后笼统。
+# 注意 chassis 故意不区分「上电/下电」状态：盖子只有一个，关上了就是关上了，
+# 否则「下电状态下被打开」这种历史记录永远配不上「上电状态下已关闭」而常年报警。
+_SEL_OBJ_RULES = (
+    (re.compile(r"\bFan\s+(\d+)\s+RPM", re.I), "fan:%s"),
+    (re.compile(r"\bDrive\s+(\d+)", re.I), "drive:%s"),
+    (re.compile(r"\bpower supply\s+(\d+)", re.I), "psu:%s"),
+    (re.compile(r"\bCPU\s*(\d+)", re.I), "cpu:%s"),
+    (re.compile(r"\bDIMM\s*_?([A-Z]?\d+)", re.I), "dimm:%s"),
+    (re.compile(r"\b(?:Temperature|Temp)\b[^.\d]{0,20}?(\d+)\s*(?:Degrees|C\b)", re.I), "temp:%s"),
+    (re.compile(r"\bchassis\b", re.I), "chassis"),
+    (re.compile(r"\bpower supply\b", re.I), "psu"),
+    (re.compile(r"\bfan\b", re.I), "fan"),
+)
+
+
+def _sel_object(message):
+    """从 SEL 消息里抽出「这是哪一路传感器」的稳定标识，抽不出返回空串。"""
+    msg = message or ""
+    for rx, fmt in _SEL_OBJ_RULES:
+        m = rx.search(msg)
+        if not m:
+            continue
+        try:
+            return fmt % m.group(1)
+        except (IndexError, TypeError):
+            return fmt
+    return ""
+
+
+def sel_pair_active(rows):
+    """从 SEL 条目里挑出「确实还没恢复」的告警。
+
+    SEL 是**事件流水**，不是状态表：一条 Critical 后面往往跟着同一条事件的
+    Assert → Deassert，或者一句 "is within range" / "has been restored"。
+    原来只看「这条是 Critical/Warning 且是 Assert」，于是三个月前的开盖、
+    风扇低速会被永远当成活跃告警（实测 20 条里 10 条全是这种情况）。
+
+    这里补上配对，两条规则并用：
+
+      ① 同 MessageId 在「更新」的方向上出现过 Deassert → 已恢复；
+      ② MessageId 对不上时（风扇几条告警编号各异，恢复记录又是另一个编号），
+         按「同一监控对象 + 恢复措辞」配对。
+
+    rows 必须按时间倒序（下标越小越新）。配不上的一律算活跃。
+    """
+    out = []
+    for i, r in enumerate(rows):
+        if not r.get("assert"):
+            continue
+        if str(r.get("severity") or "").lower() not in ("critical", "warning"):
+            continue
+        mid = r.get("msg_id") or ""
+        obj = _sel_object(r.get("message") or "")
+        recovered = False
+        for newer in rows[:i]:
+            n_msg = newer.get("message") or ""
+            if mid and newer.get("msg_id") == mid and not newer.get("assert"):
+                recovered = True
+                break
+            if obj and _sel_object(n_msg) == obj and _SEL_RECOVER_RE.search(n_msg):
+                recovered = True
+                break
+        if not recovered:
+            out.append(r)
+    return out
+
+
+def idrac_sel(cfg, limit=IDRAC_SEL_LIMIT, force=False):
+    """最近的硬件日志（SEL）。iDRAC8 在 Logs/Sel，iDRAC9 在 LogServices/Sel。
+
+    带 60 秒缓存：SEL 一次请求在 iDRAC8 上要 5 秒，巡检线程和页面刷新
+    共用这一份，避免来回串行等待。
+    """
+    now = time.time()
+    if not force and limit == IDRAC_SEL_LIMIT:
+        with _IDRAC_LOCK:
+            c = _IDRAC_CACHE.get("sel")
+        if c and now - c.get("ts", 0) < IDRAC_TTL:
+            return dict(c["v"], cached=True)
+    last_err = ""
+    empty_hit = None
+    for path in IDRAC_SEL_PATHS:
+        d, err = _idrac_request(cfg, path)
+        if err:
+            last_err = err
+            continue
+        members = d.get("Members") or []
+        if not members:
+            # 关键坑：iDRAC8 对 iDRAC9 的 LogServices/Sel/Entries 会回 200 + 空列表，
+            # 一旦据此提前返回，26 条真实日志就全被吞掉了。这里记下来继续试下一个路径，
+            # 全都为空才采用这个空结果。
+            if empty_hit is None:
+                empty_hit = (path, d)
+            continue
+        # 部分固件只回 @odata.id，得逐条取详情
+        if members and not (members[0].get("Message") or members[0].get("Created")):
+            detailed = []
+            for m in members[:limit]:
+                oid = str(m.get("@odata.id") or "")
+                if not oid:
+                    continue
+                dd, e2 = _idrac_request(cfg, oid.replace("/redfish/v1", "", 1))
+                if not e2 and dd:
+                    detailed.append(dd)
+            if detailed:
+                members = detailed
+        rows = [_sel_entry(m) for m in members]
+        rows.sort(key=lambda x: (x["created"], x["id"]), reverse=True)
+        rows = rows[:limit]
+        # 不是「所有 assert 的告警」，而是「配对后仍没恢复的」——见 sel_pair_active
+        active = sel_pair_active(rows)
+        res = {"ok": True, "entries": rows, "active": active,
+               "count": int(d.get("Members@odata.count") or len(members)),
+               "path": path, "ts": time.time()}
+        if limit == IDRAC_SEL_LIMIT:
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["sel"] = {"v": res, "ts": res["ts"]}
+        return res
+    if empty_hit:
+        res = {"ok": True, "entries": [], "active": [], "count": 0,
+               "path": empty_hit[0], "ts": time.time()}
+        if limit == IDRAC_SEL_LIMIT:
+            with _IDRAC_LOCK:
+                _IDRAC_CACHE["sel"] = {"v": res, "ts": res["ts"]}
+        return res
+    return {"ok": False, "entries": [], "active": [], "count": 0, "error": last_err}
+
+
+def idrac_problems(fast, slow):
+    """把 iDRAC 状态里「不健康」的项压成统一列表。
+
+    只收硬故障语义：盘的故障预测 / 非 OK、卷或控制器降级、PSU 掉一个、
+    风扇或 CPU / 内存条非 OK。温度和功耗不在这里判——温度交给面板阈值，
+    功耗只是读数。指纹（kind + 标识）稳定，供通知状态机做增量对比。
+    """
+    out = []
+
+    def add(kind, key, text, sev="crit"):
+        out.append({"kind": kind, "key": key, "text": text, "severity": sev})
+
+    for d in (slow or {}).get("disks") or []:
+        h = str(d.get("health") or "").upper()
+        if d.get("fail_pred"):
+            add("disk", "bay:%s" % d.get("bay"),
+                "槽位 %s 的 %s 被阵列卡判定为即将故障" % (d.get("bay"), d.get("model") or "硬盘"))
+        elif h and h != "OK":
+            add("disk", "bay:%s" % d.get("bay"),
+                "槽位 %s 的 %s 状态 %s" % (d.get("bay"), d.get("model") or "硬盘", h))
+        life = d.get("life")
+        if life is not None and life <= 10:
+            add("disk", "life:%s" % d.get("bay"),
+                "槽位 %s 的 %s 剩余寿命仅 %s%%" % (d.get("bay"), d.get("model") or "SSD", life), "warn")
+    for v in (slow or {}).get("volumes") or []:
+        h = str(v.get("health") or "").upper()
+        if h and h != "OK":
+            add("volume", "vol:%s" % v.get("name"),
+                "虚拟盘 %s（RAID %s）状态 %s" % (v.get("name"), v.get("raid") or "?", h))
+    for c in (slow or {}).get("controllers") or []:
+        h = str(c.get("health") or "").upper()
+        if h and h != "OK":
+            add("controller", "ctrl:%s" % c.get("id"),
+                "阵列卡 %s 状态 %s" % (c.get("model") or c.get("id"), h))
+    for p in (fast or {}).get("psu") or []:
+        h = str(p.get("health") or "").upper()
+        if h and h != "OK":
+            add("psu", "psu:%s" % p.get("name"),
+                "电源 %s 状态 %s" % (p.get("name"), h))
+    for f in (fast or {}).get("fans") or []:
+        h = str(f.get("health") or "").upper()
+        if h and h != "OK":
+            add("fan", "fan:%s" % f.get("name"),
+                "风扇 %s 状态 %s（%s RPM）" % (f.get("name"), h, f.get("rpm")))
+    for c in (slow or {}).get("cpus") or []:
+        h = str(c.get("health") or "").upper()
+        if h and h != "OK":
+            add("cpu", "cpu:%s" % c.get("id"), "处理器 %s 状态 %s" % (c.get("id"), h))
+    for m in (slow or {}).get("dimms") or []:
+        h = str(m.get("health") or "").upper()
+        if h and h != "OK":
+            add("dimm", "dimm:%s" % m.get("slot"),
+                "内存槽 %s（%s）状态 %s" % (m.get("slot"), m.get("vendor") or "内存", h))
+    return out
+
+
+def idrac_snapshot(cfg, fast_only=False, data_dir=None):
+    """给巡检用的快照：整机健康 + 硬件异常 + 硬件日志活跃告警。异常不外抛。
+
+    只读缓存 + 固定信息台账，不在这里发请求——巡检线程不能被
+    iDRAC8 每个请求 5 秒的延迟拖住。缓存还没热起来时宁可不判。
+    """
+    try:
+        ov = idrac_collect(cfg)
+        if not ov.get("ok"):
+            return {"ok": False, "error": ov.get("error") or "iDRAC 读取失败",
+                    "warm": bool(_IDRAC_CACHE.get("fast"))}
+        slow = {} if fast_only else idrac_collect_slow(cfg, data_dir=data_dir)
+        sel = idrac_sel(cfg)
+        return {"ok": True, "health": ov.get("health") or "",
+                "fan_bad": (ov.get("fan_summary") or {}).get("bad") or 0,
+                "fan_min": (ov.get("fan_summary") or {}).get("min"),
+                "power_watts": ov.get("power_watts"),
+                "problems": idrac_problems(ov, slow),
+                "active": sel.get("active") or [],
+                "sel_count": sel.get("count") or 0,
+                "sel_error": sel.get("error") or ""}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
+
+
+class IdracPoller(threading.Thread):
+    """后台刷新 iDRAC「快组」缓存（机型 / 健康 / 风扇 / 温度 / 功耗 / SEL）。
+
+    iDRAC8 的 Redfish 每个请求要 4.5~6 秒，放进采集主线程会让整个面板卡住，
+    所以单开一条线程刷缓存，主采集线程和页面都只读缓存（内存操作，零延迟）。
+
+    慢组（CPU / 内存 / 阵列卡 / 物理盘 / 卷）**不在这条线程里**：14 块盘的明细
+    只能一个个取，一轮 1.5~3 分钟，同线程会把风扇/功耗的刷新整轮堵死。见
+    IdracSlowPoller。
+    """
+
+    def __init__(self, data_dir):
+        super().__init__(daemon=True, name="fnm-idrac")
+        self.data_dir = data_dir
+        self._stop = threading.Event()
+        self.last_run = 0.0
+        self.last_err = ""
+
+    def stop(self):
+        self._stop.set()
+
+    def _tick(self):
+        cfg = idrac_load(self.data_dir)
+        if not (cfg.get("enabled") and cfg.get("host") and cfg.get("user")
+                and cfg.get("password")):
+            _IDRAC_WAKE.clear()      # 不清会把 wait 变成忙循环
+            return False
+        _IDRAC_WAKE.clear()
+        try:
+            fast = idrac_collect(cfg)
+            if fast.get("ok"):
+                idrac_sel(cfg)              # 60 秒 TTL
+                self.last_err = ""
+            else:
+                self.last_err = fast.get("error") or ""
+                print("[fnmonitor] iDRAC 读取失败：%s" % self.last_err)
+        except Exception as e:
+            self.last_err = str(e)[:120]
+            print("[fnmonitor] iDRAC 采集异常：%s" % self.last_err)
+        self.last_run = time.time()
+        return True
+
+    def run(self):
+        # 启动后先让采集线程跑一轮，避免和开机时的磁盘巡检抢 IO
+        self._stop.wait(5)
+        while not self._stop.is_set():
+            active = False
+            try:
+                active = self._tick()
+            except Exception:
+                pass
+            # 没配置 30 秒重看一次（用户可能刚填完），配置了每 20 秒醒一次
+            # （真正发不发请求由 TTL 决定）；保存配置会直接 set 立刻唤醒
+            _IDRAC_WAKE.wait(20 if active else 30)
+            _IDRAC_WAKE.clear()
+
+
+class IdracSlowPoller(threading.Thread):
+    """固定信息台账的「首次读取」线程。
+
+    固定信息（CPU / 内存条 / 阵列卡 / 物理盘槽位 / 卷 / 固件）只读一次，之后由
+    用户点「刷新固定信息」手动更新，所以这条线程平时什么都不做：启动时看一眼
+    有没有台账，没有才去读一轮（1.5~3 分钟），读完就长睡。它留在进程里主要是
+    为了两件事——换机器（地址变了）能自动重读，读残了能自动重试。
+    """
+
+    # 台账就绪后睡多久再看一眼（只看文件在不在，不发请求）
+    IDLE_SECONDS = 3600.0
+    # 读失败 / 读残时多久重试
+    RETRY_SECONDS = 120.0
+
+    def __init__(self, data_dir):
+        super().__init__(daemon=True, name="fnm-idrac-slow")
+        self.data_dir = data_dir
+        self._stop = threading.Event()
+        self.last_run = 0.0
+
+    def stop(self):
+        self._stop.set()
+
+    def _tick(self):
+        """返回台账是否已就绪（True = 有数据，可以长睡）。"""
+        cfg = idrac_load(self.data_dir)
+        if not (cfg.get("enabled") and cfg.get("host") and cfg.get("user")
+                and cfg.get("password")):
+            return False
+        # 已有台账（磁盘的或内存的）→ 什么都不读
+        if idrac_static_ensure_loaded(self.data_dir, cfg):
+            return True
+        # 打上「在跑」标记：这一轮可能两分多钟，期间用户点「刷新固定信息」
+        # 必须回 busy，不能叠第二个请求上去（iDRAC8 一叠就连接超时）
+        with _SLOW_LOCK:
+            _SLOW_INFLIGHT[0] = time.time()
+        try:
+            slow = idrac_collect_slow(cfg, data_dir=self.data_dir)
+            self.last_run = time.time()
+            return bool(slow.get("ok") and slow.get("disks"))
+        except Exception as e:
+            print("[fnmonitor] iDRAC 固定信息采集异常：%s" % str(e)[:120])
+            return False
+        finally:
+            with _SLOW_LOCK:
+                _SLOW_INFLIGHT[0] = 0.0
+
+    def run(self):
+        self._stop.wait(10)          # 排在快组后面一点，别和它的首个请求撞在一起
+        while not self._stop.is_set():
+            ready = False
+            try:
+                ready = self._tick()
+            except Exception:
+                pass
+            _IDRAC_SLOW_WAKE.wait(self.IDLE_SECONDS if ready else self.RETRY_SECONDS)
+            _IDRAC_SLOW_WAKE.clear()
 
 
 def read_net_dev():
@@ -2967,18 +5382,25 @@ def smartctl_temp(dev):
         return None
     for line in out.splitlines():
         if "Temperature_Celsius" in line:
+            # 标准列序：ID# NAME FLAG VALUE WORST THRESH TYPE UPDATED WHEN_FAILED RAW_VALUE
+            # RAW_VALUE 位于第 10 列（parts[9]），且可能是 "42 (Min/Max 20/50)" 这种形式
             parts = line.split()
-            if len(parts) >= 8:
-                try:
-                    return int(parts[7])  # ATA raw 值
-                except Exception:
-                    pass
+            if len(parts) >= 10:
+                m = re.match(r"(\d+)", parts[9])
+                if m:
+                    return int(m.group(1))
         if line.strip().startswith("Temperature:"):
             parts = line.split()
             try:
                 return int(parts[1])  # NVMe 格式
             except Exception:
                 pass
+        st = line.strip()
+        if st.startswith("Current Drive Temperature:") or st.startswith("Drive Temperature:"):
+            # SAS/SCSI 格式：Current Drive Temperature:     33 C
+            m = re.search(r"(-?\d+)\s*C", st)
+            if m:
+                return int(m.group(1))
     return None
 
 
@@ -4549,6 +6971,25 @@ class History:
                 conn.execute("""CREATE TABLE IF NOT EXISTS daily_summary (
                     day TEXT NOT NULL, metric TEXT NOT NULL, value REAL NOT NULL,
                     PRIMARY KEY (day, metric))""")
+                # 硬盘巡检：最新结果（盘位卡片只读这里，不触发任何 smartctl）
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_health (
+                    dev TEXT PRIMARY KEY,
+                    serial TEXT, model TEXT, proto TEXT, health TEXT, grade TEXT,
+                    defects INTEGER, pending_defects INTEGER, uncorr INTEGER,
+                    temp_c INTEGER, power_on_hours INTEGER, rpm TEXT, manufactured TEXT,
+                    standby INTEGER DEFAULT 0, scan_ts REAL, changed_ts REAL, detail TEXT)""")
+                # 巡检历史：只有「等级或计数发生变化」才落一行，避免 14 盘 × 每天 4 次
+                # 把趋势表撑爆；无变化的巡检只更新 disk_health 的 scan_ts
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_health_hist (
+                    ts REAL NOT NULL, dev TEXT NOT NULL, grade TEXT,
+                    defects INTEGER, pending_defects INTEGER, uncorr INTEGER)""")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_dhh ON disk_health_hist(dev, ts)")
+                # 巡检流水：**每次**巡检都记一行（disk_health_hist 只在有变化时才记）。
+                # changed=0 表示「未见异常」，这类记录 7 天后自动清掉；changed=1 的永久保留，
+                # 只有用户手动清理才删——异常记录是排障依据，不能悄悄消失。
+                conn.execute("""CREATE TABLE IF NOT EXISTS disk_scan_log (
+                    ts REAL PRIMARY KEY, total INTEGER, changed INTEGER NOT NULL DEFAULT 0,
+                    summary TEXT NOT NULL DEFAULT '')""")
                 # 自愈：v2.8.0 前的历史写入曾把 (指标名, 时间戳) 两列互换（ts 列存了文本），
                 # 这些脏行永远查不出来还会拖慢查询，启动时一次性清除
                 conn.execute("DELETE FROM metrics WHERE typeof(ts) != 'real'")
@@ -4557,6 +6998,161 @@ class History:
                 conn.close()
         except Exception:
             traceback.print_exc()
+
+    def disk_health_read(self):
+        """全部硬盘的最新巡检结果（dev -> dict）。
+
+        休眠时返回上一次的缓存，不为了显示盘位分级去 SELECT 把机械盘唤醒。"""
+        if self._asleep():
+            got = self._memo("disk_health", None)
+            return got if isinstance(got, dict) else {}
+        rows = {}
+        try:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                for r in conn.execute("SELECT * FROM disk_health").fetchall():
+                    d = dict(r)
+                    dev = d.get("dev")
+                    if dev:
+                        rows[dev] = d
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        self._memo("disk_health", rows)
+        return rows
+
+    # ---- 巡检流水（每次一行：有变化记变化内容，没变化记「未见异常」）----
+    def disk_scan_log_add(self, ts, total, changed, summary):
+        try:
+            conn = self._connect(write=True)
+            try:
+                with conn:
+                    conn.execute("INSERT OR REPLACE INTO disk_scan_log(ts, total, changed, summary)"
+                                 " VALUES (?,?,?,?)",
+                                 (float(ts), int(total or 0), 1 if changed else 0,
+                                  str(summary or "")[:2000]))
+                    # 「未见异常」只留 7 天，异常永久保留（手动清理才删）
+                    conn.execute("DELETE FROM disk_scan_log WHERE changed=0 AND ts<?",
+                                 (time.time() - DISK_SCAN_LOG_KEEP_OK,))
+            finally:
+                conn.close()
+            return True
+        except Exception:
+            traceback.print_exc()
+            return False
+
+    def disk_scan_log_read(self, limit=200):
+        rows = []
+        try:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "SELECT ts, total, changed, summary FROM disk_scan_log"
+                    " ORDER BY ts DESC LIMIT ?", (max(1, min(1000, int(limit or 200))),))
+                rows = [{"ts": r[0], "total": r[1], "changed": bool(r[2]), "summary": r[3] or ""}
+                        for r in cur.fetchall()]
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        return rows
+
+    def disk_scan_log_clear(self, only_ok=False):
+        """手动清理：默认全清（含异常记录），only_ok=True 只清「未见异常」的。"""
+        try:
+            conn = self._connect(write=True)
+            try:
+                with conn:
+                    if only_ok:
+                        cur = conn.execute("DELETE FROM disk_scan_log WHERE changed=0")
+                    else:
+                        cur = conn.execute("DELETE FROM disk_scan_log")
+                    n = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+            finally:
+                conn.close()
+            return n
+        except Exception:
+            traceback.print_exc()
+            return 0
+
+    def disk_health_save(self, items, prev):
+        """写入本次巡检结果；仅当等级或计数变化时补一条历史。
+
+        items: [{dev, serial, model, proto, health, grade, defects, pending_defects,
+                 uncorr, temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, detail}]
+        返回发生变化的 dev 列表（供通知使用）。"""
+        changed = []
+        for it in items or []:
+            old = prev.get(it["dev"]) or {}
+            sig = ("grade", "defects", "pending_defects", "uncorr")
+            if any(old.get(k) != it.get(k) for k in sig):
+                changed.append(it["dev"])
+        try:
+            conn = self._connect(write=True)
+            try:
+                conn.executemany(
+                    """INSERT INTO disk_health
+                       (dev, serial, model, proto, health, grade, defects, pending_defects, uncorr,
+                        temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, changed_ts, detail)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(dev) DO UPDATE SET
+                         serial=excluded.serial, model=excluded.model, proto=excluded.proto,
+                         health=excluded.health, grade=excluded.grade, defects=excluded.defects,
+                         pending_defects=excluded.pending_defects, uncorr=excluded.uncorr,
+                         temp_c=excluded.temp_c, power_on_hours=excluded.power_on_hours,
+                         rpm=excluded.rpm, manufactured=excluded.manufactured,
+                         standby=excluded.standby, scan_ts=excluded.scan_ts,
+                         -- 等级或计数变化时刷新「最后变化时间」；无变化保留旧值。
+                         -- IS NOT 是 SQLite 的 NULL 安全比较，首行 NULL 也能正确判变。
+                         changed_ts=CASE WHEN excluded.grade IS NOT disk_health.grade
+                                          OR excluded.defects IS NOT disk_health.defects
+                                          OR excluded.pending_defects IS NOT disk_health.pending_defects
+                                          OR excluded.uncorr IS NOT disk_health.uncorr
+                                     THEN excluded.changed_ts
+                                     ELSE disk_health.changed_ts END,
+                         detail=excluded.detail""",
+                    [(it.get("dev"), it.get("serial"), it.get("model"), it.get("proto"),
+                      it.get("health"), it.get("grade"), it.get("defects"), it.get("pending_defects"),
+                      it.get("uncorr"), it.get("temp_c"), it.get("power_on_hours"), it.get("rpm"),
+                      it.get("manufactured"), 1 if it.get("standby") else 0, it.get("scan_ts"),
+                      it.get("scan_ts"), it.get("detail")) for it in items])
+                hist = [(it.get("scan_ts"), it.get("dev"), it.get("grade"), it.get("defects"),
+                         it.get("pending_defects"), it.get("uncorr"))
+                        for it in items if it["dev"] in changed and not it.get("standby")]
+                if hist:
+                    conn.executemany(
+                        "INSERT INTO disk_health_hist(ts, dev, grade, defects, pending_defects, uncorr)"
+                        " VALUES (?,?,?,?,?,?)", hist)
+                # 历史只留最近 400 天，够看一年趋势又不会无限增长
+                conn.execute("DELETE FROM disk_health_hist WHERE ts < ?", (time.time() - 400 * 86400,))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            traceback.print_exc()
+        # 有新结果：清掉休眠读缓存，下次面板轮询读到的是最新一份
+        with self._memo_lock:
+            self._read_memo.pop("disk_health", None)
+        return changed
+
+    def disk_health_hist(self, dev, limit=60):
+        """单盘巡检历史（新→旧），用于详情面板显示「较上次 +N」。"""
+        if self._asleep():
+            return []
+        try:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute(
+                    "SELECT * FROM disk_health_hist WHERE dev=? ORDER BY ts DESC LIMIT ?",
+                    (dev, int(limit)))
+                return [dict(r) for r in cur.fetchall()]
+            finally:
+                conn.close()
+        except Exception:
+            return []
 
     def write(self, rows):
         if not rows:
@@ -5197,6 +7793,12 @@ class History:
             with conn:
                 for metric in self._distinct_metrics(conn):
                     conn.execute("DELETE FROM metrics WHERE metric=? AND ts<?", (metric, cutoff))
+                # 巡检流水里的「未见异常」只留 7 天（巡检关掉时也要能清），异常永久保留
+                try:
+                    conn.execute("DELETE FROM disk_scan_log WHERE changed=0 AND ts<?",
+                                 (time.time() - DISK_SCAN_LOG_KEEP_OK,))
+                except Exception:
+                    pass
         except Exception:
             traceback.print_exc()
         finally:
@@ -5253,6 +7855,9 @@ class Collector(threading.Thread):
         self._last_fans_ts = 0.0
         self._last_power = {"ok": False}
         self._last_power_ts = 0.0
+        # iDRAC：配置每 30 秒看一次（改了立刻生效），数据只读后台 Poller 的缓存
+        self._idrac_cfg = {}
+        self._idrac_cfg_ts = 0.0
         self._cpu_topo = None  # CPU 拓扑（物理核/逻辑线程/插槽），运行期不变只解析一次
         self._last_gpu = []
         self._last_gpu_ts = 0.0
@@ -5266,6 +7871,50 @@ class Collector(threading.Thread):
 
     def stop(self):
         self._stop.set()
+
+    def _idrac_fast(self):
+        """读 iDRAC「快组」缓存（由 IdracPoller 后台刷新）。
+
+        绝不在这里发请求：iDRAC8 每个请求 5 秒，放进采集循环会让面板整个卡住。
+        缓存没热起来时返回 None，风扇/功耗就按原来的本地读数走。
+        """
+        now = time.time()
+        if now - self._idrac_cfg_ts >= 30:
+            try:
+                self._idrac_cfg = idrac_load(self.data_dir)
+            except Exception:
+                self._idrac_cfg = {}
+            self._idrac_cfg_ts = now
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return None
+        with _IDRAC_LOCK:
+            cache = _IDRAC_CACHE.get("fast")
+        if not cache or not cache.get("ok"):
+            return None
+        return cache
+
+    def _idrac_slots(self):
+        """序列号 → 机箱槽位（读固定信息台账，不发请求）。
+
+        台账在第一次连接时读过就一直在磁盘上，这里顺手把文件灌回内存即可；
+        只有「还没读过」才会出现空列表，那时前端显示「读取中…」。"""
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return {}
+        idrac_static_ensure_loaded(self.data_dir, c)
+        return idrac_slot_map()
+
+    def _idrac_slot_state(self):
+        """槽位数据的三种状态，给前端区分「还没读到」和「对不上」：
+        off = iDRAC 没启用；warming = 台账还没读（首次 1~3 分钟）；ready = 有盘了。"""
+        c = self._idrac_cfg or {}
+        if not (c.get("enabled") and c.get("host")):
+            return "off"
+        idrac_static_ensure_loaded(self.data_dir, c)
+        with _IDRAC_LOCK:
+            slow = _IDRAC_CACHE.get("slow") or {}
+        return "ready" if slow.get("disks") else "warming"
 
     def _reload_config(self):
         """检查配置文件是否变化，变化则重载。"""
@@ -5365,7 +8014,15 @@ class Collector(threading.Thread):
         if now - self._last_disks_detail_ts >= 60:
             self._last_disks_detail = collect_disks_detail(self._last_disks_detail)
             self._last_disks_detail_ts = now
-        snapshot["disks_detail"] = self._last_disks_detail
+        # ---- 机箱实际槽位（序列号对 iDRAC 物理盘；拿不到就是 None） ----
+        _slot_state = self._idrac_slot_state()
+        if _slot_state == "warming":
+            # 兜底：明细该读却一直没读到（常驻轮询线程没起来、异常退出），
+            # 这里顺手踢一轮，读路径自己就能把数据补齐
+            idrac_ensure_slow_async(self.data_dir)
+        snapshot["disks_detail"] = apply_idrac_slots(self._last_disks_detail,
+                                                     self._idrac_slots())
+        snapshot["idrac_slot_state"] = _slot_state
         # ---- 网络 ----
         ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
         self._prev_net = read_net_dev()
@@ -5378,6 +8035,16 @@ class Collector(threading.Thread):
         snapshot["diskio"] = diskio
         # ---- 温度 ----
         temps = read_temps()
+        # thermal zone 没给 CPU 温度时，用 iDRAC 的带外读数兜底（老内核 / 虚拟机常见）
+        if temps.get("cpu") is None:
+            _if = self._idrac_fast()
+            for _t in (_if or {}).get("temps") or []:
+                if str(_t.get("name") or "").upper().startswith("CPU"):
+                    try:
+                        temps["cpu"] = float(_t.get("c"))
+                        break
+                    except Exception:
+                        continue
         # 硬 RAID 物理盘温度并入总览温度卡（读自阵列卡缓存，300 秒刷新；
         # 名称形如「阵列 32:0」，经阵列卡传感器读取、不唤醒硬盘）
         for _c in ((self._last_raidcard or {}).get("controllers") or []):
@@ -5386,14 +8053,15 @@ class Collector(threading.Thread):
                     temps["disks"].append({"name": "阵列 " + str(_p.get("loc")),
                                            "temp": _p.get("temp")})
         snapshot["temp"] = temps
-        # ---- 实时功耗（每 10 秒）：RAPL 硬件传感器优先，不可用时即时回退估算模型 ----
+        # ---- 实时功耗（每 10 秒）：iDRAC 整机读数 > RAPL > 估算模型 ----
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
         # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
         # 而趋势图却有估算数据的自相矛盾。
+        # 优先级说明：iDRAC 报的是电源实际输出（整机插座功耗，含主板/内存/网卡/
+        # 全部硬盘与转换损耗），比 RAPL 只算 CPU 封装准得多，所以排在最前。
         # 注意口径：RAPL package 只是 CPU 封装功耗（Jasper Lake N5095 等 SoC 空闲
-        # 仅 2-3W，且通常没有 DRAM 域），不等于整机插座功耗——主板/内存/网卡/
-        # 电源转换损耗与活动硬盘都在封装之外。整机 total = package + dram
-        # + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
+        # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
+        # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
             if now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
@@ -5402,33 +8070,47 @@ class Collector(threading.Thread):
                                    if d.get("state") != "standby")
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
                 disks_w = round(disks_active * disk_w_unit, 2)
-                rp = get_rapl_power()
-                if rp.get("ok"):
-                    base_w = float(self.config.get("power_base_w", 8) or 0)
-                    pkg = float(rp.get("package") or 0)
-                    dram = float(rp.get("dram") or 0)
-                    rp["source"] = "rapl"
-                    rp["base"] = round(base_w, 2)
-                    rp["disks_w"] = disks_w
-                    rp["disks_active"] = disks_active
-                    rp["total"] = round(pkg + dram + base_w + disks_w, 2)
-                    self._last_power = rp
+                idr = self._idrac_fast()
+                if idr and _nz(idr.get("power_watts")) is not None:
+                    self._last_power = {
+                        "ok": True, "source": "idrac",
+                        "total": round(float(idr["power_watts"]), 2),
+                        "package": None, "core": None, "uncore": None, "dram": None,
+                        "base": None, "disks_w": disks_w, "disks_active": disks_active,
+                        "capacity": _nz(idr.get("power_capacity_watts")),
+                        "min": _nz(idr.get("power_min")),
+                        "max": _nz(idr.get("power_max")),
+                        "avg": _nz(idr.get("power_avg")),
+                        "psu": idr.get("psu") or [],
+                    }
                 else:
-                    try:
-                        nics_active = len([i for i in ifaces
-                                           if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
-                        est_w = estimate_power(
-                            cpu_percent, disks_active, nics_active,
-                            float(self.config.get("power_tdp_w", 65)),
-                            disk_w_unit,
-                            float(self.config.get("power_nic_fixed_w", 5)),
-                        )
-                        self._last_power = {"ok": True, "total": est_w, "source": "estimated",
-                                            "package": None, "core": None, "uncore": None,
-                                            "dram": None, "base": None,
-                                            "disks_w": disks_w, "disks_active": disks_active}
-                    except Exception:
-                        self._last_power = {"ok": False, "source": "unknown"}
+                    rp = get_rapl_power()
+                    if rp.get("ok"):
+                        base_w = float(self.config.get("power_base_w", 8) or 0)
+                        pkg = float(rp.get("package") or 0)
+                        dram = float(rp.get("dram") or 0)
+                        rp["source"] = "rapl"
+                        rp["base"] = round(base_w, 2)
+                        rp["disks_w"] = disks_w
+                        rp["disks_active"] = disks_active
+                        rp["total"] = round(pkg + dram + base_w + disks_w, 2)
+                        self._last_power = rp
+                    else:
+                        try:
+                            nics_active = len([i for i in ifaces
+                                               if not i["iface"].startswith(VIRT_IFACE_PREFIXES)])
+                            est_w = estimate_power(
+                                cpu_percent, disks_active, nics_active,
+                                float(self.config.get("power_tdp_w", 65)),
+                                disk_w_unit,
+                                float(self.config.get("power_nic_fixed_w", 5)),
+                            )
+                            self._last_power = {"ok": True, "total": est_w, "source": "estimated",
+                                                "package": None, "core": None, "uncore": None,
+                                                "dram": None, "base": None,
+                                                "disks_w": disks_w, "disks_active": disks_active}
+                        except Exception:
+                            self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
         except Exception:
             self._last_power = {"ok": False, "source": "unknown"}
@@ -5607,8 +8289,9 @@ class Collector(threading.Thread):
         snapshot["raidcard"] = self._last_raidcard
 
         # ---- 传感器：温度分类 / 风扇 / 电压（每 15 秒） ----
+        # 带外 iDRAC 读数一并传入：Dell 机的风扇只由 iDRAC 管，内核里没有通道
         if now - self._last_sensors_ts >= 15:
-            self._last_sensors = collect_sensors()
+            self._last_sensors = collect_sensors(self._idrac_fast())
             self._last_sensors_ts = now
         snapshot["sensors"] = self._last_sensors
 
@@ -5640,6 +8323,13 @@ class Collector(threading.Thread):
             if now - self.updater._last_check >= UPDATE_CHECK_INTERVAL:
                 self.updater.start_auto_job(bool(self.config.get("update_autoupdate")),
                                             bool(self.config.get("update_autodownload")))
+
+        # ---- 硬件告警定时发送（每 30 秒判断一次是否到点；读取与发信都在后台线程）----
+        # 与上面的硬盘巡检通知完全独立：硬盘「有变化立刻发」，硬件「到点统一发」
+        try:
+            notify_hw_schedule(self.data_dir, self.config)
+        except Exception:
+            traceback.print_exc()
 
         with self._lock:
             self.latest = snapshot
@@ -6124,7 +8814,10 @@ class MonitorApp:
         CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
                "img-src 'self' data:; connect-src 'self'; frame-ancestors *")
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
-                     "/api/vm/action", "/api/config/save", "/api/update/install"}
+                     "/api/vm/action", "/api/config/save", "/api/update/install",
+                     "/api/notify/save", "/api/notify/test", "/api/disk_scan/now",
+                     "/api/idrac/save", "/api/idrac/test", "/api/idrac/refresh",
+                     "/api/scan_log/clear"}
 
         class Handler(BaseHTTPRequestHandler):
             # HTTP/1.1 长连接：浏览器复用 TCP 连接，避免每请求新建线程；timeout 保证空闲连接
@@ -6329,6 +9022,26 @@ class MonitorApp:
                     return
                 if path == "/api/overview":
                     self._send_bytes(app.api_overview())
+                    return
+                if path == "/api/smart":
+                    # 按需读取单盘 SMART 明细：只在详情面板打开时由前端调用
+                    self._json(app.api_smart((qs.get("dev") or [""])[0]))
+                    return
+                if path == "/api/disk_health":
+                    # 盘位健康分级：只读巡检缓存，不触发 smartctl
+                    self._json(app.api_disk_health())
+                    return
+                if path == "/api/scan_log":
+                    self._json(app.api_scan_log(qs))
+                    return
+                if path == "/api/notify":
+                    self._json(app.api_notify_get())
+                    return
+                if path == "/api/idrac":
+                    self._json(app.api_idrac_get(qs))
+                    return
+                if path == "/api/idrac/sel":
+                    self._json(app.api_idrac_sel(qs))
                     return
                 if path == "/api/docker":
                     self._json(app.api_docker())
@@ -6560,6 +9273,27 @@ class MonitorApp:
                     hdrs = [("Retry-After", str(resp.get("retry_after")))] if status == 429 else None
                     self._json(resp, status=status, cookie=cookie, headers=hdrs)
                     return
+                if path == "/api/notify/save":
+                    self._json(app.api_notify_save(data))
+                    return
+                if path == "/api/notify/test":
+                    self._json(app.api_notify_test(data))
+                    return
+                if path == "/api/idrac/save":
+                    self._json(app.api_idrac_save(data))
+                    return
+                if path == "/api/idrac/test":
+                    self._json(app.api_idrac_test(data))
+                    return
+                if path == "/api/idrac/refresh":
+                    self._json(app.api_idrac_refresh_static())
+                    return
+                if path == "/api/disk_scan/now":
+                    self._json(app.api_disk_scan_now())
+                    return
+                if path == "/api/scan_log/clear":
+                    self._json(app.api_scan_log_clear(data))
+                    return
                 if path == "/api/update/install":
                     self._json(app.api_update_install())
                     return
@@ -6602,6 +9336,292 @@ class MonitorApp:
         c = public_config(self.config)
         c["auth_has_password"] = c["auth_password_set"]
         return c
+
+    def api_smart(self, dev):
+        """按需读取单块硬盘的 SMART 明细（详情面板打开时才调用，5 分钟内复用缓存）。
+
+        只接受内核设备名形式的参数（sda / nvme0n1 / vda），避免把任意路径拼进
+        smartctl 的 argv；返回值直接透出 smart_detail 的解析结果，前端按协议取用。
+        """
+        dev = str(dev or "")
+        if not _DEV_NAME_RE.match(dev):
+            return {"error": "invalid device"}
+        if not is_linux():
+            return {"error": "unsupported platform"}
+        d = smart_detail_cached(dev)
+        d["dev"] = dev
+        d["ts"] = int(time.time())
+        return d
+
+    def api_disk_scan_now(self):
+        """手动触发一轮巡检：立刻返回，不等结果（前端隔十几秒刷新盘位即可）。
+
+        换盘、调间隔、刚装完想马上看到分级都靠它，不用等下一个周期。"""
+        if disk_scan_interval_h(self.config) <= 0:
+            return {"ok": False, "error": "disabled", "message": "硬盘巡检已关闭，先在设置里打开"}
+        if _DISK_SCAN_LOCK.locked() or _disk_scan_state.get("running"):
+            return {"ok": False, "error": "busy", "message": "巡检正在进行中，稍等十几秒"}
+        threading.Thread(target=disk_scan_once, args=(self.collector.db, self.config),
+                         name="disk-scan-manual", daemon=True).start()
+        return {"ok": True, "started": True, "message": "已开始巡检，约 15–20 秒后刷新"}
+
+    def api_scan_log(self, query=None):
+        """巡检流水：每次巡检一行，有变化记变化内容、没变化记未见异常。
+
+        「未见异常」7 天后自动清；有变化的永久保留，只有手动清理才删。
+        """
+        limit = 200
+        try:
+            limit = int((query or {}).get("limit") or 200)
+        except Exception:
+            pass
+        try:
+            items = self.collector.db.disk_scan_log_read(limit) or []
+        except Exception:
+            items = []
+        return {"ok": True, "items": items,
+                "keep_ok_days": int(DISK_SCAN_LOG_KEEP_OK // 86400)}
+
+    def api_scan_log_clear(self, data=None):
+        """手动清理巡检流水。默认全清；body 传 {"only_ok": true} 只清「未见异常」。"""
+        only_ok = bool((data or {}).get("only_ok"))
+        try:
+            n = self.collector.db.disk_scan_log_clear(only_ok=only_ok)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:120]}
+        return {"ok": True, "removed": n,
+                "message": ("已清理 %d 条「未见异常」记录" % n) if only_ok else ("已清理 %d 条记录" % n)}
+
+    def api_disk_health(self):
+        """盘位卡片的健康分级（只读巡检缓存，不触发任何 smartctl）。
+
+        首装 / 缓存为空时全部为 unknown —— 绝不能显示「正常」，那是在骗人。"""
+        now = time.time()
+        rows = {}
+        try:
+            rows = self.collector.db.disk_health_read() or {}
+        except Exception:
+            rows = {}
+        hours = disk_scan_interval_h(self.config)
+        items, last = {}, 0.0
+        for dev, r in rows.items():
+            ts = float(r.get("scan_ts") or 0)
+            last = max(last, ts)
+            items[dev] = {
+                "dev": dev,
+                "grade": r.get("grade") or "unknown",
+                "detail": r.get("detail") or "",
+                "health": r.get("health") or "",
+                "serial": r.get("serial") or "",
+                "model": r.get("model") or "",
+                "proto": r.get("proto") or "",
+                "defects": r.get("defects"),
+                "pending_defects": r.get("pending_defects"),
+                "uncorr": r.get("uncorr"),
+                "temp_c": r.get("temp_c"),
+                "power_on_hours": r.get("power_on_hours"),
+                "rpm": r.get("rpm") or "",
+                "manufactured": r.get("manufactured") or "",
+                "standby": bool(r.get("standby")),
+                "scan_ts": ts,
+                "age": int(now - ts) if ts else None,
+            }
+        state = dict(_disk_scan_state)
+        return {
+            "ok": True,
+            "enabled": hours > 0,
+            "interval_h": hours,
+            "presets": list(DISK_SCAN_PRESETS_H),
+            "last_ts": last or state.get("last_ts") or 0,
+            "next_ts": ((last or state.get("last_ts") or 0) + hours * 3600) if hours else 0,
+            "scanning": bool(state.get("running")),
+            "summary": state.get("summary") or {},
+            "error": state.get("error") or "",
+            "items": items,
+            "now": now,
+        }
+
+    def api_notify_get(self):
+        """通知配置（不回传授权码 / SendKey，只给「是否已填」与上次发送结果）。"""
+        cfg = notify_load(self.data_dir)
+        out = notify_public(cfg)
+        out["ok"] = True
+        out["providers"] = [{"id": p[0], "label": p[1], "host": p[2], "port": p[3], "secure": p[4]}
+                            for p in NOTIFY_PROVIDERS]
+        st = notify_state_load(self.data_dir)
+        out["last"] = st.get("last") or {}
+        out["notified"] = st.get("notified") or {}
+        return out
+
+    def api_notify_save(self, data):
+        """保存通知配置。空密码 / 空 SendKey 视为「不改」，需要清除时传 clear_* 开关。"""
+        cfg, err = notify_save(self.data_dir, data if isinstance(data, dict) else {})
+        if err:
+            return {"ok": False, "error": err, "notify": notify_public(cfg)}
+        print("[fnmonitor] 通知配置已更新：邮件=%s 微信=%s"
+              % ("开" if cfg.get("enabled") else "关", "开" if cfg.get("sct_enabled") else "关"))
+        return {"ok": True, "notify": notify_public(cfg)}
+
+    def api_notify_test(self, data):
+        """立刻发一条测试消息。channel=mail / sct 只测一个通道，不传则两个都发。
+
+        设置页每个通道各有一个「发送测试」按钮，点哪个只发哪个。
+        """
+        ch = data.get("channel") if isinstance(data, dict) else ""
+        return notify_test(self.data_dir, ch)
+
+    def api_idrac_get(self, query=None):
+        """iDRAC 全量：实时组（机型/健康/风扇/温度/功耗/SEL）+ 固定信息台账
+        （CPU/内存条/阵列卡/物理盘槽位/卷/固件）。
+
+        固定信息只读一次，normalize 时从 idrac-static.json 灌回内存，页面刷新
+        是纯内存操作；想更新走 POST /api/idrac/refresh。
+        query 带 refresh=1 会强制重读快组（固定信息不跟着走，太重）。
+        没配置时不报错，回 ok=False + 默认配置，设置页据此渲染「未配置」状态。"""
+        cfg = idrac_load(self.data_dir)
+        pub = idrac_public(cfg)
+        if not pub["host"]:
+            return {"ok": False, "configured": False, "error": "", "config": pub,
+                    "fans": [], "temps": [], "psu": [], "disks": [], "dimms": [],
+                    "volumes": [], "controllers": [], "cpus": []}
+        force = bool((query or {}).get("refresh"))
+        if force:
+            d = idrac_collect(cfg, force=True)
+            slow = idrac_collect_slow(cfg, force=True, data_dir=self.data_dir)
+        else:
+            # 不强制时只读缓存：iDRAC8 一个请求 5 秒，页面刷新绝不能去等它。
+            # 缓存还没热（应用刚起来 / 刚配好账号）就回 warming，前端过一会儿再来取。
+            with _IDRAC_LOCK:
+                cached = _IDRAC_CACHE.get("fast")
+            if not cached or not cached.get("ok"):
+                # 快组还没热（开机头二十来秒）也要把台账的读取时间给出：
+                # 否则设置页会写「还没读到」，可实际上槽位早就有了。
+                # 只读文件，绝不在这里去拉慢组（那要 1.5~3 分钟）。
+                _led = idrac_static_read(self.data_dir, cfg) or {}
+                # 缓存里带着真实失败原因（超时/认证失败/TLS），透传给前端排障，
+                # 否则设置页只显示「未知错误」，与「测试连接」的逐步报错设计自相矛盾
+                return {"ok": False, "warming": not cached,
+                        "configured": True, "error": (cached or {}).get("error") or "", "config": pub,
+                        "fans": [], "temps": [], "psu": [], "disks": [], "dimms": [],
+                        "volumes": [], "controllers": [], "cpus": [],
+                        "idrac_fw": "", "problems": [],
+                        "static_ts": _led.get("static_ts"),
+                        "static_from": "disk" if _led else "",
+                        "static_host": pub["host"]}
+            d = dict(cached)
+            slow = idrac_collect_slow(cfg, data_dir=self.data_dir)
+        for k in ("cpus", "dimms", "disks", "volumes", "controllers",
+                  "idrac_fw", "idrac_model", "idrac_time", "idrac_offset",
+                  "idrac_health", "dimm_count", "dimm_gib", "dimm_bad",
+                  "disk_total", "disk_bad", "vol_bad"):
+            if k in slow:
+                d[k] = slow[k]
+        d["problems"] = idrac_problems(d, slow)
+        # 固定信息的元信息：什么时候读的、从文件还是刚拉的。前端据此显示
+        # 「固定信息 · 10-21 07:50 读取」，让「这是台账不是实时」一眼可见。
+        d["static_ts"] = slow.get("static_ts")
+        d["static_from"] = "disk" if slow.get("from_disk") else ("fetch" if slow else "")
+        d["static_host"] = str(cfg.get("host") or "")
+        if slow.get("refresh_error"):
+            d["static_error"] = slow.get("refresh_error")
+        if not slow.get("disks"):
+            # 台账还是空的才补一轮（幂等，已经有一轮在跑会直接返回）
+            idrac_ensure_slow_async(self.data_dir)
+        d["diag"] = idrac_diag()
+        d["configured"] = True
+        d["config"] = pub
+        if (query or {}).get("sel"):
+            # 只读缓存，前端取前几条——按 limit=5 单独请求会多等 5 秒
+            with _IDRAC_LOCK:
+                sel_cache = _IDRAC_CACHE.get("sel")
+            if sel_cache:
+                d["sel"] = dict(sel_cache["v"])
+        return d
+
+    def api_idrac_save(self, data):
+        cfg, err = idrac_save(self.data_dir, data if isinstance(data, dict) else {})
+        if err:
+            return {"ok": False, "error": err, "config": idrac_public(cfg)}
+        print("[fnmonitor] iDRAC 配置已更新：%s 地址=%s"
+              % ("开" if cfg.get("enabled") else "关", cfg.get("host") or "-"))
+        return {"ok": True, "error": "", "config": idrac_public(cfg),
+                "message": "已保存" if cfg.get("enabled") else "已保存（iDRAC 未启用）"}
+
+    def api_idrac_refresh_static(self):
+        """设置页「刷新固定信息」：后台重读一轮 CPU / 内存 / 阵列卡 / 盘 / 卷 / 固件。
+
+        固定信息只读一次，换盘、加内存之后要靠这个按钮才更新。一轮 1.5~3 分钟，
+        不能同步等，所以起线程立刻返回；前端轮询 /api/idrac 看 static_ts 变了
+        就知道读完了。
+        """
+        return idrac_refresh_static_async(self.data_dir)
+
+    def api_idrac_test(self, data):
+        """设置页「测试连接」：真连一次，把每一步的结果原样回给前端排障用。"""
+        cfg = idrac_load(self.data_dir)
+        data = data if isinstance(data, dict) else {}
+        # 允许用页面上还没保存的值直接试（密码留空则用已存的那份）
+        if data.get("host"):
+            cfg["host"] = str(data["host"]).strip()
+        if data.get("user"):
+            cfg["user"] = str(data["user"])
+        if data.get("password"):
+            cfg["password"] = str(data["password"])
+        if not cfg.get("host"):
+            return {"ok": False, "error": "请先填写 iDRAC 地址"}
+        # iDRAC8 每个请求实测 4.5~6 秒，超时给 6 秒会被误判成"连接超时"
+        root, err = _idrac_request(cfg, "", timeout=IDRAC_TIMEOUT)
+        out = {"ok": False, "host": cfg.get("host"), "steps": []}
+        if err:
+            out["error"] = err
+            out["steps"].append({"name": "服务根 /redfish/v1", "ok": False, "error": err})
+            return out
+        out["steps"].append({"name": "服务根 /redfish/v1", "ok": True,
+                             "detail": "Redfish %s" % (root.get("RedfishVersion") or "?")})
+        out["redfish"] = str(root.get("RedfishVersion") or "")
+        out["service_tag"] = str(((root.get("Oem") or {}).get("Dell") or {}).get("ServiceTag") or "")
+        ov = idrac_collect(cfg, force=True)
+        out["steps"].append({"name": "整机信息 /Systems", "ok": bool(ov.get("ok")),
+                             "error": ov.get("error") or ""})
+        out["overview"] = {k: ov.get(k) for k in
+                           ("model", "service_tag", "bios", "health", "power_state",
+                            "power_watts", "fan_summary")}
+        # 固定信息台账：Storage / Memory / Processors 各一次 $expand 取全，14 块盘逐条补，
+        # 一轮 1.5~3 分钟。测试连接成功就会落盘，之后启动直接读文件、不再发请求。
+        slow = idrac_collect_slow(cfg, force=True, data_dir=self.data_dir)
+        out["steps"].append({
+            "name": "固定信息 /Storage /Memory /Processors",
+            "ok": bool(slow.get("ok")),
+            "detail": "物理盘 %s 块 · 内存 %s 条 · 卷 %s 个 · 控制器 %s 个"
+                      % (len(slow.get("disks") or []), len(slow.get("dimms") or []),
+                         len(slow.get("volumes") or []), len(slow.get("controllers") or [])),
+            "error": slow.get("error") or ""})
+        for k in ("cpus", "dimms", "disks", "volumes", "controllers",
+                  "idrac_fw", "idrac_model", "idrac_time", "idrac_offset"):
+            if k in slow:
+                out[k] = slow[k]
+        sel = idrac_sel(cfg)
+        out["steps"].append({"name": "硬件日志 SEL", "ok": bool(sel.get("ok")),
+                             "detail": "共 %s 条，活跃告警 %s 条" % (sel.get("count") or 0,
+                                                                  len(sel.get("active") or [])),
+                             "error": sel.get("error") or ""})
+        out["sel"] = {"count": sel.get("count") or 0,
+                      "active": (sel.get("active") or [])[:5],
+                      "error": sel.get("error") or ""}
+        out["ok"] = bool(ov.get("ok"))
+        out["error"] = "" if out["ok"] else (ov.get("error") or "读取失败")
+        return out
+
+    def api_idrac_sel(self, query=None):
+        """硬件日志（SEL）最近若干条，含 Assert/Deassert 与活跃告警。"""
+        cfg = idrac_load(self.data_dir)
+        if not idrac_public(cfg)["host"]:
+            return {"ok": False, "error": "未配置 iDRAC", "entries": [], "active": []}
+        try:
+            limit = int((query or {}).get("limit") or IDRAC_SEL_LIMIT)
+        except Exception:
+            limit = IDRAC_SEL_LIMIT
+        return idrac_sel(cfg, limit=max(1, min(limit, 100)))
 
     def api_overview(self):
         """总览快照（返回预序列化 bytes，5 秒内多客户端复用同一份）。
@@ -7188,9 +10208,18 @@ class MonitorApp:
             self._weather_cache = None  # 位置变化后清缓存
         onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
-                  "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe"):
+                  "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
+                  "disk_scan_enabled"):
             if k in data:
                 updates[k] = onoff(data[k])
+        # 硬盘巡检间隔：0 = 关闭；其余就近取档位（6/12/24/72/168 小时）
+        if "disk_scan_interval_h" in data:
+            try:
+                h = int(data["disk_scan_interval_h"])
+            except Exception:
+                h = DEFAULT_CONFIG["disk_scan_interval_h"]
+            updates["disk_scan_interval_h"] = 0 if h <= 0 else min(
+                DISK_SCAN_PRESETS_H, key=lambda x: abs(x - h))
         for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
                   "power_rate_yuan", "power_base_w"):
             if k in data:
@@ -8172,11 +11201,17 @@ def load_config(data_dir):
                 cfg[k] = int(user[k])
             except Exception:
                 pass
-    # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测）必须随配置恢复
+    # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测 / 硬盘巡检）必须随配置恢复
     for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
-              "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe"):
+              "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
+              "disk_scan_enabled"):
         if k in user:
             cfg[k] = onoff(user[k])
+    if "disk_scan_interval_h" in user:
+        try:
+            cfg["disk_scan_interval_h"] = int(user["disk_scan_interval_h"])
+        except Exception:
+            pass
     for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
               "power_rate_yuan", "power_base_w"):
         if k in user:
@@ -8450,9 +11485,23 @@ def main():
     except Exception as e:
         print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
     app.collector.start()
+    # 硬盘巡检独立线程：与采集循环解耦，全盘 smartctl 不再拖慢 10 秒采样
+    scanner = DiskScanner(app.collector.db, config)
+    scanner.start()
+    # iDRAC 后台轮询：每次 Redfish 请求 5 秒，只能自己一条线程刷缓存，
+    # 采集循环和页面都只读缓存（面板卡不卡，全看这条线程有没有隔开）
+    idrac_poller = IdracPoller(app.collector.data_dir)
+    idrac_poller.start()
+    # 慢组（CPU/内存/物理盘/卷）另起一条：14 块盘逐个取要 1.5~3 分钟，
+    # 同线程会把风扇和功耗的 20 秒刷新整轮堵住
+    idrac_slow = IdracSlowPoller(app.collector.data_dir)
+    idrac_slow.start()
 
     def shutdown(sig, frame):
         app.collector.stop()
+        scanner.stop()
+        idrac_poller.stop()
+        idrac_slow.stop()
         threading.Thread(target=httpd.shutdown, daemon=True).start()
         sys.exit(0)
 
@@ -8473,3 +11522,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

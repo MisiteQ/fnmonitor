@@ -156,8 +156,26 @@ const SET_SCHEMA = [
   { id: 'disk', title: '网络与硬盘', icon: 'net', items: [
     cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
     cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
+    cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
+    cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
+    { k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
+      hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
+      run: async b => {
+        b.disabled = true;
+        try {
+          const j = await API.post('/api/disk_scan/now', {});
+          if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
+          else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
+        } catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+        b.disabled = false;
+      } },
+    { k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+      hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+      run: () => openSheet('scanlog') },
     cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
   ] },
+  { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
+  { id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
   { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
   { id: 'look', title: '外观', icon: 'palette', items: [
     uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
@@ -276,6 +294,339 @@ function renderAuth(card) {
   };
   x.out.onclick = doLogout;
   card._sync();
+}
+/* ---- 通知：硬盘告警推到邮箱 / 微信 ---- */
+let NB = null;
+const NOTIFY_PROVIDERS = [['qq', 'QQ 邮箱', 'smtp.qq.com', 465, 'ssl'], ['163', '163 邮箱', 'smtp.163.com', 465, 'ssl'],
+  ['126', '126 邮箱', 'smtp.126.com', 465, 'ssl'], ['exmail', '腾讯企业邮', 'smtp.exmail.qq.com', 465, 'ssl'],
+  ['outlook', 'Outlook', 'smtp.office365.com', 587, 'starttls'], ['custom', '自定义', '', 465, 'ssl']];
+async function loadNotify(force) {
+  if (NB && !force) return NB;
+  try { NB = await API.get('/api/notify'); }
+  catch (e) { NB = Object.assign({}, NB || {}, { load_error: e.message || '读取失败' }); }
+  return NB;
+}
+function renderNotify(card) {
+  card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
+· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
+· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
+    <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
+    <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
+    <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
+    <div class="set-row"><div><div class="lbl">发件账号</div><div class="hint">完整邮箱地址，同时作为发件人</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="you@qq.com" spellcheck="false" autocomplete="username" aria-label="发件账号"></div></div>
+    <div class="set-row"><div><div class="lbl">授权码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="邮箱授权码" autocomplete="new-password" aria-label="授权码"></div></div>
+    <div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
+    <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
+    <div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+    <div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
+    <div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
+    <div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
+  const x = collect(card);
+  const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
+              password: '', sct_enabled: 0, sct_key: '', hw_enabled: 0, hw_time: '08:00' };
+  const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
+    f.provider = v;
+    const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
+    if (pv && pv[2]) { f.host = pv[2]; f.port = pv[3]; f.secure = pv[4]; x.host.value = pv[2]; x.port.value = pv[3]; segSec.set(pv[4]); }
+  }, 'sm');
+  const segSec = makeSeg([['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不加密']], 'ssl', v => { f.secure = v; }, 'sm');
+  x.segP.append(segP); x.segSec.append(segSec);
+  const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
+  bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
+  bind(x.pw, 'password'); bind(x.sctkey, 'sct_key'); bind(x.hwTime, 'hw_time');
+  const setSw = (el, k) => el.addEventListener('click', () => {
+    const on = el.getAttribute('aria-checked') !== 'true';
+    el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
+  });
+  setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled'); setSw(x.swHw, 'hw_enabled');
+  const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
+  function sync() {
+    const n = NB || {};
+    x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
+    x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+    x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
+    segP.set(f.provider); segSec.set(f.secure);
+    if (document.activeElement !== x.host) x.host.value = f.host || '';
+    if (document.activeElement !== x.port) x.port.value = f.port || 465;
+    if (document.activeElement !== x.user) x.user.value = f.user || '';
+    if (document.activeElement !== x.to) x.to.value = f.to || '';
+    if (document.activeElement !== x.hwTime) x.hwTime.value = f.hw_time || '08:00';
+    x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
+    x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
+    setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
+    setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
+    setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+    setText(x.hHw, +f.hw_enabled
+      ? `已开启：每天 ${f.hw_time || '08:00'} 汇总发一封，只发到点仍未恢复的`
+      : '关闭：SEL 硬件日志与风扇 / 温度 / 电源不推送（硬盘巡检仍按上面的开关走）');
+    const last = n.last || {};
+    setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
+      ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
+      : '还没有推送记录：状态变化时才发消息。想现在确认配置可用，先「保存」再点上方对应通道的「发送测试」');
+  }
+  async function doSave() {
+    x.save.disabled = true;
+    const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
+                   user: f.user, to: f.to, sct_enabled: f.sct_enabled,
+                   hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00' };
+    if (f.password) body.password = f.password;
+    if (f.sct_key) body.sct_key = f.sct_key;
+    try {
+      const j = await API.post('/api/notify/save', body);
+      if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+      NB = Object.assign(await loadNotify(true), { last: (NB || {}).last || {} });
+      f.password = ''; f.sct_key = ''; x.pw.value = ''; x.sctkey.value = '';
+      toast('通知配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+    } catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+    x.save.disabled = false; sync();
+  }
+  x.save.onclick = doSave;
+  // 每个通道一个测试按钮：点哪个只发哪个，不会顺带把另一个通道也触发
+  const testOne = async (kind, btn, msg, name) => {
+    btn.disabled = true; setText(msg, '发送中…');
+    try {
+      const j = await API.post('/api/notify/test', { channel: kind });
+      if (j && j.ok) {
+        setText(msg, '已发送');
+        toast(name + '测试消息已发出，请查看' + (kind === 'mail' ? '邮箱收件箱' : '「方糖」服务号消息'), { icon: 'check', ms: 5000 });
+      } else {
+        setText(msg, '');
+        toast(name + '测试失败 · ' + String(((j && j.error) || '未知错误')).slice(0, 100), { icon: 'alert', ms: 7000 });
+      }
+    } catch (e) { setText(msg, ''); toast(name + '测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 6000 }); }
+    btn.disabled = false;
+  };
+  x.tMail.onclick = () => testOne('mail', x.tMail, x.mMail, '邮件');
+  x.tSct.onclick = () => testOne('sct', x.tSct, x.mSct, '微信');
+  card._sync = sync;
+  loadNotify().then(() => {
+    const n = NB || {};
+    Object.keys(f).forEach(k => { if (n[k] !== undefined && k !== 'password' && k !== 'sct_key') f[k] = n[k]; });
+    f.password = ''; f.sct_key = '';
+    sync();
+  });
+  sync();
+}
+let IB = null;
+/**
+ * 读 iDRAC 状态。
+ * refresh=true 让后端强制重读（保存 / 测试连接后用，iDRAC8 每个请求 5 秒，较慢）；
+ * 其余情况只读后端缓存——后台轮询线程在刷，页面刷新不该去等 iDRAC。
+ */
+async function loadIdrac(opts) {
+  opts = opts || {};
+  if (IB && !opts.refresh && !opts.reload) return IB;
+  try { IB = await API.get('/api/idrac?sel=1' + (opts.refresh ? '&refresh=1' : '')); }
+  catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
+  return IB;
+}
+/** iDRAC：Redfish 只读接带外管理口，风扇 / 温度 / 功耗 / 硬件日志。 */
+function renderIdrac(card) {
+  card.innerHTML = `<div class="note info notify-note">${ic('server')}<span><b>只读</b>：通过 Redfish 直连 iDRAC 读取风扇转速、温度、功耗与硬件日志，不会改动服务器任何设置。密码单独存 <span class="mono">idrac.json</span>（0600），接口只回「是否已填」。自签证书需要关闭校验，仅建议在内网使用。</span></div>
+    <div class="set-row inline"><div><div class="lbl">iDRAC</div><div class="hint" data-ref="hOn"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swOn" aria-label="启用 iDRAC"></button></div></div>
+    <div class="set-row"><div><div class="lbl">地址</div><div class="hint">iDRAC 管理口 IP 或主机名，只填地址，不要带 https://</div></div><div class="ctl"><input class="textfield mono" data-ref="host" placeholder="192.168.1.120" spellcheck="false" aria-label="iDRAC 地址"></div></div>
+    <div class="set-row"><div><div class="lbl">用户名</div><div class="hint">建议在 iDRAC 里单建一个只读账号</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="root" spellcheck="false" autocomplete="username" aria-label="iDRAC 用户名"></div></div>
+    <div class="set-row"><div><div class="lbl">密码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="iDRAC 登录密码" autocomplete="new-password" aria-label="iDRAC 密码"></div></div>
+    <div class="set-row inline"><div><div class="lbl">跳过证书校验</div><div class="hint">iDRAC 出厂是自签证书，内网访问需要关闭校验</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swTls" aria-label="跳过证书校验"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">硬件日志纳入告警</div><div class="hint">SEL 出现新的 Critical / Warning 时，跟硬盘告警一起推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swSel" aria-label="硬件日志纳入告警"></button></div></div>
+    <div class="set-row"><div><div class="lbl">连接与保存</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" data-ref="test">测试连接</button><button class="btn primary" type="button" data-ref="save">保存</button></div></div>
+    <div class="set-row inline"><div><div class="lbl">固定信息</div><div class="hint" data-ref="hStatic">槽位 / 内存 / 阵列卡 / 物理盘 / 卷只在首次连接时读一次，之后不再自动刷新</div></div><div class="ctl"><button class="btn" type="button" data-ref="refresh">刷新固定信息</button></div></div>
+    <div class="idrac-live" data-ref="live"></div>`;
+  const x = collect(card);
+  const f = { enabled: 0, host: '', user: '', password: '', verify_tls: 0, sel_alert: 1 };
+  const bind = (el, k) => el.addEventListener('input', () => { f[k] = el.value; });
+  bind(x.host, 'host'); bind(x.user, 'user'); bind(x.pw, 'password');
+  const setSw = (el, k, invert) => el.addEventListener('click', () => {
+    const on = el.getAttribute('aria-checked') !== 'true';
+    el.setAttribute('aria-checked', String(on));
+    f[k] = (invert ? !on : on) ? 1 : 0;
+    sync();
+  });
+  setSw(x.swOn, 'enabled'); setSw(x.swTls, 'verify_tls', true); setSw(x.swSel, 'sel_alert');
+  const hcls = h => /crit/i.test(h) ? 'h-crit' : /warn/i.test(h) ? 'h-warn' : 'h-ok';
+  const when = s => { try { return new Date(s).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { return String(s || ''); } };
+  function renderLive() {
+    const d = IB || {};
+    // 固定信息是台账不是实时数据，把「什么时候读的」直接写在行上，
+    // 免得以后有人看到旧槽位以为是 bug
+    const sts = Number(d.static_ts || 0);
+    x.refresh.disabled = !d.configured;
+    setText(x.hStatic, sts
+      ? `读取于 ${when(sts * 1000)}${d.static_from === 'disk' ? '' : '（刚读取）'} · 槽位 / 内存 / 阵列卡 / 物理盘 / 卷都来自这份台账，之后不再自动刷新`
+      : '还没读到：iDRAC 连通后会自动读一次（1.5–3 分钟），之后不再自动刷新');
+    if (!d.configured) { x.live.innerHTML = ''; return; }
+    if (d.warming) {
+      x.live.innerHTML = `<div class="idrac-head"><span class="h-ok">正在读取</span><span>iDRAC8 的 Redfish 每个请求约 5 秒，首次读取要 30–60 秒；后台会持续刷新，这里稍后自动出数据</span></div>`;
+      return;
+    }
+    if (!d.ok) {
+      x.live.innerHTML = `<div class="idrac-head"><span class="h-crit">读取失败</span><span>${esc(d.error || '未知错误')}</span></div>`;
+      return;
+    }
+    const fs = d.fan_summary || {};
+    const head = [
+      `<b>${esc(d.model || 'Dell 服务器')}</b>`,
+      d.service_tag ? `服务标签 ${esc(d.service_tag)}` : '',
+      `整机 <span class="${hcls(d.health || '')}">${esc(d.health || '未知')}</span>`,
+      d.power_state ? (d.power_state === 'On' ? '已开机' : esc(d.power_state)) : '',
+      d.power_watts != null ? `功耗 <b>${esc(String(d.power_watts))}</b> W` : '',
+      fs.count ? `风扇 ${fs.count} 颗 · ${fs.min}–${fs.max} RPM · 均 ${fs.avg}` : '',
+      d.bios ? `BIOS ${esc(d.bios)}` : ''
+    ].filter(Boolean).join(' · ');
+    const fans = (d.fans || []).map(v => `<div class="idrac-fan${v.health && v.health.toUpperCase() !== 'OK' ? ' bad' : ''}"><b>${esc(v.name)}</b>${esc(String(v.rpm))}<small>RPM</small></div>`).join('');
+    const temps = (d.temps || []).slice(0, 8).map(t => `<span>${esc(String(t.name))} <b>${esc(String(t.c))}</b>°C${t.crit != null ? `<small class="faint"> / ${esc(String(t.crit))}</small>` : ''}</span>`).join('');
+
+    // ---- CPU ----
+    const cpus = d.cpus || [];
+    const cpuLine = cpus.length ? cpus.map(c => `${esc(c.model || 'CPU')} <span class="faint">${c.cores ? c.cores + ' 核' : ''}${c.threads ? ' / ' + c.threads + ' 线程' : ''}${c.mhz ? ' · ' + (c.mhz / 1000).toFixed(1) + 'GHz' : ''}</span>`).join('　') : '';
+
+    // ---- 内存条 ----
+    const dimms = d.dimms || [];
+    const dimmHead = dimms.length
+      ? `${dimms.length} 条 · ${d.dimm_gib || 0} GiB${d.dimm_bad ? ` · <span class="h-crit">${d.dimm_bad} 条异常</span>` : ' · 全部正常'}`
+      : '';
+    const dimmRows = dimms.map(m => `<div class="${m.health && m.health.toUpperCase() !== 'OK' ? 'bad' : ''}"><span class="mono">${esc(m.slot)}</span><span>${Math.round(m.mb / 1024)} GB</span><span class="faint">${esc(m.type)}${m.mhz ? ' · ' + m.mhz + 'MHz' : ''}</span><span class="faint">${esc(m.vendor || '')}</span></div>`).join('');
+
+    // ---- 阵列卡与物理盘 ----
+    const ctrls = d.controllers || [];
+    const disks = d.disks || [];
+    const vols = (d.volumes || []).filter(v => v.raid && v.raid.toUpperCase() !== 'NONE');
+    const ctrlLine = ctrls.map(c => `${esc(c.model || c.id)}${c.firmware ? ` <span class="faint">固件 ${esc(c.firmware)}</span>` : ''}${c.health && c.health.toUpperCase() !== 'OK' ? ` <span class="h-crit">${esc(c.health)}</span>` : ''}`).join('　');
+    const diskHead = disks.length
+      ? `${disks.length} 块${d.disk_bad ? ` · <span class="h-crit">${d.disk_bad} 块异常</span>` : ' · 全部正常'}${vols.length ? ` · ${vols.length} 个卷` : ''}`
+      : '';
+    const diskRows = disks.map(k => {
+      const bad = k.fail_pred || (k.health && k.health.toUpperCase() !== 'OK');
+      const st = k.fail_pred ? '预测故障' : (k.health && k.health.toUpperCase() !== 'OK' ? k.health : '正常');
+      return `<div class="dr${bad ? ' bad' : ''}"><span class="mono">${esc(String(k.bay))}</span><span class="mono" title="${esc(k.serial || '')}">${esc(k.model || '?')}</span><span>${k.cap_gb ? k.cap_gb + 'G' : '-'}</span><span class="faint">${esc(k.protocol || k.media || '')}${k.rpm ? ' ' + (k.rpm / 1000).toFixed(1) + 'k' : ''}</span><span class="${bad ? 'h-crit' : 'h-ok'}">${esc(st)}</span></div>`;
+    }).join('');
+
+    // ---- 固件 ----
+    const fw = [
+      d.idrac_fw ? `iDRAC ${esc(d.idrac_fw)}` : '',
+      d.bios ? `BIOS ${esc(d.bios)}` : '',
+      ...ctrls.filter(c => c.firmware).map(c => `${esc(c.model || '阵列卡')} ${esc(c.firmware)}`)
+    ].filter(Boolean).join(' · ');
+
+    const sel = ((d.sel && d.sel.entries) || []).slice(0, 5);
+    const selHtml = sel.length ? `<div class="idrac-sec"><div class="idrac-sec-h">硬件日志 <span class="faint">最近 ${sel.length} 条</span></div><div class="idrac-sel">${sel.map(e => `<div class="e"><span class="t">${esc(when(e.created))}</span><span class="s ${esc(e.severity)}">${esc(e.severity || '-')}</span><span class="m">${esc(e.message)}</span></div>`).join('')}</div></div>` : '';
+
+    x.live.innerHTML = `<div class="idrac-head">${head}</div>`
+      + (fans ? `<div class="idrac-fans">${fans}</div>` : '')
+      + (temps ? `<div class="idrac-temps">${temps}</div>` : '')
+      + (cpuLine ? `<div class="idrac-sec"><div class="idrac-sec-h">处理器</div><div class="idrac-line">${cpuLine}</div></div>` : '')
+      + (dimms.length ? `<div class="idrac-sec"><div class="idrac-sec-h">内存 <span class="faint">${dimmHead}</span></div><div class="idrac-dimms">${dimmRows}</div></div>` : '')
+      + (ctrlLine ? `<div class="idrac-sec"><div class="idrac-sec-h">阵列卡</div><div class="idrac-line">${ctrlLine}</div></div>` : '')
+      + (disks.length ? `<div class="idrac-sec"><div class="idrac-sec-h">物理盘 <span class="faint">${diskHead}</span></div><div class="idrac-disks"><div class="hr"><span class="ih">槽位</span><span class="ih">型号</span><span class="ih">容量</span><span class="ih">接口</span><span class="ih">状态</span></div>${diskRows}</div></div>` : '')
+      + (fw ? `<div class="idrac-sec"><div class="idrac-sec-h">固件</div><div class="idrac-line faint">${fw}</div></div>` : '')
+      + selHtml;
+  }
+  function sync() {
+    const n = (IB && IB.config) || {};
+    x.swOn.setAttribute('aria-checked', String(!!+f.enabled));
+    x.swTls.setAttribute('aria-checked', String(!+f.verify_tls));
+    x.swSel.setAttribute('aria-checked', String(!!+f.sel_alert));
+    if (document.activeElement !== x.host) x.host.value = f.host || '';
+    if (document.activeElement !== x.user) x.user.value = f.user || '';
+    x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : 'iDRAC 登录密码';
+    setText(x.hPw, n.password_set ? '已保存过密码，留空表示不修改' : 'iDRAC 的登录密码（就是打开 iDRAC 网页时用的那个）');
+    setText(x.hOn, +f.enabled ? (+f.host && n.password_set && f.user ? '已启用：巡检时一并读取整机硬件状态' : '已启用，保存前请补全地址、用户名与密码') : '关闭：不读取 iDRAC');
+    if (document.activeElement !== x.host && !x.hMsg.textContent) {
+      setText(x.hMsg, (IB && IB.ok) ? '最近一次读取成功 · 打开设置页会自动刷新状态' : ((IB && IB.error) || '填好地址与账号后点「测试连接」'));
+    }
+    renderLive();
+  }
+  async function doSave() {
+    x.save.disabled = true;
+    const body = { enabled: f.enabled, host: f.host, user: f.user, verify_tls: f.verify_tls, sel_alert: f.sel_alert };
+    if (f.password) body.password = f.password;
+    try {
+      const j = await API.post('/api/idrac/save', body);
+      if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
+      f.password = ''; x.pw.value = '';
+      IB = await loadIdrac({ refresh: true });
+      toast('iDRAC 配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
+      setText(x.hMsg, (IB && IB.ok) ? '已保存并读取成功' : ('已保存 · ' + ((IB && IB.error) || '尚未读取到数据')));
+    } catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
+    x.save.disabled = false; sync();
+  }
+  x.save.onclick = doSave;
+  x.test.onclick = async () => {
+    x.test.disabled = true; setText(x.hMsg, '正在读取 iDRAC…（iDRAC8 每个请求约 5 秒，首次要 30–60 秒）');
+    const body = { host: f.host, user: f.user };
+    if (f.password) body.password = f.password;
+    try {
+      const j = await API.post('/api/idrac/test', body);
+      const steps = (j && j.steps) || [];
+      const bad = steps.find(s => !s.ok);
+      if (j && j.ok) {
+        const ov = j.overview || {};
+        setText(x.hMsg, `连接成功 · ${ov.model || 'Dell'} · 服务标签 ${j.service_tag || ov.service_tag || '-'} · 风扇 ${(ov.fan_summary || {}).count || 0} 颗 · 物理盘 ${(j.disks || []).length} 块 · 内存 ${(j.dimms || []).length} 条 · 硬件日志 ${(j.sel || {}).count || 0} 条`);
+        toast('iDRAC 连接成功', { icon: 'check', ms: 4000 });
+      } else {
+        setText(x.hMsg, '连接失败：' + String((bad && (bad.error || bad.detail)) || (j && j.error) || '未知错误'));
+        toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 });
+      }
+      IB = await loadIdrac({ refresh: true }); sync();
+    } catch (e) { setText(x.hMsg, '连接失败：' + String(e.message).slice(0, 80)); toast('iDRAC 连接失败', { icon: 'alert', ms: 5000 }); }
+    x.test.disabled = false;
+  };
+  card._sync = sync;
+  // 固定信息只读一次：换盘 / 加内存 / 换阵列卡之后点这里重读。
+  // 一轮 1.5~3 分钟，后端起线程跑，这里轮询 static_ts 变了就刷新界面。
+  x.refresh.onclick = async () => {
+    const label = x.refresh.textContent;
+    const base = Number((IB || {}).static_ts || 0);
+    x.refresh.disabled = true;
+    x.refresh.textContent = '读取中…';
+    setText(x.hStatic, '正在重读固定信息（CPU / 内存 / 阵列卡 / 物理盘 / 卷），iDRAC8 一轮要 1.5–3 分钟，读完自动更新');
+    let done = false;
+    try {
+      const j = await API.post('/api/idrac/refresh', {});
+      if (!j || !j.ok) {
+        toast('刷新失败 · ' + String((j && j.error) || '未知错误').slice(0, 90), { icon: 'alert', ms: 7000 });
+        return;
+      }
+      if (j.busy) toast('已经有一轮在读取了，等它跑完会自动更新');
+      const t0 = Date.now();
+      while (Date.now() - t0 < 300000) {
+        await new Promise(r => setTimeout(r, 4000));
+        IB = await loadIdrac({ reload: true });
+        if (Number((IB || {}).static_ts || 0) > base) {
+          done = true;
+          renderLive(); sync();
+          toast('固定信息已更新', { icon: 'check', ms: 4000 });
+          return;
+        }
+      }
+      toast('读取超过 5 分钟还没回来，稍后再点一次', { icon: 'alert', ms: 7000 });
+    } catch (e) {
+      toast('刷新失败 · ' + String(e.message || e).slice(0, 90), { icon: 'alert', ms: 6000 });
+    } finally {
+      x.refresh.textContent = label;
+      x.refresh.disabled = false;
+      if (!done) renderLive();
+    }
+  };
+  // 后台轮询线程还在读取时自动再取几轮，用户不用手动刷新页面
+  let warmTries = 0;
+  function retryWarm() {
+    if (!IB || !IB.warming || warmTries >= 8) return;
+    warmTries += 1;
+    setTimeout(async () => {
+      await loadIdrac({ reload: true });
+      sync();
+      retryWarm();
+    }, 15000);
+  }
+  loadIdrac().then(() => {
+    const c = (IB && IB.config) || {};
+    ['enabled', 'host', 'user', 'verify_tls', 'sel_alert'].forEach(k => { if (c[k] !== undefined) f[k] = c[k]; });
+    f.password = '';
+    sync();
+    retryWarm();
+  });
+  sync();
 }
 async function doLogout() {
   try { await API.post('/api/auth/logout', {}); } catch (e) { /* 仍然跳转 */ }

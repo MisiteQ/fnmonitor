@@ -177,6 +177,64 @@ const SHEETS = {
       const x = collect(b);
       if (x.sp) x.sp.append(makeSpark());
       void sm0;
+      /* 单盘 SMART 明细按需读取：只有打开这个面板才会请求，不参与 60 秒循环。
+         后端另有一层 5 分钟缓存，重复点开不会反复跑 smartctl。 */
+      const paintSmart = () => {
+        const dd = disksOf(S.o).find(z => z.name === a); if (!dd) return;
+        const slp = isSleep(dd), sd = smartDetailOf(a), sas = !!(sd && sd.scsi);
+        const val = k => (sd && sd[k] != null ? sd[k] : dd[k]);
+        const temp = (sd && sd.temp_c != null) ? sd.temp_c : dd.temp;
+        const num = v => ok(v) ? esc(Number(v).toLocaleString()) : '<span class="faint">—</span>';
+        const flag = v => (+v > 0 ? 'warn' : true);
+        let rows = [['整体评估', dd.health ? esc(/PASS/i.test(dd.health) ? '通过' : dd.health) : '<span class="faint">未读取到</span>',
+          /FAIL/i.test(dd.health || '') ? 'crit' : /PASS|OK/i.test(dd.health || '') ? true : null]];
+        if (sas) {
+          // SAS/SCSI 没有 ATA 属性表：看增长缺陷表与错误计数器，ECC 计数会回绕只能参考
+          rows = rows.concat([
+            ['增长缺陷表', num(sd.grown_defects), sd.grown_defects != null ? flag(sd.grown_defects) : null],
+            ['待定缺陷', num(sd.scsi_pending_defects), sd.scsi_pending_defects != null ? flag(sd.scsi_pending_defects) : null],
+            ['不可纠正错误', num(sd.scsi_uncorrected), flag(sd.scsi_uncorrected || 0)],
+            ['ECC 纠正次数', num(sd.scsi_ecc) + ' <span class="faint">计数器会回绕</span>', null],
+            ['重读 / 重写', num(sd.scsi_rereads), null],
+            ['已处理数据', ok(sd.scsi_gb) ? esc(F.dsizeStr(sd.scsi_gb * 1e9)) : '<span class="faint">—</span>', null],
+          ]);
+        } else {
+          const cnt = SMART_KEYS.filter(([k]) => val(k) != null && val(k) !== '');
+          rows = rows.concat(cnt.map(([k, l]) => [l, esc(val(k)), flag(val(k))]));
+        }
+        rows = rows.concat([
+          ['通电时间', val('power_on_hours') ? `${esc(Number(val('power_on_hours')).toLocaleString())} 小时（${F.hours(val('power_on_hours'))}）` : '<span class="faint">—</span>', null],
+          ['温度', ok(temp) ? `${F.int(temp)}℃` : '<span class="faint">—</span>', ok(temp) && !slp ? (LV.dtemp(temp) || true) : null],
+          ['转速', val('rpm') ? esc(val('rpm')) : '<span class="faint">—</span>', null]]);
+        let hint = '';
+        if (sas) hint = slp ? '休眠中，明细待硬盘唤醒后读取' : '';
+        else if (!rows.some(r => r[2] === 'warn' || r[2] === 'crit') && !SMART_KEYS.some(([k]) => val(k) != null && val(k) !== '')) {
+          hint = slp ? '休眠中，扇区计数待硬盘唤醒后读取' : (sd && sd.error ? `SMART 明细读取失败：${esc(sd.error)}` : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）');
+        }
+        setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${slp && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
+          + (hint ? `<tr><td colspan="3" class="faint" style="font-size:12px">${hint}</td></tr>` : ''));
+        const extra = [];
+        if (sas && sd.manufactured) extra.push(['生产周期', esc(sd.manufactured)]);
+        /* 实际硬盘位 = iDRAC 物理盘列表里的「插槽编号」，靠序列号对齐到 /dev/sdX。
+           槽位不会变，后端跟着 10 分钟才刷一次的明细一起读，不参与实时轮询。
+           对不上（iDRAC 没配 / 盘不在阵列卡下 / 序列号读不到）就显示 —，不猜一个
+           出来，免得照错的位置去拔盘。 */
+        const slotTip = '机箱里的物理槽位，取 iDRAC 物理盘列表的「插槽编号」（从 0 起）';
+        const slotState = (S.o && S.o.idrac_slot_state) || 'off';
+        const slot = dd.slot != null
+          ? `<b class="mono" title="${slotTip}，对照 iDRAC 物理盘列表第 ${F.int(dd.slot)} 项">插槽 ${F.int(dd.slot)}</b> <span class="faint">iDRAC</span>`
+          : slotState === 'warming'
+            ? '<span class="faint" title="iDRAC 明细正在后台读取，首次约 40~60 秒；读到后这里会自动出现槽位号，不用刷新">读取中…</span>'
+            : slotState === 'ready'
+              ? '<span class="faint" title="iDRAC 明细里没有这块盘：可能不在阵列卡下，或序列号对不上">—</span>'
+              : '<span class="faint" title="iDRAC 未启用，读不到机箱槽位（设置 → iDRAC 里填地址和账号即可）">—</span>';
+        setHTML(x.info, kvHTML([['型号', dash(vendorModel(dd))], ['序列号', `<span class="mono">${dash(dd.serial)}</span>`],
+          ['类型', KIND_TXT[diskKind(dd)]], ['硬盘容量', F.dsizeStr(dd.size)],
+          ['挂载点', `<span class="mono">${dash((dd.mounts || []).join(', '))}</span>`],
+          ['实际硬盘位', slot]].concat(extra)));
+      };
+      /* 休眠盘不发请求：smartctl -n standby 不会唤醒它，但省掉一次无意义的 IO */
+      if (!sl) loadSmartDetail(a).then(() => paintSmart());
       return o => {
         const d = disksOf(o).find(z => z.name === a); if (!d) return;
         const sm = smartState(d), sl2 = isSleep(d), hc = +d.total > 0;
@@ -186,15 +244,7 @@ const SHEETS = {
         setHTML(x.notes, (sl2 ? `<div class="note sleep">${ic('moon')}<span>这块硬盘已停转休眠。飞牛监控不会主动唤醒它：容量与温度为休眠前的最后读数，SMART 会在它下次被系统唤醒时更新。</span></div>` : '')
           + (sm.lv === 'warn' || sm.lv === 'crit' ? `<div class="note warn">${ic('alert')}<span><b>${esc(sm.text)}。</b>建议确认 ${esc((d.mounts || []).join('、') || '该盘上的数据')} 有备份，并留意数值是否继续增长。</span></div>` : '')
           + (!sl2 && LV.dtemp(d.temp) ? `<div class="note warn">${ic('temp')}<span>温度 ${F.int(d.temp)}℃，已超过${LV.dtemp(d.temp) === 'crit' ? '严重' : '警告'}阈值（${LV.dtemp(d.temp) === 'crit' ? TH.diskTempCrit : TH.diskTempWarn}℃）。</span></div>` : ''));
-        const cnt = SMART_KEYS.filter(([k]) => d[k] != null && d[k] !== '');
-        const rows = [['整体评估', d.health ? esc(/PASS/i.test(d.health) ? '通过' : d.health) : '<span class="faint">未读取到</span>', /FAIL/i.test(d.health || '') ? 'crit' : /PASS|OK/i.test(d.health || '') ? true : null]]
-          .concat(cnt.map(([k, l]) => [l, esc(d[k]), +d[k] > 0 ? 'warn' : true]))
-          .concat([['通电时间', d.power_on_hours ? `${esc(Number(d.power_on_hours).toLocaleString())} 小时（${F.hours(d.power_on_hours)}）` : '<span class="faint">—</span>', null],
-            ['温度', ok(d.temp) ? `${F.int(d.temp)}℃` : '<span class="faint">—</span>', ok(d.temp) && !sl2 ? (LV.dtemp(d.temp) || true) : null],
-            ['转速', d.rpm ? esc(d.rpm) : '<span class="faint">—</span>', null]]);
-        setHTML(x.smart, rows.map(([k, v, s]) => `<tr><td>${k}</td><td class="r tnum ${s === 'warn' || s === 'crit' ? 'st-' + s + ' smart-flag' : ''}">${v}</td><td class="r">${sl2 && k !== '整体评估' ? '<span class="faint">休眠前</span>' : s === true ? `<span class="st-ok">${ic('check', 'i-sm')}</span>` : s ? `<span class="pill ${s}">${s === 'crit' ? '严重' : '留意'}</span>` : '<span class="faint">—</span>'}</td></tr>`).join('')
-          + (cnt.length ? '' : `<tr><td colspan="3" class="faint" style="font-size:12px">${sl2 ? '休眠中，扇区计数待硬盘唤醒后读取' : '该硬盘未提供重映射 / 待映射扇区等计数（NVMe 或 smartctl 不可用）'}</td></tr>`));
-        setHTML(x.info, kvHTML([['型号', dash(vendorModel(d))], ['序列号', `<span class="mono">${dash(d.serial)}</span>`], ['类型', KIND_TXT[diskKind(d)]], ['硬盘容量', F.dsizeStr(d.size)], ['挂载点', `<span class="mono">${dash((d.mounts || []).join(', '))}</span>`]]));
+        paintSmart();
         if (x.sp) { const bb = S.diskBuf[d.name]; if (bb && bb.r.length > 1) x.sp.firstChild.set([{ values: bb.r }, { values: bb.w }], { min: 0 }); const io = ioOf(o, d.name); setText(x.rv, io ? F.rateStr(io.read_rate) : '--'); setText(x.wv, io ? F.rateStr(io.write_rate) : '--'); }
       };
     },
@@ -249,17 +299,22 @@ const SHEETS = {
         <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
       sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
       b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
-        <div class="note info">${ic('info')}<span>RAPL 只测得 CPU 封装（与内存）功耗；整机值叠加了主板底座与活动硬盘的典型功耗，可在设置中按插座实测补差。无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
+        <div class="note info">${ic('info')}<span>接了 iDRAC 时直接用电源实测的整机输出，这是最准的口径（含主板、内存、网卡与全部硬盘）。没有 iDRAC 才会退回 RAPL：它只测得 CPU 封装（与内存）功耗，整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
       const x = collect(b);
       b.addEventListener('click', e => { const g = e.target.closest('[data-goset]'); if (g) { closeSheet(); focusGroup(g.dataset.goset); } });
       return o => {
         const p = o.power || {}, has = pwrOk(o), ps = S.pstats || {};
-        dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
+        dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'idrac' ? 'iDRAC 整机实测' : p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
         const parts = has ? powerParts(p) : [];
         setHTML(x.st, parts.map(q => ppI(q[2])).join('')); parts.forEach((q, i) => { x.st.children[i].style.flexGrow = q[1].toFixed(2); });
         setHTML(x.leg, parts.map(([l, v, c]) => `<span>${ppI(c)}${esc(l)} <b>${F.d1(v)} W</b></span>`).join('') || '<span>无功耗数据</span>');
         const w = v => ok(v) ? F.d1(v) + ' W' : '<span class="faint">—</span>';
-        setHTML(x.parts, has ? kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]]) : '');
+        // iDRAC 给的是整机电源输出，没有 CPU/内存/硬盘的分解，改列电源侧读数
+        const psuRows = (p.psu || []).map(u => [`电源 ${esc(u.name)}`,
+          `${ok(u.volts) ? esc(String(u.volts)) + ' V' : '—'} · ${esc(u.health || '')}${u.model ? ' · ' + esc(u.model) : ''}`]);
+        setHTML(x.parts, has ? (p.source === 'idrac'
+          ? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
+          : kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
         const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
         setText(x.rate, ok(co.rate_yuan_per_kwh) ? `电价 ${co.rate_yuan_per_kwh} 元/kWh` : '');
         setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
@@ -293,6 +348,66 @@ const SHEETS = {
         setText(x.netN, !run ? '容器未运行' : c.net_host ? 'host 网络模式：与宿主机共用网卡，Docker 不单独统计' : !rOk ? '采样中，约 30 秒后显示' : c.net_src === 'stats' ? '按 docker stats 的累计读数差分估算（只有 3 位有效数字，低速时偏粗）' : '容器网络命名空间计数器差分，精确到字节');
         const bb = S.ctrBuf[c.id]; sp.set([{ values: run && bb && bb.length > 1 ? bb : [0, 0] }], { min: 0, max: Math.max(5, ...(bb || [0])), live: run ? 'ink' : 'none' });
         setHTML(x.kv, kvHTML([['镜像', `<span class="mono">${esc(c.image)}</span>`], ['容器 ID', `<span class="mono">${esc(c.id)}</span>`], ['状态', esc(c.status_zh || zhStatus(c.status) || c.state || '--')], ['端口', ctrPorts(c.ports).length ? ctrPorts(c.ports).map(p => `<span class="port">${esc(p)}</span>`).join(' ') : '<span class="faint">无映射</span>'], ['内存', run && c.mem_usage ? `${esc(c.mem_usage)}${c.mem_percent ? `（${esc(c.mem_percent)}%）` : ''}` : '<span class="faint">—</span>'], ['累计流量', run && !c.net_host && (ok(c.net_in_bytes) || c.net) ? (ok(c.net_in_bytes) && ok(c.net_out_bytes) ? `↓ ${F.bytesStr(c.net_in_bytes)} · ↑ ${F.bytesStr(c.net_out_bytes)}<div class="sub">自容器启动</div>` : esc(c.net)) : '<span class="faint">—</span>'], ['创建时间', dash(c.created)]]));
+      };
+    },
+  },
+  /* 巡检流水：每次巡检留一行。有变化记变化内容，没变化记「未见异常」。
+     「未见异常」7 天后自动清；有变化的永久保留，只能手动清。
+     数据来自 /api/scan_log（只读本机 sqlite，不触发任何 smartctl）。 */
+  scanlog: {
+    icon: () => 'list', title: () => '巡检历史', sub: () => '每次巡检一行 · 有变化记详情，没变化记未见异常',
+    build(b) {
+      b.innerHTML = `<div class="card pad scanlog-bar"><span class="faint" data-ref="sum" style="flex:1;min-width:140px"></span><button class="btn sm ghost" type="button" data-clear="ok">${ic('eye-off')}清理未见异常</button><button class="btn sm ghost" type="button" data-clear="all">${ic('x')}清空全部</button></div>
+        <div data-ref="list" style="margin-top:10px"></div>
+        <p class="sub">每次巡检固定留一条记录：分级或计数（重映射扇区 / 待映射扇区 / 不可纠正错误）有变化就写清哪块盘、从多少变到多少；没有变化就记「未见异常」。温度、通电时长这类天天在动的量不算变化。未见异常的记录 7 天后自动清理，有变化的记录不会自动清理，只有点上面的按钮才删。</p>`;
+      const x = collect(b), st = { rows: null, err: '', loading: false };
+      const ago = ts => {
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (s < 90) return '刚刚';
+        if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+        if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+        return Math.round(s / 86400) + ' 天前';
+      };
+      const one = r => {
+        const ch = !!r.changed, txt = r.summary || (ch ? '有变化' : '未见异常');
+        return `<div class="row-i" style="grid-template-columns:auto 1fr auto">
+          <span class="${ch ? 'st-warn' : 'st-ok'}">${ic(ch ? 'alert' : 'check-c')}</span>
+          <div style="min-width:0"><b style="font-weight:600;${ch ? '' : 'color:var(--ink-2)'}">${esc(txt)}</b>
+            <div class="sub">${esc(F.mdhm(r.ts))} · ${esc(ago(r.ts))}${+r.total ? ` · ${+r.total} 块盘` : ''}</div></div>
+          <span class="pill ${ch ? 'warn' : 'ok'}">${ch ? '有变化' : '未见异常'}</span></div>`;
+      };
+      const draw = () => {
+        if (!st.rows && st.loading) setHTML(x.list, `<div class="card pad">${emptyHTML('正在读取巡检流水…', '', 'clock')}</div>`);
+        else if (st.err) setHTML(x.list, `<div class="card pad">${emptyHTML('读取失败', esc(st.err))}</div>`);
+        else if (!st.rows || !st.rows.length) setHTML(x.list, `<div class="card pad">${emptyHTML('还没有巡检记录', '下一次巡检完成后这里会出现第一条记录', 'list')}</div>`);
+        else setHTML(x.list, rowsCard(st.rows.map(one).join('')));
+        const n = (st.rows || []).length, chg = (st.rows || []).filter(r => r.changed).length;
+        setText(x.sum, st.rows ? `${n} 条记录${chg ? ` · ${chg} 条有变化` : ''}` : st.loading ? '读取中…' : '');
+      };
+      const load = async () => {
+        st.loading = true; draw();
+        try { const j = await API.get('/api/scan_log?limit=200'); st.rows = (j && j.items) || []; st.err = ''; }
+        catch (e) { st.err = String((e && e.message) || e); }
+        st.loading = false; draw();
+      };
+      b.addEventListener('click', async e => {
+        const t = e.target.closest('[data-clear]'); if (!t) return;
+        const onlyOk = t.dataset.clear === 'ok';
+        if (!confirm(onlyOk ? '清理所有「未见异常」记录？有变化的记录会保留。' : '清空全部巡检记录？有变化的记录也会一起删掉，无法恢复。')) return;
+        t.disabled = true;
+        try {
+          const j = await API.post('/api/scan_log/clear', onlyOk ? { only_ok: true } : {});
+          toast((j && j.message) || '已清理', { key: 'scanlog', icon: 'check' });
+          await load();
+        } catch (err) { toast('清理失败 · ' + String((err && err.message) || err).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+        t.disabled = false;
+      });
+      load();
+      // 巡检刚跑完（last_ts 变了）就悄悄刷新一次，不用手动关掉重开
+      let seen = (S.diskHealth && S.diskHealth.last_ts) || 0;
+      return () => {
+        const lt = (S.diskHealth && S.diskHealth.last_ts) || 0;
+        if (lt && lt !== seen) { seen = lt; load(); }
       };
     },
   },
