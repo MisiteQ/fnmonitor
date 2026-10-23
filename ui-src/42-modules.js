@@ -223,7 +223,7 @@ function thermoList(o, all) {
   ((o.sensors || {}).temps || []).forEach((t, i) => { if (t.type === 'disk' || !ok(t.value)) return; L.push({ k: 's' + i + t.name, label: t.name, v: +t.value, kind: t.type === 'cpu' ? 'cpu' : 'other', max: t.max, crit: t.crit }); });
   return all ? L : L.slice(0, 6);
 }
-const diskThermo = o => disksOf(o).filter(d => ok(d.temp)).map(d => ({ k: 'd-' + d.name, label: d.name + (isSleep(d) ? ' · 休眠' : ''), v: +d.temp, kind: 'disk', sleep: isSleep(d) }));
+const diskThermo = o => disksOf(o).filter(d => ok(d.temp)).map(d => ({ k: 'd-' + d.name, label: diskLabel(d) + (isSleep(d) ? ' · 休眠' : ''), v: +d.temp, kind: 'disk', sleep: isSleep(d) }));
 const tMarks = t => t.kind === 'cpu' ? [TH.tempWarn, TH.tempCrit] : t.kind === 'disk' ? [TH.diskTempWarn, TH.diskTempCrit] : [t.max, t.crit].filter(ok);
 const tLv = t => t.kind === 'cpu' ? LV.temp(t.v) : t.kind === 'disk' ? LV.dtemp(t.v) : (ok(t.crit) && t.v >= t.crit ? 'crit' : ok(t.max) && t.v >= t.max ? 'warn' : '');
 const tRamp = t => t.kind === 'disk' ? 'dtemp' : 'temp';

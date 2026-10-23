@@ -1287,6 +1287,12 @@ dd .diag-link{margin:0;height:24px}
 @media (max-width: 720px){.idrac-disks .hr,.idrac-disks .dr{grid-template-columns:32px minmax(0,1fr) 58px}
 .idrac-disks .hr>span:nth-child(3),.idrac-disks .hr>span:nth-child(4),.idrac-disks .dr>span:nth-child(3),.idrac-disks .dr>span:nth-child(4){display:none}
 }
+.set-sub{margin:14px 0 2px;color:var(--ink-3);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.set-card>.set-sub:first-child{margin-top:0}
+.blk-row .lbl{transition:opacity .15s ease}
+.blk-row.blk-off .lbl{opacity:.5}
+.mod-dek .warn.dismissible>b{flex:none;white-space:nowrap}
+.mod-dek.has-warn{max-width:82ch}
 </style>
 </head>
 <body>
@@ -2104,6 +2110,9 @@ return String(a.name).localeCompare(String(b.name));
 };
 const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
+const diskSlot = d => (d && d.slot != null && d.slot !== '' && isFinite(+d.slot)) ? +d.slot : null;
+const diskLabel = d => { const s = diskSlot(d); return s != null ? `插槽 ${s}` : String((d && d.name) || ''); };
+const diskLabelByName = (o, name) => diskLabel(disksOf(o).find(z => z.name === name) || { name });
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];
 function smartState(d) {
 const h = String(d.health || '').toUpperCase();
@@ -2338,10 +2347,10 @@ if (+o.disk_size > 0) { const lp = LV.cap(o.disk_total); if (lp) add(lp, 'pool',
 const t = cpuTemp(o), lt = LV.temp(t);
 if (lt) add(lt, 'temp', `CPU 温度${lt === 'crit' ? '过高' : '偏高'}（${F.int(t)}℃）`, 'temp');
 disksOf(o).forEach(d => {
-const sk = 'disk/' + d.name, sm = smartState(d);
-if (sm.lv === 'crit' || sm.lv === 'warn') add(sm.lv, 'smart:' + d.name, `${d.name}：${sm.text}`, sk, null, [sm.lv, String(d.health || '').toUpperCase()].concat(SMART_KEYS.map(([k]) => +d[k] || 0)).join(':'));
-if (!isSleep(d)) { const ld = LV.dtemp(d.temp); if (ld) add(ld, 'dt:' + d.name, `${d.name} 温度${ld === 'crit' ? '过高' : '偏高'}（${F.int(d.temp)}℃）`, sk); }
-if (+d.total > 0) { const lcap = LV.cap(d.percent); if (lcap && Math.abs((+d.percent) - (+o.disk_total)) > 0.5) add(lcap, 'cap:' + d.name, `${d.name} 已用 ${F.int(d.percent)}%`, sk); }
+const sk = 'disk/' + d.name, sm = smartState(d), lb = diskLabel(d);
+if (sm.lv === 'crit' || sm.lv === 'warn') add(sm.lv, 'smart:' + d.name, `${lb}：${sm.text}`, sk, null, [sm.lv, String(d.health || '').toUpperCase()].concat(SMART_KEYS.map(([k]) => +d[k] || 0)).join(':'));
+if (!isSleep(d)) { const ld = LV.dtemp(d.temp); if (ld) add(ld, 'dt:' + d.name, `${lb} 温度${ld === 'crit' ? '过高' : '偏高'}（${F.int(d.temp)}℃）`, sk); }
+if (+d.total > 0) { const lcap = LV.cap(d.percent); if (lcap && Math.abs((+d.percent) - (+o.disk_total)) > 0.5) add(lcap, 'cap:' + d.name, `${lb} 已用 ${F.int(d.percent)}%`, sk); }
 });
 (o.raid || []).forEach(r => { const bad = (r.members || []).filter(x => /\(F\)/.test(x)); if (bad.length) add('crit', 'raid:' + r.device, `阵列 ${r.device} 有成员盘故障`, 'storage', null, 'crit:' + bad.slice().sort().join('|')); });
 const rc = o.raidcard || {};
@@ -2564,14 +2573,14 @@ const smartBad = dd.filter(d => ['warn', 'crit'].includes(smartState(d).lv)).len
 st('disk', ld || (smartBad ? 'warn' : ''), !has ? '无存储池' : ld ? (ld === 'crit' ? '将满' : '偏满') : smartBad ? smartBad + ' 块需留意' : '充足');
 setText(x.diskSub, has ? `${F.dsizeStr(o.disk_used)} / ${F.dsizeStr(o.disk_size)}${dd.length ? ` · ${dd.length} 块硬盘` : ''}${sleeping ? ` · ${sleeping} 块休眠` : ''}` : (dd.length ? `${dd.length} 块硬盘 · 未读取到存储池用量` : '未检测到存储'));
 const sig = dd.map(d => d.name).join(',');
-if (m.pipSig !== sig) { m.pipSig = sig; x.diskFoot.innerHTML = dd.length ? `<div class="drive-pips">${dd.slice(0, 12).map(d => `<div><div class="pip" data-d="${esc(d.name)}"><i></i></div><span>${esc(d.name.replace(/^nvme(\d+)n1$/, 'nvme$1'))}</span></div>`).join('')}</div>` : ''; }
+if (m.pipSig !== sig) { m.pipSig = sig; x.diskFoot.innerHTML = dd.length ? `<div class="drive-pips">${dd.slice(0, 12).map(d => `<div><div class="pip" data-d="${esc(d.name)}"><i></i></div><span>${diskSlot(d) != null ? F.int(diskSlot(d)) : esc(d.name.replace(/^nvme(\d+)n1$/, 'nvme$1'))}</span></div>`).join('')}</div>` : ''; }
 dd.slice(0, 12).forEach(d => {
 const p = x.diskFoot.querySelector(`[data-d="${CSS.escape(d.name)}"]`); if (!p) return;
 const sl = isSleep(d), sm = smartState(d), has2 = +d.total > 0;
 setCls(p, 'pip', sl ? 'sleep' : ['warn', 'crit'].includes(sm.lv) ? 'warn' : '');
 p.firstChild.style.height = (has2 ? clamp(+d.percent, 0, 100) : 0).toFixed(1) + '%';
 const pc = sl || !has2 ? '' : rampAt(+d.percent, 'cap'); if (p.firstChild.style.background !== pc) p.firstChild.style.background = pc;
-p.title = `${d.name} · ${has2 ? '已用 ' + F.int(d.percent) + '%' : '未挂载 / 无用量数据'}${sl ? ' · 休眠中' : ''}`;
+p.title = `${diskSlot(d) != null ? `插槽 ${diskSlot(d)} · ` : ''}${d.name} · ${has2 ? '已用 ' + F.int(d.percent) + '%' : '未挂载 / 无用量数据'}${sl ? ' · 休眠中' : ''}`;
 });
 const rx = sumRx(o), tx = sumTx(o), ni = nets(o);
 dnumU(x.rxV, x.rxU, ni.length ? rx : null, F.rate); dnumU(x.txV, x.txU, ni.length ? tx : null, F.rate);
@@ -2630,14 +2639,14 @@ dd.forEach(d => {
 const k = diskKind(d);
 const v = volOf(d);
 const volTxt = v ? `存储空间 vol${v}` : '未挂载';
-const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
+const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(diskLabel(d))}（${esc(d.name)}），${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
 <span class="bay-top"><span title="${esc(volTxt)}">${volLabel(d)}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
 <span class="bay-body">
 <span class="bay-gauge" data-ref="g"></span>
 <span class="bay-zz" aria-hidden="true"><span class="dm" data-dm="Zz"></span>休眠</span>
 <span class="bay-info">
 <span class="bay-temp"><span data-ref="t">--</span><small>℃</small></span>
-<span class="bay-name">${esc(d.name)}</span>
+<span class="bay-name">${esc(diskLabel(d))}</span>
 <span class="bay-model">${esc(vendorModel(d))}</span>
 <span class="bay-cap" data-ref="cap"></span>
 </span>
@@ -2668,8 +2677,8 @@ setText(r.t, sl || !ok(d.temp) ? '--' : F.int(d.temp)); inkTo(r.t, sl || !ok(d.t
 const hasCap = +d.total > 0;
 el._g.set(hasCap ? +d.percent / 100 : 0, bs.lv === 'crit' ? 'crit' : bs.lv === 'warn' ? 'warn' : (LV.cap(d.percent) || ''), 'cap');
 setText(r.cap, hasCap ? `${F.int(d.percent)}% · ${F.dsizeStr(d.used)} / ${F.dsizeStr(d.total)}` : `${F.dsizeStr(d.size)} · 未挂载`);
-el.title = sl ? `${d.name} 已停转，监控不会唤醒它`
-: `${d.name} · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
+el.title = sl ? `${diskLabel(d)}（${d.name}） 已停转，监控不会唤醒它`
+: `${diskLabel(d)}（${d.name}） · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
 });
 const ago = scanAgo();
 if (x.scanAgo) setText(x.scanAgo, S.diskHealth ? (ago ? `巡检于 ${ago}` : '尚未巡检') : '');
@@ -2682,9 +2691,9 @@ if (warnD.length) {
 const line = list => {
 const d0 = list[0], bs = bayState(d0), v = volOf(d0);
 const cap = d0.size ? ' ' + F.dsizeStr(d0.size) : '';
-const where = [v ? `vol${v}` : '未挂载', d0.slot != null ? `插槽 ${d0.slot}` : ''].filter(Boolean).join(' · ');
+const where = [v ? `vol${v}` : '未挂载', diskSlot(d0) == null ? d0.name : ''].filter(Boolean).join(' · ');
 const more = list.length > 1 ? ` 等 ${list.length} 块` : '';
-return `<b>${esc(d0.name)}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
+return `<b>${esc(diskLabel(d0))}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
 };
 const sig = warnD.map(d => `${d.name}:${bayState(d).lv}:${bayState(d).detail || ''}`).join('|');
 let hidden = '';
@@ -2693,8 +2702,9 @@ if (hidden !== sig) {
 dek += `<span class="warn dismissible" data-warn="${esc(sig)}">${line(warnD)}<button class="warn-x" type="button" aria-label="隐藏本次提醒" title="隐藏本次提醒（状态有变化时会重新出现）">${ic('x')}</button></span>`;
 }
 }
-if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
-if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
+if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(diskLabel(d))).join('、')} 未巡检</span>。`;
+if (sleepD.length) dek += `${sleepD.map(d => esc(diskLabel(d))).join('、')} 正在休眠。`;
+if (m.r.dek) m.r.dek.classList.toggle('has-warn', dek.includes('warn dismissible'));
 setHTML(m.r.dek, dek);
 const bx = m.r.dek && m.r.dek.querySelector ? m.r.dek.querySelector('.warn-x') : null;
 if (bx) bx.onclick = ev => {
@@ -2914,7 +2924,7 @@ if (mt != null) L.push({ k: 'mb', label: '主板', v: mt, kind: 'other' });
 ((o.sensors || {}).temps || []).forEach((t, i) => { if (t.type === 'disk' || !ok(t.value)) return; L.push({ k: 's' + i + t.name, label: t.name, v: +t.value, kind: t.type === 'cpu' ? 'cpu' : 'other', max: t.max, crit: t.crit }); });
 return all ? L : L.slice(0, 6);
 }
-const diskThermo = o => disksOf(o).filter(d => ok(d.temp)).map(d => ({ k: 'd-' + d.name, label: d.name + (isSleep(d) ? ' · 休眠' : ''), v: +d.temp, kind: 'disk', sleep: isSleep(d) }));
+const diskThermo = o => disksOf(o).filter(d => ok(d.temp)).map(d => ({ k: 'd-' + d.name, label: diskLabel(d) + (isSleep(d) ? ' · 休眠' : ''), v: +d.temp, kind: 'disk', sleep: isSleep(d) }));
 const tMarks = t => t.kind === 'cpu' ? [TH.tempWarn, TH.tempCrit] : t.kind === 'disk' ? [TH.diskTempWarn, TH.diskTempCrit] : [t.max, t.crit].filter(ok);
 const tLv = t => t.kind === 'cpu' ? LV.temp(t.v) : t.kind === 'disk' ? LV.dtemp(t.v) : (ok(t.crit) && t.v >= t.crit ? 'crit' : ok(t.max) && t.v >= t.max ? 'warn' : '');
 const tRamp = t => t.kind === 'disk' ? 'dtemp' : 'temp';
@@ -3185,15 +3195,18 @@ defineModule({
 id: 'procs', page: 'overview', dc: 'cpu', kicker: 'PROCESSES', title: '进程', dek: '按 CPU 占用排序的进程',
 actions: m => { const b = mount(`<button class="link-btn" type="button">展开全部${ic('chev', 'i-sm')}</button>`); b.onclick = () => { m.all = !m.all; b.firstChild.textContent = m.all ? '收起' : '展开全部'; runUpdate(m); }; return b; },
 build(body, m) {
-body.innerHTML = `<div class="card pad" style="overflow-x:auto"><table class="tbl"><thead><tr><th>进程</th><th class="hide-m">PID</th><th class="hide-m">用户</th><th class="r">CPU</th><th class="r">内存</th><th class="r hide-m">常驻</th></tr></thead><tbody data-ref="tb">${Array.from({ length: 5 }, (_, i) => `<tr><td colspan="6"><div class="skel" style="height:14px;width:${[62, 48, 70, 40, 56][i]}%"></div></td></tr>`).join('')}</tbody></table><div data-ref="empty"></div></div>`;
+body.innerHTML = `<div class="card pad" style="overflow-x:auto"><table class="tbl"><thead><tr><th>进程</th><th class="hide-m">PID</th><th class="hide-m">用户</th><th class="r">CPU（占整机）</th><th class="r">内存</th><th class="r hide-m">常驻</th></tr></thead><tbody data-ref="tb">${Array.from({ length: 5 }, (_, i) => `<tr><td colspan="6"><div class="skel" style="height:14px;width:${[62, 48, 70, 40, 56][i]}%"></div></td></tr>`).join('')}</tbody></table><div data-ref="empty"></div></div>`;
 m.x = collect(body); m.rows = {};
 setText(m.r.dek, '正在读取进程列表…');
 },
 update(o, m) {
 const p = S.procs; if (!p) return;
+const ncpu = ((S.o && S.o.cpu && S.o.cpu.logical_cpus) || 0) || 1;
+const shareOf = pr => Math.max(0, +pr.cpu || 0) / ncpu;
+const fmtShare = v => v >= 10 ? F.d1(v) : v.toFixed(2);
 const list = (p.processes || []).slice(0, m.all ? 20 : 10), tb = m.x.tb;
 if (!m.cleared) { m.cleared = true; tb.innerHTML = ''; }
-setHTML(m.x.empty, list.length ? '' : emptyHTML('暂无进程数据', '需要系统 ps 命令（procps）'));
+setHTML(m.x.empty, list.length ? '' : emptyHTML('暂无进程数据', '需要读取 /proc 进程信息'));
 list.forEach(pr => {
 const key = pr.pid + ':' + pr.comm; let row = m.rows[key];
 if (!row) {
@@ -3201,15 +3214,19 @@ row = mount(`<table><tr><td class="proc-n"><b>${esc(pr.comm)}</b><div class="cmd
 row._r = collect(row); m.rows[key] = row;
 }
 tb.append(row);
-setText(row._r.c, F.d1(pr.cpu) + '%'); inkTo(row._r.c, rampInk(+pr.cpu || 0, 'cpu'));
-rampBar(row._r.b, clamp(+pr.cpu || 0, 0, 100), 'cpu');
+const share = shareOf(pr);
+setText(row._r.c, fmtShare(share) + '%');
+row._r.c.title = `单核累计 ${F.d1(pr.cpu)}% ≈ ${F.d1(share * ncpu / 100)} 个核心满载`;
+inkTo(row._r.c, rampInk(share, 'cpu'));
+rampBar(row._r.b, clamp(share, 0, 100), 'cpu');
 setText(row._r.m, F.d1(pr.mem) + '%'); setText(row._r.rss, F.bytesStr(pr.rss));
 });
 const keep = new Set(list.map(pr => pr.pid + ':' + pr.comm));
 Object.keys(m.rows).forEach(k => { if (!keep.has(k)) { m.rows[k].remove(); delete m.rows[k]; } });
 const [a, b] = list;
-setHTML(m.r.dek, !a ? '没有读取到进程。' : a.cpu < 10 ? '系统很安静，没有进程占用超过 10% 的 CPU。按 CPU 占用排序，每 15 秒刷新。'
-: `<b>${esc(a.comm)}</b>${b ? ` 与 <b>${esc(b.comm)}</b>` : ''} 最活跃。按 CPU 占用排序，每 15 秒刷新。`);
+const shareA = a ? shareOf(a) : 0;
+setHTML(m.r.dek, !a ? '没有读取到进程。' : shareA < 1 ? `系统很安静，没有进程占用整机超过 1% 的 CPU。按 CPU 占用排序，每 10 秒刷新。`
+: `<b>${esc(a.comm)}</b>${b ? ` 与 <b>${esc(b.comm)}</b>` : ''} 最活跃，占整机 ${F.d1(shareA)}%（≈${F.d1(shareA * ncpu / 100)} 个核心满载）。按 CPU 占用排序，每 10 秒刷新。`);
 },
 });
 const CN_M = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
@@ -3334,7 +3351,7 @@ let html = row(LV.cpu(cpu.percent) || true, 'CPU 占用', `当前 ${F.int(cpu.pe
 disksOf(o).forEach(d => {
 const sm = smartState(d), dt = isSleep(d) ? '' : LV.dtemp(d.temp);
 const st = sm.lv === 'crit' || dt === 'crit' ? 'crit' : sm.lv === 'warn' || dt === 'warn' ? 'warn' : sm.lv === 'sleep' ? 'sleep' : sm.lv === 'none' ? 'none' : true;
-html += row(st, `硬盘 ${esc(d.name)}`, isSleep(d) ? '休眠中，未唤醒检测' : `${esc(sm.text)}${ok(d.temp) ? ` · ${F.int(d.temp)}℃` : ''}${+d.total > 0 ? ` · 已用 ${F.int(d.percent)}%` : ''}`, 'disk/' + encodeURIComponent(d.name));
+html += row(st, `硬盘 ${esc(diskLabel(d))}`, isSleep(d) ? '休眠中，未唤醒检测' : `${esc(sm.text)}${ok(d.temp) ? ` · ${F.int(d.temp)}℃` : ''}${+d.total > 0 ? ` · 已用 ${F.int(d.percent)}%` : ''}`, 'disk/' + encodeURIComponent(d.name));
 });
 const dk = S.docker || o.docker;
 if (dockerOk(dk)) { const stopped = (dk.containers || []).filter(c => !ctrRun(c)); html += row(stopped.length ? 'info' : true, '容器', stopped.length ? `${stopped.slice(0, 4).map(c => esc(c.name)).join('、')}${stopped.length > 4 ? ' 等' : ''} 未运行` : '全部运行中'); }
@@ -3401,7 +3418,7 @@ dnum(x.v, has ? o.disk_total : null); inkTo(x.v, has ? rampInk(o.disk_total, 'ca
 const sig = dd.map(d => d.name).join();
 if (x._sig !== sig) {
 x._sig = sig;
-x.disks.innerHTML = dd.length ? dd.map(d => `<div class="row-i tap-row" data-sheet="disk/${esc(encodeURIComponent(d.name))}" style="grid-template-columns:auto minmax(0,1fr) 120px auto"><span class="drive-ico" style="width:36px;height:36px">${ic(diskIcon(d))}</span><div style="min-width:0"><b style="font-weight:600">${esc(d.name)}</b> <span class="faint">${esc(vendorModel(d))}</span><div class="sub" data-io="${esc(d.name)}"></div></div><div><div class="dbar" data-n="20" data-b="${esc(d.name)}"></div><div class="sub tnum" style="text-align:right;margin-top:4px" data-p="${esc(d.name)}"></div></div>${ic('chev', 'i-sm faint')}</div>`).join('') : `<div class="row-i">${emptyHTML('未检测到物理硬盘', '需要 lsblk 支持')}</div>`;
+x.disks.innerHTML = dd.length ? dd.map(d => `<div class="row-i tap-row" data-sheet="disk/${esc(encodeURIComponent(d.name))}" style="grid-template-columns:auto minmax(0,1fr) 120px auto"><span class="drive-ico" style="width:36px;height:36px">${ic(diskIcon(d))}</span><div style="min-width:0"><b style="font-weight:600">${esc(diskLabel(d))}</b> ${diskSlot(d) != null ? `<span class="faint mono">${esc(d.name)}</span> ` : ''}<span class="faint">${esc(vendorModel(d))}</span><div class="sub" data-io="${esc(d.name)}"></div></div><div><div class="dbar" data-n="20" data-b="${esc(d.name)}"></div><div class="sub tnum" style="text-align:right;margin-top:4px" data-p="${esc(d.name)}"></div></div>${ic('chev', 'i-sm faint')}</div>`).join('') : `<div class="row-i">${emptyHTML('未检测到物理硬盘', '需要 lsblk 支持')}</div>`;
 }
 dd.forEach(d => {
 const q = s => x.disks.querySelector(`[${s}="${CSS.escape(d.name)}"]`), io = ioOf(o, d.name), sl = isSleep(d), sm = smartState(d), hc = +d.total > 0;
@@ -3426,13 +3443,14 @@ else if (rc.type && rc.type !== 'none' && rc.type !== 'megaraid' && rc.detail) r
 setHTML(x.raid, rh);
 const ps = S.pstats, sb = (ps && ps.disks) || [];
 setHTML(x.prot, ps ? (ps.standby_protect === false ? '<span class="pill">保护已关闭</span>' : '<span class="pill ok"><span class="dot"></span>保护中 · 不唤醒休眠硬盘</span>') : '');
-setHTML(x.sb, sb.length ? kvHTML(sb.map(z => [esc(z.name), z.state === 'standby' ? `${ic('moon', 'i-sm')} 休眠` : z.state === 'active/idle' ? '活动' : '<span class="faint">未知</span>'])) : `<div class="card pad">${emptyHTML('无硬盘休眠数据')}</div>`);
+setHTML(x.sb, sb.length ? kvHTML(sb.map(z => [esc(diskLabelByName(o, z.name)), z.state === 'standby' ? `${ic('moon', 'i-sm')} 休眠` : z.state === 'active/idle' ? '活动' : '<span class="faint">未知</span>'])) : `<div class="card pad">${emptyHTML('无硬盘休眠数据')}</div>`);
 };
 },
 },
 disk: {
 icon: a => { const d = disksOf(S.o).find(z => z.name === a); return d ? diskIcon(d) : 'hdd'; },
-title: a => '硬盘 ' + a, sub: (o, a) => { const d = disksOf(o).find(z => z.name === a); return d ? vendorModel(d) : ''; },
+title: a => '硬盘 ' + diskLabelByName(S.o, a),
+sub: (o, a) => { const d = disksOf(o).find(z => z.name === a); return d ? [diskSlot(d) != null ? d.name : '', vendorModel(d)].filter(Boolean).join(' · ') : ''; },
 build(b, a) {
 const d0 = disksOf(S.o).find(z => z.name === a);
 if (!d0) { b.innerHTML = `<div class="empty"><b>未找到硬盘 ${esc(a)}</b><span>它可能已被移除，或尚未被识别。</span></div>`; return; }
@@ -4304,27 +4322,63 @@ uiItem('dotMatrix', '点阵数字', 'toggle', { hint: '关键读数使用 5×7 �
 uiItem('fontScale', '字体大小', 'seg', { options: [[0.9, '较小'], [1, '标准'], [1.1, '较大'], [1.25, '特大']] }),
 uiItem('motion', '动效', 'toggle', { hint: '系统开启“减少动态效果”时始终关闭' }),
 { k: 'uiSync', label: '界面设置同步', type: 'action', button: '立即同步', hint: () => `外观、布局与阈值保存在 NAS：<span class="mono">${esc((S.cfg && S.cfg.ui_file) || '数据目录/ui.json')}</span>，换设备或清缓存后自动恢复`, run: async b => { b.disabled = true; const okk = await postUI(); b.disabled = false; toast(okk ? '已同步到 NAS' : '同步失败，请检查连接', okk ? {} : { icon: 'alert' }); } },
-{ k: 'hiddenMods', label: '已隐藏的版块', type: 'info', html: hiddenHTML },
 { k: 'resetLayout', label: '布局', type: 'action', button: '恢复默认布局', run: () => { Object.keys(LAYOUT_DEFAULT).forEach(resetLayout); toast('已恢复默认布局'); syncSettings(); } },
 { k: 'resetUI', label: '一键初始化界面', type: 'action', button: '恢复默认界面', danger: true, hint: '外观、主色、字号、布局与隐藏状态恢复默认（提醒阈值保持不变）', run: resetUI },
 ] },
+{ id: 'blocks', title: '版块显示', icon: 'layout',
+desc: '按页面列出所有版块，关掉的版块不显示，后端也会尽量停掉对应采集（省 CPU 与磁盘 IO）。顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列与容器列表——这几类数据无论怎么关都会继续采集，否则结论会失真。',
+custom: renderBlocks },
 { id: 'auth', title: '登录口令', icon: 'lock', desc: '开启后，访问飞牛监控需要先输入口令。', custom: renderAuth },
 { id: 'data', title: '数据', icon: 'folder', custom: renderData },
 { id: 'update', title: '软件更新', icon: 'download', custom: renderUpdate },
 { id: 'about', title: '关于', icon: 'info', custom: renderAbout },
 ];
-function hiddenHTML() {
-const list = [].concat(...Object.keys(UI.hidden).map(p => UI.hidden[p].map(id => [p, id])));
-if (!list.length) return '<span class="faint">没有隐藏的版块 · 在「编辑布局」中可隐藏或排序</span>';
-return `<div class="chips">${list.map(([p, id]) => `<button class="chip-t" type="button" data-restore="${p}:${id}">${ic('eye')}${esc(MODS[id] ? MODS[id].title : id)}</button>`).join('')}<button class="chip-t" type="button" data-restore="*">全部恢复</button></div>`;
-}
-document.addEventListener('click', e => {
-const b = e.target.closest('[data-restore]'); if (!b) return;
-const v = b.dataset.restore;
-if (v === '*') Object.keys(UI.hidden).forEach(p => { UI.hidden[p] = []; });
-else { const [p, id] = v.split(':'); UI.hidden[p] = (UI.hidden[p] || []).filter(x => x !== id); }
-Object.keys(LAYOUT_DEFAULT).forEach(applyLayout); saveUI(); syncSettings(); toast('已恢复显示');
+const BLOCK_KEEP_COLLECT = ['metrics', 'storage', 'thermal', 'network', 'energy', 'containers'];
+const BLOCK_STOP_COLLECT = ['procs', 'apps', 'ports', 'vms'];
+const BLOCK_PAGE_LABEL = { overview: '总览', docker: '容器', vms: '虚拟机' };
+function renderBlocks(card) {
+card.innerHTML = Object.keys(LAYOUT_DEFAULT).map(p => {
+const rows = LAYOUT_DEFAULT[p].map(id => {
+if (!MODS[id]) return '';   // 本机不支持（如没装 virsh 的虚拟机页）就不列
+const title = MODS[id].title;
+const hint = BLOCK_KEEP_COLLECT.includes(id) ? '隐藏后仍会采集：顶部健康结论依赖它'
+: BLOCK_STOP_COLLECT.includes(id) ? '隐藏后停止采集，省 CPU'
+: '隐藏后不再显示';
+return `<div class="set-row inline blk-row" data-blk="${p}:${id}">
+<div><div class="lbl">${esc(title)}</div><div class="hint">${hint}</div></div>
+<div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="显示「${esc(title)}」"></button></div>
+</div>`;
+}).join('');
+return rows ? `<div class="set-sub">${BLOCK_PAGE_LABEL[p] || p}</div>` + rows : '';
+}).join('') +
+`<div class="set-row inline"><div><div class="lbl">全部显示</div><div class="hint">把所有版块恢复为显示状态，排序不变</div></div><div class="ctl"><button class="btn" type="button" data-blkall="1">${ic('eye')}全部显示</button></div></div>`;
+const split = key => { const i = key.indexOf(':'); return [key.slice(0, i), key.slice(i + 1)]; };
+card._sync = () => {
+$$('[data-blk]', card).forEach(row => {
+const [p, id] = split(row.dataset.blk), sw = row.querySelector('.switch');
+if (!sw) return;
+const off = (UI.hidden[p] || []).includes(id);
+sw.setAttribute('aria-checked', String(!off));
+row.classList.toggle('blk-off', off);
 });
+};
+card.addEventListener('click', e => {
+if (e.target.closest('[data-blkall]')) {
+Object.keys(UI.hidden).forEach(p => { UI.hidden[p] = []; });
+Object.keys(LAYOUT_DEFAULT).forEach(applyLayout);
+saveUI(); syncSettings(); toast('已显示全部版块');
+return;
+}
+const sw = e.target.closest('.switch'); if (!sw) return;
+const box = sw.closest('[data-blk]'); if (!box) return;
+const [p, id] = split(box.dataset.blk), hid = UI.hidden[p] || [], off = !hid.includes(id);
+UI.hidden[p] = off ? hid.concat(id) : hid.filter(x => x !== id);
+applyLayout(p); saveUI(); syncSettings();
+const title = MODS[id] ? MODS[id].title : id;
+toast(off ? `已隐藏 · ${title}` : `已显示 · ${title}`, { key: 'blk' });
+});
+card._sync();
+}
 function renderIgnored(card) {
 card.addEventListener('click', e => {
 const un = e.target.closest('[data-unig]'); if (un) Ignore.remove(un.dataset.unig);
@@ -4818,7 +4872,7 @@ draw();
 function renderAbout(card) {
 card.innerHTML = `<div class="about"><div class="brand-mark">${ic('logo')}</div><h4>飞牛监控 fnMonitor</h4><p>为飞牛 fnOS 打造的本地系统监控 · <span data-ref="v">v--</span></p>
 <p class="faint" style="margin-top:2px">纯本地运行 · 历史记录、界面设置与配置都保存在 NAS 的程序数据目录中，与访问用的电脑无关</p>
-<p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a> · <a href="https://github.com/ttkl9559-cell" target="_blank" rel="noopener noreferrer">ttkl9559-cell</a></p>
+<p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a></p>
 <div style="display:flex;gap:8px;justify-content:center;margin-top:20px;flex-wrap:wrap"><a class="btn" href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">${ic('ext')}项目主页</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/issues" target="_blank" rel="noopener noreferrer">${ic('help')}问题反馈</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/releases/latest" target="_blank" rel="noopener noreferrer">${ic('download')}版本发布</a><button class="btn" type="button" data-sheet="keys">${ic('key')}快捷键</button></div>
 <p class="st-crit" style="margin-top:14px" data-ref="upd" hidden></p></div>`;
 const x = collect(card);
