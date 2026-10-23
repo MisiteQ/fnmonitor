@@ -223,21 +223,26 @@ defineModule({
 });
 
 /* ---------------------------------------------------------------------
-   08 PROCESSES — /api/processes（CPU 占用前 20）
+   08 PROCESSES — /api/processes（CPU 占用前 20，数据源为后台 /proc 快照）
    --------------------------------------------------------------------- */
 defineModule({
   id: 'procs', page: 'overview', dc: 'cpu', kicker: 'PROCESSES', title: '进程', dek: '按 CPU 占用排序的进程',
   actions: m => { const b = mount(`<button class="link-btn" type="button">展开全部${ic('chev', 'i-sm')}</button>`); b.onclick = () => { m.all = !m.all; b.firstChild.textContent = m.all ? '收起' : '展开全部'; runUpdate(m); }; return b; },
   build(body, m) {
-    body.innerHTML = `<div class="card pad" style="overflow-x:auto"><table class="tbl"><thead><tr><th>进程</th><th class="hide-m">PID</th><th class="hide-m">用户</th><th class="r">CPU</th><th class="r">内存</th><th class="r hide-m">常驻</th></tr></thead><tbody data-ref="tb">${Array.from({ length: 5 }, (_, i) => `<tr><td colspan="6"><div class="skel" style="height:14px;width:${[62, 48, 70, 40, 56][i]}%"></div></td></tr>`).join('')}</tbody></table><div data-ref="empty"></div></div>`;
+    body.innerHTML = `<div class="card pad" style="overflow-x:auto"><table class="tbl"><thead><tr><th>进程</th><th class="hide-m">PID</th><th class="hide-m">用户</th><th class="r">CPU（占整机）</th><th class="r">内存</th><th class="r hide-m">常驻</th></tr></thead><tbody data-ref="tb">${Array.from({ length: 5 }, (_, i) => `<tr><td colspan="6"><div class="skel" style="height:14px;width:${[62, 48, 70, 40, 56][i]}%"></div></td></tr>`).join('')}</tbody></table><div data-ref="empty"></div></div>`;
     m.x = collect(body); m.rows = {};
     setText(m.r.dek, '正在读取进程列表…');
   },
   update(o, m) {
     const p = S.procs; if (!p) return;
+    // 后端 cpu 是「单核累计」百分比（top / ps 口径，可超过 100）；这里换算成占整机比例，
+    // 与飞牛资源管理器、Windows 任务管理器一致。核数取 overview 的 logical_cpus。
+    const ncpu = ((S.o && S.o.cpu && S.o.cpu.logical_cpus) || 0) || 1;
+    const shareOf = pr => Math.max(0, +pr.cpu || 0) / ncpu;
+    const fmtShare = v => v >= 10 ? F.d1(v) : v.toFixed(2);
     const list = (p.processes || []).slice(0, m.all ? 20 : 10), tb = m.x.tb;
     if (!m.cleared) { m.cleared = true; tb.innerHTML = ''; }
-    setHTML(m.x.empty, list.length ? '' : emptyHTML('暂无进程数据', '需要系统 ps 命令（procps）'));
+    setHTML(m.x.empty, list.length ? '' : emptyHTML('暂无进程数据', '需要读取 /proc 进程信息'));
     list.forEach(pr => {
       const key = pr.pid + ':' + pr.comm; let row = m.rows[key];
       if (!row) {
@@ -245,15 +250,19 @@ defineModule({
         row._r = collect(row); m.rows[key] = row;
       }
       tb.append(row);
-      setText(row._r.c, F.d1(pr.cpu) + '%'); inkTo(row._r.c, rampInk(+pr.cpu || 0, 'cpu'));
-      rampBar(row._r.b, clamp(+pr.cpu || 0, 0, 100), 'cpu');
+      const share = shareOf(pr);
+      setText(row._r.c, fmtShare(share) + '%');
+      row._r.c.title = `单核累计 ${F.d1(pr.cpu)}% ≈ ${F.d1(share * ncpu / 100)} 个核心满载`;
+      inkTo(row._r.c, rampInk(share, 'cpu'));
+      rampBar(row._r.b, clamp(share, 0, 100), 'cpu');
       setText(row._r.m, F.d1(pr.mem) + '%'); setText(row._r.rss, F.bytesStr(pr.rss));
     });
     const keep = new Set(list.map(pr => pr.pid + ':' + pr.comm));
     Object.keys(m.rows).forEach(k => { if (!keep.has(k)) { m.rows[k].remove(); delete m.rows[k]; } });
     const [a, b] = list;
-    setHTML(m.r.dek, !a ? '没有读取到进程。' : a.cpu < 10 ? '系统很安静，没有进程占用超过 10% 的 CPU。按 CPU 占用排序，每 15 秒刷新。'
-      : `<b>${esc(a.comm)}</b>${b ? ` 与 <b>${esc(b.comm)}</b>` : ''} 最活跃。按 CPU 占用排序，每 15 秒刷新。`);
+    const shareA = a ? shareOf(a) : 0;
+    setHTML(m.r.dek, !a ? '没有读取到进程。' : shareA < 1 ? `系统很安静，没有进程占用整机超过 1% 的 CPU。按 CPU 占用排序，每 10 秒刷新。`
+      : `<b>${esc(a.comm)}</b>${b ? ` 与 <b>${esc(b.comm)}</b>` : ''} 最活跃，占整机 ${F.d1(shareA)}%（≈${F.d1(shareA * ncpu / 100)} 个核心满载）。按 CPU 占用排序，每 10 秒刷新。`);
   },
 });
 

@@ -695,12 +695,17 @@ SMART_COUNTER_KEYS = ("reallocated_sectors", "reallocated_events", "pending_sect
                       "uncorrectable", "udma_crc")
 
 
-def collect_disks_detail(prev=None):
+def collect_disks_detail(prev=None, with_temps=True, with_states=True):
     """按物理硬盘返回详情：名称/品牌/型号/容量/已用/使用率/温度/挂载点/休眠状态。
 
     prev：上一轮详情缓存。已 STANDBY 的硬盘不再下发 smartctl（lsblk 本身只读
     sysfs 不会唤醒硬盘），健康/转速/通电时长/温度沿用上一次活跃时的值，避免
-    详情采集每 60 秒把休眠硬盘唤醒一次。"""
+    详情采集每 60 秒把休眠硬盘唤醒一次。
+
+    with_states / with_temps：冷启动首轮置 False。此时盘电源状态还没探测过，
+    若按「非休眠」处理就会对休眠盘下发 smartctl 把它们唤醒（休眠保护优先），
+    温度改用巡检预载的 _DISK_TEMP_CACHE，健康数据用预载的 _DISK_HEALTH_MEM，
+    整个过程一个 smartctl 都不发。"""
     result = []
     prev_by = {}
     for old in (prev or []):
@@ -730,9 +735,12 @@ def collect_disks_detail(prev=None):
         mounts[d["mount"]] = d
     # 温度（read_temps 内部同样跳过休眠盘并返回缓存温度）
     temp_by = {}
-    for t in read_temps().get("disks", []):
-        temp_by[t["name"]] = t["temp"]
-    states = disk_power_states()
+    if with_temps:
+        for t in read_temps().get("disks", []):
+            temp_by[t["name"]] = t["temp"]
+    else:
+        temp_by = dict(_DISK_TEMP_CACHE)
+    states = disk_power_states() if with_states else {}
     for blk in data.get("blockdevices", []) or []:
         name = blk.get("name") or ""
         btype = (blk.get("type") or "").lower()
@@ -782,7 +790,7 @@ def collect_disks_detail(prev=None):
         # 巡检还没覆盖到的盘（首装的前 60 秒）沿用旧行为：最多补读 8 块，避免首屏空白。
         if state != "standby":
             sd = _DISK_HEALTH_MEM.get(name)
-            if sd is None:
+            if sd is None and with_states:
                 sd = smart_detail(name) if len(result) < 8 else {}
             if sd.get("standby"):
                 entry["state"] = "standby"
@@ -1453,6 +1461,11 @@ _MOUNT_DISK_CACHE = {"ts": 0.0, "mounts": {}}
 _DISK_USAGE_CACHE = {}
 # 盘名 -> 上次活跃时读到的温度（休眠期间展示缓存温度）
 _DISK_TEMP_CACHE = {}
+# 盘名 -> 上次真正读到温度的时间。SAS 盘没有 drivetemp hwmon，温度只能走
+# smartctl -A 兜底：10 秒一轮采集若每轮都读，14 块盘就是每天 12 万次 smartctl，
+# 既是首屏卡顿的主因，也是完全没必要的磁盘 IO。90 秒内直接复用上次读数。
+_DISK_TEMP_TS = {}
+_DISK_TEMP_TTL = 90.0
 
 # 整盘设备名（排除分区 sda1 / nvme0n1p1 与 loop/dm/md 等虚拟设备）
 _WHOLE_DISK_RE = re.compile(r"^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|mmcblk\d+|xvd[a-z]+)$")
@@ -3164,6 +3177,42 @@ def _health_row_rec(r):
     }
 
 
+def preload_disk_health(db):
+    """把库里上一次巡检结果预载进内存缓存，返回预载的盘数（幂等）。
+
+    必须在采集线程开跑之前同步调用：_DISK_HEALTH_MEM 为空时，
+    collect_disks_detail 会对每块盘补读一次 smart_detail（14 块盘 5~8 秒），
+    冷启动首屏就空在那里等这 8 秒。库里本来就有上次的巡检结果，先读进来，
+    首屏直接用，后台 60 秒后再刷新——不需要为此多做任何磁盘 IO。
+    """
+    if not db:
+        return 0
+    try:
+        rows = db.disk_health_read() or {}
+    except Exception:
+        return 0
+    if not rows:
+        return 0
+    try:
+        last = max([float(r.get("scan_ts") or 0) for r in rows.values()] or [0])
+        if last:
+            _disk_scan_state["last_ts"] = last
+    except Exception:
+        pass
+    n = 0
+    for dev, r in (rows or {}).items():
+        if not dev or r.get("standby") or dev in _DISK_HEALTH_MEM:
+            continue
+        rec = _health_row_rec(r)
+        _DISK_HEALTH_MEM[dev] = rec
+        # 温度一并预热，省掉首轮对每块盘的 smartctl -A（SAS 盘没有 hwmon）
+        if rec.get("temp_c") is not None and dev not in _DISK_TEMP_CACHE:
+            _DISK_TEMP_CACHE[dev] = rec["temp_c"]
+            _DISK_TEMP_TS[dev] = time.time()
+        n += 1
+    return n
+
+
 def disk_scan_once(db, config=None):
     """执行一次全盘巡检并入库。返回摘要，异常不外抛（线程里靠它活命）。"""
     if not is_linux():
@@ -3281,15 +3330,10 @@ class DiskScanner(threading.Thread):
 
     def run(self):
         # 重启后沿用库里上一次的巡检时间与结果：否则每次重启都会重新全盘扫一遍，
-        # 而且首屏会退回到「只有前 8 块盘有 SMART」
+        # 而且首屏会退回到「只有前 8 块盘有 SMART」。正常情况下采集线程启动前
+        # 已经预载过（见 preload_disk_health），这里只是兜底，幂等。
         try:
-            rows = self.db.disk_health_read() if self.db else {}
-            last = max([float(r.get("scan_ts") or 0) for r in rows.values()] or [0])
-            if last:
-                _disk_scan_state["last_ts"] = last
-            for dev, r in (rows or {}).items():
-                if not r.get("standby") and dev not in _DISK_HEALTH_MEM:
-                    _DISK_HEALTH_MEM[dev] = _health_row_rec(r)
+            preload_disk_health(self.db)
         except Exception:
             pass
         startup = self.STARTUP_DELAY
@@ -5404,9 +5448,13 @@ def smartctl_temp(dev):
     return None
 
 
-def read_temps():
+def read_temps(with_disks=True):
     """读取 CPU / 主板 / 硬盘温度（摄氏度）。
     返回 {"cpu": 数值或None, "system": 数值或None, "disks": [{"name","temp"}]}
+
+    with_disks=False：跳过硬盘温度（冷启动首轮用）。此时盘电源状态还没探测过，
+    状态表为空会被当成「非休眠」，对休眠盘下发 smartctl 就会把盘唤醒——宁可先
+    不显示硬盘温度，也不能破坏休眠保护。
     """
     temps = {"cpu": None, "system": None, "disks": []}
     # ---- CPU / 主板 thermal zone ----
@@ -5442,10 +5490,16 @@ def read_temps():
     # 休眠保护：已 STANDBY 的硬盘跳过 hwmon drivetemp 读取（旧内核该读取会
     # 唤醒硬盘）与 smartctl 兜底，沿用上次活跃时缓存的温度；休眠中的盘温度
     # 不变，展示缓存值不影响面板。
-    states = disk_power_states()
+    states = disk_power_states() if with_disks else None
     try:
         for blk in sorted(os.listdir("/sys/block")):
             if not _WHOLE_DISK_RE.match(blk):
+                continue
+            if states is None:
+                # 电源状态未知：只展示上次缓存温度，绝不发会唤醒硬盘的命令
+                cached = _DISK_TEMP_CACHE.get(blk)
+                if cached is not None:
+                    temps["disks"].append({"name": blk, "temp": cached})
                 continue
             if states.get(blk) == "standby":
                 cached = _DISK_TEMP_CACHE.get(blk)
@@ -5463,9 +5517,15 @@ def read_temps():
                             temp = round(t / 1000.0, 1)
                             break
             if temp is None:
-                temp = smartctl_temp(blk)
+                # 无 hwmon（SAS 常见）→ smartctl 兜底，按 _DISK_TEMP_TTL 复用
+                tnow = time.time()
+                if tnow - _DISK_TEMP_TS.get(blk, 0.0) <= _DISK_TEMP_TTL:
+                    temp = _DISK_TEMP_CACHE.get(blk)
+                else:
+                    temp = smartctl_temp(blk)
             if temp:
                 _DISK_TEMP_CACHE[blk] = temp
+                _DISK_TEMP_TS[blk] = time.time()
                 temps["disks"].append({"name": blk, "temp": temp})
     except Exception:
         pass
@@ -7941,8 +8001,20 @@ class Collector(threading.Thread):
 
     def run(self):
         self.db._init()
+        # 库里的巡检结果必须在首轮采集之前同步进内存：否则 collect_disks_detail
+        # 会对每块盘补读 smart_detail（14 块盘 5~8 秒），首屏就一直空着等它。
         try:
-            self._tick()  # 启动后立即采集一次，避免首屏无数据
+            preload_disk_health(self.db)
+        except Exception:
+            pass
+        # 两段式首屏：先发一版不含盘电源探测的快照（几十毫秒就能出），页面立刻
+        # 有内容；紧接着跑完整采集，盘位状态和温度随后补上。
+        try:
+            self._tick(bootstrap=True)
+        except Exception:
+            pass
+        try:
+            self._tick()
         except Exception:
             pass
         while not self._stop.wait(self.config.get("interval", 10)):
@@ -7951,7 +8023,7 @@ class Collector(threading.Thread):
             except Exception:
                 pass
 
-    def _tick(self):
+    def _tick(self, bootstrap=False):
         self._reload_config()
         # 同步休眠保护开关（配置保存后立即生效，无需重启）
         RUNTIME["standby_protect"] = bool(int(self.config.get("disk_standby_protect", 1) or 0))
@@ -7959,11 +8031,14 @@ class Collector(threading.Thread):
         now = time.time()
         interval = self.config.get("interval", 10)
         RUNTIME["interval"] = interval
-        # 每个采集周期统一探测一次硬盘电源状态，请求线程在周期内只读缓存
-        try:
-            disk_power_states(force=True)
-        except Exception:
-            pass
+        # 每个采集周期统一探测一次硬盘电源状态，请求线程在周期内只读缓存。
+        # 首轮跳过：14 块盘串行 CHECK POWER MODE 要 3~6 秒，首屏不能被它堵住，
+        # 紧接着的完整那一轮会补上。
+        if not bootstrap:
+            try:
+                disk_power_states(force=True)
+            except Exception:
+                pass
 
         snapshot = {}
         # ---- CPU ----
@@ -8011,7 +8086,14 @@ class Collector(threading.Thread):
         snapshot["disk_size"] = total_all
         snapshot["disk_pools"] = len(pools)
         # ---- 磁盘详情（物理硬盘，每 60 秒；休眠盘复用上一次结果） ----
-        if now - self._last_disks_detail_ts >= 60:
+        if bootstrap:
+            # 首轮：电源状态未知，此时判断不了休眠，一律不发 smartctl（会唤醒休眠盘）。
+            # 健康/温度全部取巡检预载缓存；时间戳不推进，完整那一轮立刻重采一次。
+            _bd = collect_disks_detail(self._last_disks_detail,
+                                      with_temps=False, with_states=False)
+            if _bd:
+                self._last_disks_detail = _bd
+        elif now - self._last_disks_detail_ts >= 60:
             self._last_disks_detail = collect_disks_detail(self._last_disks_detail)
             self._last_disks_detail_ts = now
         # ---- 机箱实际槽位（序列号对 iDRAC 物理盘；拿不到就是 None） ----
@@ -8034,7 +8116,7 @@ class Collector(threading.Thread):
         self._prev_diskio_ts = now
         snapshot["diskio"] = diskio
         # ---- 温度 ----
-        temps = read_temps()
+        temps = read_temps(with_disks=not bootstrap)
         # thermal zone 没给 CPU 温度时，用 iDRAC 的带外读数兜底（老内核 / 虚拟机常见）
         if temps.get("cpu") is None:
             _if = self._idrac_fast()
@@ -8773,8 +8855,6 @@ class MonitorApp:
         self._overview_ts = 0.0
         self._sysinfo_cache = None
         self._sysinfo_ts = 0.0
-        self._proc_cache = None
-        self._proc_ts = 0.0
         self._hist_cache = {}
         self._weather_ts = 0.0
         # 流量/功耗统计 API 缓存（5s TTL，同 overview 模式）
@@ -9658,12 +9738,11 @@ class MonitorApp:
         return {"modules": collect_modules()}
 
     def api_processes(self):
-        """进程 Top 列表（ps 外部命令结果缓存 15 秒，多客户端轮询复用）。"""
-        now = time.time()
-        if self._proc_cache is None or now - self._proc_ts >= 15:
-            self._proc_cache = {"processes": top_processes()}
-            self._proc_ts = now
-        return self._proc_cache
+        """进程 Top 列表。
+
+        数据来自 ProcSampler 每 10 秒刷新一次的内存快照，这里不再做二次缓存：
+        读快照只是切片加拷贝，缓存只会让首页数据比真实情况更滞后。"""
+        return {"processes": top_processes()}
 
     _RANGE_SECONDS = {"10m": 600, "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "all": 0}
     _METRIC_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,200}$")   # 指标名含挂载路径，可能有中文
@@ -10919,38 +10998,214 @@ def _redact_args(args):
         return args
 
 
-def top_processes(limit=20):
-    out, rc = run_cmd(
-        ["ps", "-eo", "pid,user,pcpu,pmem,rss,comm,args", "--sort=-pcpu", "--no-headers"],
-        timeout=10,
-    )
-    if rc != 0 or not out.strip():
-        return []
-    result = []
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(None, 6)
-        if len(parts) < 6:
+def _clk_tck():
+    """USER_HZ（每秒时钟滴答数），/proc/[pid]/stat 的 utime/stime 单位。"""
+    try:
+        v = int(os.sysconf("SC_CLK_TCK"))
+        return v if v > 0 else 100
+    except Exception:
+        return 100
+
+
+def _page_size():
+    try:
+        v = int(os.sysconf("SC_PAGE_SIZE"))
+        return v if v > 0 else 4096
+    except Exception:
+        return 4096
+
+
+def _uptime_seconds(proc_root="/proc"):
+    try:
+        return float(read_text(os.path.join(proc_root, "uptime")).split()[0])
+    except Exception:
+        return 0.0
+
+
+def _proc_stat_snapshot(proc_root="/proc"):
+    """遍历 {proc_root}/[pid]/stat，返回 {pid: (cpu_ticks, starttime, rss_bytes, comm)}。
+
+    只读 stat 一个文件：utime+stime 用于算 CPU 增量，starttime 用于识别 PID 复用
+    （同一 PID 换了进程就不能相减），rss（页数）用于内存占比，comm 直接从括号段取。
+    进程退出时的竞态用 try/except 跳过，不影响整体。proc_root 可注入，便于用假
+    /proc 目录做回归测试。"""
+    snap = {}
+    try:
+        names = os.listdir(proc_root)
+    except Exception:
+        return snap
+    page = _page_size()
+    for name in names:
+        if not name.isdigit():
             continue
         try:
-            pid = int(parts[0])
-            user = parts[1]
-            cpu = float(parts[2])
-            mem = float(parts[3])
-            rss_kb = int(parts[4])
-            comm = parts[5]
-            args = parts[6] if len(parts) > 6 else comm
+            with open(os.path.join(proc_root, name, "stat"), "rb") as fh:
+                raw = fh.read().decode("utf-8", "replace")
         except Exception:
             continue
-        result.append({
-            "pid": pid, "user": user, "cpu": cpu, "mem": mem,
-            "rss": rss_kb * 1024, "comm": comm, "args": _redact_args(args)[:160],
-        })
-        if len(result) >= limit:
-            break
-    return result
+        # comm 可能含空格和括号，取最后一个 ')' 才是字段起点
+        lp = raw.rfind(")")
+        sp = raw.find("(")
+        if lp < 0 or sp < 0 or sp > lp:
+            continue
+        fields = raw[lp + 2:].split()
+        if len(fields) < 22:      # 需要到第 24 列 rss
+            continue
+        try:
+            ticks = int(fields[11]) + int(fields[12])   # utime + stime（第 14、15 列）
+            start = int(fields[19])                     # starttime（第 22 列）
+            rss = int(fields[21]) * page                # rss 页数 → 字节（第 24 列）
+        except Exception:
+            continue
+        snap[int(name)] = (ticks, start, rss, raw[sp + 1:lp])
+    return snap
+
+
+_UID_NAMES = None
+_UID_NAMES_LOCK = threading.Lock()
+
+
+def _uid_names():
+    """uid → 用户名映射。直接读 /etc/passwd，不走 NSS，避免 LDAP/AD 环境下卡住。"""
+    global _UID_NAMES
+    with _UID_NAMES_LOCK:
+        if _UID_NAMES is None:
+            table = {0: "root"}
+            for line in read_text("/etc/passwd").splitlines():
+                parts = line.split(":")
+                if len(parts) >= 3 and parts[2].isdigit():
+                    table.setdefault(int(parts[2]), parts[0])
+            _UID_NAMES = table
+        return _UID_NAMES
+
+
+def _proc_uid(pid, proc_root="/proc"):
+    for line in read_text(os.path.join(proc_root, str(pid), "status")).splitlines():
+        if line.startswith("Uid:"):
+            try:
+                return int(line.split()[1])     # 第一个是 real uid
+            except Exception:
+                return -1
+    return -1
+
+
+def _proc_args(pid, comm, proc_root="/proc"):
+    """完整命令行；内核线程没有 cmdline，按 ps 的惯例显示 [comm]。"""
+    raw = read_text(os.path.join(proc_root, str(pid), "cmdline")).replace("\x00", " ").strip()
+    if raw:
+        return raw
+    return "[%s]" % comm if comm else "[%d]" % pid
+
+
+class ProcSampler(threading.Thread):
+    """后台线程：每 10 秒采一次进程快照，算出这一区间的平均 CPU 占用。
+
+    为什么不再调 ps —— 三个问题都在 ps 的 %CPU 口径上：
+    1. ps 自己会出现在结果里。它的 %CPU = 累计CPU时间 ÷ 进程存活时间，而它只活
+       几十毫秒又要扫几千个进程，分母极小，于是首页进程卡永远挂着一条假的 600%。
+       fnOS 资源管理器按秒级采样，短命的 ps 根本抓不到，两边自然对不上。
+    2. ps 的 pcpu 是进程整个生命周期的平均值，不是当前占用，长跑进程会严重滞后。
+    3. 每次刷新都要 fork+exec 一次 ps，在这台机器上本身就是笔开销。
+    改为直接读 /proc/[pid]/stat 并与上一轮快照做差：得到真实的区间占用百分比，
+    不产生任何新进程，也不会再出现采集器污染列表的情况。
+    """
+    INTERVAL = 10.0
+
+    def __init__(self, proc_root="/proc"):
+        super().__init__(daemon=True, name="fnm-proc-sampler")
+        self._proc_root = proc_root
+        self._lock = threading.Lock()
+        self._tick_lock = threading.Lock()
+        self._rows = []
+        self._snap = {}
+        self._ts = 0.0
+        self._unsupported = False
+
+    def run(self):
+        while True:
+            try:
+                self.tick()
+            except Exception:
+                pass
+            time.sleep(self.INTERVAL)
+
+    def tick(self, bootstrap=False):
+        with self._tick_lock:
+            self._tick(bootstrap)
+
+    def _tick(self, bootstrap=False):
+        if self._unsupported:
+            return
+        now = time.time()
+        snap = _proc_stat_snapshot(self._proc_root)
+        if not snap:
+            # 非 Linux 或 /proc 不可读：标记后不再重复扫
+            self._unsupported = not is_linux()
+            return
+        clk = _clk_tck()
+        prev, prev_ts = self._snap, self._ts
+        dt = now - prev_ts if prev_ts > 0 else 0.0
+        need_uptime = bootstrap or dt < 1.0
+        uptime = _uptime_seconds(self._proc_root) if need_uptime else 0.0
+
+        scored = []
+        for pid, (ticks, start, rss, comm) in snap.items():
+            old = prev.get(pid)
+            if old is not None and old[1] == start and dt >= 1.0:
+                pct = (ticks - old[0]) * 100.0 / (clk * dt)     # 区间平均占用
+            else:
+                # 首次采样或新进程：退化为生命周期平均值，下一轮就转为区间值
+                elapsed = uptime - start / float(clk) if uptime > 0 else 0.0
+                pct = ticks * 100.0 / (clk * elapsed) if elapsed > 0.05 else 0.0
+            scored.append((max(0.0, pct), rss, pid, comm))
+
+        # CPU 相同的按内存降序，0% 的进程也能给出有用的排序
+        scored.sort(key=lambda item: (-item[0], -item[1]))
+        total = read_meminfo().get("total") or 0
+        names = _uid_names()
+        rows = []
+        for pct, rss, pid, comm in scored[:30]:
+            uid = _proc_uid(pid, self._proc_root)
+            rows.append({
+                "pid": pid,
+                "user": names.get(uid, str(uid) if uid >= 0 else "?"),
+                "cpu": round(pct, 1),
+                "mem": round(rss * 100.0 / total, 1) if total else 0.0,
+                "rss": rss,
+                "comm": comm,
+                "args": _redact_args(_proc_args(pid, comm, self._proc_root))[:160],
+            })
+
+        self._snap = snap
+        self._ts = now
+        with self._lock:
+            self._rows = rows
+
+    def top(self, limit=20):
+        if not self._rows:
+            self.tick(bootstrap=True)      # 首次调用同步出一份，避免首页空白
+        with self._lock:
+            return [dict(row) for row in self._rows[:limit]]
+
+
+_PROC_SAMPLER = None
+_PROC_SAMPLER_LOCK = threading.Lock()
+
+
+def _proc_sampler():
+    global _PROC_SAMPLER
+    with _PROC_SAMPLER_LOCK:
+        if _PROC_SAMPLER is None:
+            sampler = ProcSampler()
+            sampler.tick(bootstrap=True)
+            sampler.start()
+            _PROC_SAMPLER = sampler
+        return _PROC_SAMPLER
+
+
+def top_processes(limit=20):
+    """进程 TOP（按区间 CPU 占用降序）。数据来自 ProcSampler 的后台快照。"""
+    return _proc_sampler().top(limit)
 
 
 # ---------------------------------------------------------------------------
