@@ -65,7 +65,7 @@ const SHEETS = {
         disksOf(o).forEach(d => {
           const sm = smartState(d), dt = isSleep(d) ? '' : LV.dtemp(d.temp);
           const st = sm.lv === 'crit' || dt === 'crit' ? 'crit' : sm.lv === 'warn' || dt === 'warn' ? 'warn' : sm.lv === 'sleep' ? 'sleep' : sm.lv === 'none' ? 'none' : true;
-          html += row(st, `硬盘 ${esc(d.name)}`, isSleep(d) ? '休眠中，未唤醒检测' : `${esc(sm.text)}${ok(d.temp) ? ` · ${F.int(d.temp)}℃` : ''}${+d.total > 0 ? ` · 已用 ${F.int(d.percent)}%` : ''}`, 'disk/' + encodeURIComponent(d.name));
+          html += row(st, `硬盘 ${esc(diskLabel(d))}`, isSleep(d) ? '休眠中，未唤醒检测' : `${esc(sm.text)}${ok(d.temp) ? ` · ${F.int(d.temp)}℃` : ''}${+d.total > 0 ? ` · 已用 ${F.int(d.percent)}%` : ''}`, 'disk/' + encodeURIComponent(d.name));
         });
         const dk = S.docker || o.docker;
         if (dockerOk(dk)) { const stopped = (dk.containers || []).filter(c => !ctrRun(c)); html += row(stopped.length ? 'info' : true, '容器', stopped.length ? `${stopped.slice(0, 4).map(c => esc(c.name)).join('、')}${stopped.length > 4 ? ' 等' : ''} 未运行` : '全部运行中'); }
@@ -132,7 +132,7 @@ const SHEETS = {
         const sig = dd.map(d => d.name).join();
         if (x._sig !== sig) {
           x._sig = sig;
-          x.disks.innerHTML = dd.length ? dd.map(d => `<div class="row-i tap-row" data-sheet="disk/${esc(encodeURIComponent(d.name))}" style="grid-template-columns:auto minmax(0,1fr) 120px auto"><span class="drive-ico" style="width:36px;height:36px">${ic(diskIcon(d))}</span><div style="min-width:0"><b style="font-weight:600">${esc(d.name)}</b> <span class="faint">${esc(vendorModel(d))}</span><div class="sub" data-io="${esc(d.name)}"></div></div><div><div class="dbar" data-n="20" data-b="${esc(d.name)}"></div><div class="sub tnum" style="text-align:right;margin-top:4px" data-p="${esc(d.name)}"></div></div>${ic('chev', 'i-sm faint')}</div>`).join('') : `<div class="row-i">${emptyHTML('未检测到物理硬盘', '需要 lsblk 支持')}</div>`;
+          x.disks.innerHTML = dd.length ? dd.map(d => `<div class="row-i tap-row" data-sheet="disk/${esc(encodeURIComponent(d.name))}" style="grid-template-columns:auto minmax(0,1fr) 120px auto"><span class="drive-ico" style="width:36px;height:36px">${ic(diskIcon(d))}</span><div style="min-width:0"><b style="font-weight:600">${esc(diskLabel(d))}</b> ${diskSlot(d) != null ? `<span class="faint mono">${esc(d.name)}</span> ` : ''}<span class="faint">${esc(vendorModel(d))}</span><div class="sub" data-io="${esc(d.name)}"></div></div><div><div class="dbar" data-n="20" data-b="${esc(d.name)}"></div><div class="sub tnum" style="text-align:right;margin-top:4px" data-p="${esc(d.name)}"></div></div>${ic('chev', 'i-sm faint')}</div>`).join('') : `<div class="row-i">${emptyHTML('未检测到物理硬盘', '需要 lsblk 支持')}</div>`;
         }
         dd.forEach(d => {
           const q = s => x.disks.querySelector(`[${s}="${CSS.escape(d.name)}"]`), io = ioOf(o, d.name), sl = isSleep(d), sm = smartState(d), hc = +d.total > 0;
@@ -157,13 +157,16 @@ const SHEETS = {
         setHTML(x.raid, rh);
         const ps = S.pstats, sb = (ps && ps.disks) || [];
         setHTML(x.prot, ps ? (ps.standby_protect === false ? '<span class="pill">保护已关闭</span>' : '<span class="pill ok"><span class="dot"></span>保护中 · 不唤醒休眠硬盘</span>') : '');
-        setHTML(x.sb, sb.length ? kvHTML(sb.map(z => [esc(z.name), z.state === 'standby' ? `${ic('moon', 'i-sm')} 休眠` : z.state === 'active/idle' ? '活动' : '<span class="faint">未知</span>'])) : `<div class="card pad">${emptyHTML('无硬盘休眠数据')}</div>`);
+        setHTML(x.sb, sb.length ? kvHTML(sb.map(z => [esc(diskLabelByName(o, z.name)), z.state === 'standby' ? `${ic('moon', 'i-sm')} 休眠` : z.state === 'active/idle' ? '活动' : '<span class="faint">未知</span>'])) : `<div class="card pad">${emptyHTML('无硬盘休眠数据')}</div>`);
       };
     },
   },
   disk: {
     icon: a => { const d = disksOf(S.o).find(z => z.name === a); return d ? diskIcon(d) : 'hdd'; },
-    title: a => '硬盘 ' + a, sub: (o, a) => { const d = disksOf(o).find(z => z.name === a); return d ? vendorModel(d) : ''; },
+    /* 标题显示物理位置（插槽 6），副标题补设备名与型号：拔盘时按槽位找，不用再去
+       系统里查 sdk 是第几个。拿不到槽位时标题退回设备名，副标题只留型号。 */
+    title: a => '硬盘 ' + diskLabelByName(S.o, a),
+    sub: (o, a) => { const d = disksOf(o).find(z => z.name === a); return d ? [diskSlot(d) != null ? d.name : '', vendorModel(d)].filter(Boolean).join(' · ') : ''; },
     build(b, a) {
       const d0 = disksOf(S.o).find(z => z.name === a);
       if (!d0) { b.innerHTML = `<div class="empty"><b>未找到硬盘 ${esc(a)}</b><span>它可能已被移除，或尚未被识别。</span></div>`; return; }

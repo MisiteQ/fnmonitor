@@ -348,10 +348,68 @@ VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "
 # 运行期开关（采集线程按 config 刷新）：standby_protect=休眠硬盘保护，
 # 开启后容量 statvfs / SMART / 温度 / 历史库写入 / 应用目录扫描等磁盘访问
 # 对已 STANDBY 的硬盘一律跳过或走缓存，避免周期性轮询把机械硬盘唤醒
-RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10}
+RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10,
+           "collect_procs": True}
 # 巡检结果的内存副本：dev → 与 smart_detail 同形状的 dict。
 # 60 秒采集循环与详情面板都从这里取，避免反复跑 smartctl（真正的读盘只发生在后台巡检线程）。
 _DISK_HEALTH_MEM = {}
+
+# ---------------------------------------------------------------------------
+# 版块隐藏 → 停采
+# ---------------------------------------------------------------------------
+# 前端「设置 → 版块显示」把隐藏项写进 ui.json 的 hidden（{页面: [版块 id]}）。
+# 下面这张表决定某项采集能不能省：只有「会用到它的版块」全部被隐藏，才停。
+# 顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列
+# 与容器列表，这些项因此不进表——怎么隐藏都照常采，否则结论会失真。
+BLOCK_DEPS = {
+    "procs":   ("procs",),               # 全量 /proc 扫描，纯 CPU 开销，最值得停
+    "sensors": ("thermal",),             # 温度分类 / 风扇 / 电压
+    "fans":    ("thermal",),             # 风扇通道枚举
+    "diskio":  ("storage",),             # 磁盘吞吐
+    "net":     ("network", "metrics"),   # 网卡速率（核心指标卡也显示网络）
+    "power":   ("energy", "metrics"),    # 功耗（核心指标卡也显示功耗）
+    "apps":    ("apps",),                # 内置应用统计（目录遍历 + 数据库 COUNT）
+    "ports":   ("ports", "apps"),        # 端口占用（ss + docker）
+}
+_UI_HIDDEN_LOCK = threading.Lock()
+_UI_HIDDEN = {"mtime": None, "ids": frozenset()}
+
+
+def ui_hidden_blocks(data_dir):
+    """ui.json 里被隐藏的版块 id 集合。按 mtime 缓存，采集线程每轮调用不产生 IO 压力。"""
+    path = os.path.join(data_dir or "", "ui.json")
+    try:
+        mt = os.path.getmtime(path)
+    except Exception:
+        with _UI_HIDDEN_LOCK:
+            _UI_HIDDEN["mtime"] = None
+            _UI_HIDDEN["ids"] = frozenset()
+        return frozenset()
+    with _UI_HIDDEN_LOCK:
+        if _UI_HIDDEN["mtime"] == mt:
+            return _UI_HIDDEN["ids"]
+    ids = set()
+    try:
+        with open(path, "r", errors="ignore") as f:
+            hid = (json.load(f) or {}).get("hidden") or {}
+        if isinstance(hid, dict):
+            for v in hid.values():
+                for i in (v or []):
+                    if isinstance(i, str):
+                        ids.add(i)
+    except Exception:
+        pass
+    fs = frozenset(ids)
+    with _UI_HIDDEN_LOCK:
+        _UI_HIDDEN["mtime"] = mt
+        _UI_HIDDEN["ids"] = fs
+    return fs
+
+
+def can_skip_collect(hidden, key):
+    """该项采集是否可以停：表里列出的版块必须全部被隐藏。"""
+    deps = BLOCK_DEPS.get(key)
+    return bool(deps) and bool(hidden) and all(d in hidden for d in deps)
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -3654,7 +3712,17 @@ def notify_build(events, ts, port=8777):
                                  % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
                                     _dur_cn(ts - first)))
             else:
-                lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
+                # 邮件正文同样标出机箱槽位：收到告警时按 sdk 去系统里翻太慢，
+                # 槽位号能直接对上机架上的位置。idrac_slot_map 只读缓存，不发请求。
+                # 槽位 0 是合法值，必须用 is not None 判断。
+                dev = d.get("dev") or "?"
+                try:
+                    bay = idrac_slot_map().get(_serial_norm(d.get("serial")))
+                except Exception:
+                    bay = None
+                if bay is not None:
+                    dev = "插槽 %s（%s）" % (bay, dev)
+                lines.append("%s · %s · %s · %s" % (dev, d.get("model") or "未知型号",
                                                     d.get("serial") or "无序列号",
                                                     GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
             lines.append("  %s" % (e.get("text") or ""))
@@ -7889,6 +7957,7 @@ class Collector(threading.Thread):
         self._prev_cores = None
         self._prev_net = None
         self._prev_net_ts = None
+        self._last_ifaces = []
         self._prev_diskio = None
         self._prev_diskio_ts = 0.0
         self._prev_disk_percent = {}
@@ -8031,6 +8100,14 @@ class Collector(threading.Thread):
         now = time.time()
         interval = self.config.get("interval", 10)
         RUNTIME["interval"] = interval
+        # 版块隐藏 → 停采：读一次 ui.json（按 mtime 缓存），决定这轮哪些采集能省。
+        # 用户可能同时开多个页面/多台设备，改完立刻生效，靠的就是这里每轮重读。
+        self._hidden = ui_hidden_blocks(self.data_dir)
+        RUNTIME["collect_procs"] = not can_skip_collect(self._hidden, "procs")
+
+        def _skip(key):
+            return can_skip_collect(self._hidden, key)
+
         # 每个采集周期统一探测一次硬盘电源状态，请求线程在周期内只读缓存。
         # 首轮跳过：14 块盘串行 CHECK POWER MODE 要 3~6 秒，首屏不能被它堵住，
         # 紧接着的完整那一轮会补上。
@@ -8106,14 +8183,28 @@ class Collector(threading.Thread):
                                                      self._idrac_slots())
         snapshot["idrac_slot_state"] = _slot_state
         # ---- 网络 ----
-        ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
-        self._prev_net = read_net_dev()
-        self._prev_net_ts = now
+        if _skip("net"):
+            # 网络版块与核心指标卡都关了：不读 /proc/net/dev。保留上一轮结果给
+            # 功耗估算用（无 RAPL 的机器按活动网卡数估算整机功耗），累计值清空，
+            # 重新显示时差分窗口从新起点算，不会冒出一个暴涨的假速率。
+            ifaces = self._last_ifaces
+            self._prev_net = None
+            self._prev_net_ts = None
+        else:
+            ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
+            self._prev_net = read_net_dev()
+            self._prev_net_ts = now
+            self._last_ifaces = ifaces
         snapshot["net"] = ifaces
         # ---- 磁盘 IO ----
-        diskio = collect_disk_io(self._prev_diskio, self._prev_diskio_ts, now)
-        self._prev_diskio = read_diskstats()
-        self._prev_diskio_ts = now
+        if _skip("diskio"):
+            diskio = []
+            self._prev_diskio = None
+            self._prev_diskio_ts = 0.0
+        else:
+            diskio = collect_disk_io(self._prev_diskio, self._prev_diskio_ts, now)
+            self._prev_diskio = read_diskstats()
+            self._prev_diskio_ts = now
         snapshot["diskio"] = diskio
         # ---- 温度 ----
         temps = read_temps(with_disks=not bootstrap)
@@ -8145,7 +8236,7 @@ class Collector(threading.Thread):
         # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
         # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
-            if now - self._last_power_ts >= 10:
+            if not _skip("power") and now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
                 # 与旧行为一致，明确 standby 的盘才剔除
                 disks_active = sum(1 for d in (self._last_disks_detail or [])
@@ -8345,7 +8436,7 @@ class Collector(threading.Thread):
 
         # ---- 端口占用（每 60 秒） ----
         try:
-            if now - self._last_ports_ts >= 60:
+            if not _skip("ports") and now - self._last_ports_ts >= 60:
                 self._last_ports = collect_ports(self._last_docker)
                 self._last_ports_ts = now
         except Exception:
@@ -8372,20 +8463,20 @@ class Collector(threading.Thread):
 
         # ---- 传感器：温度分类 / 风扇 / 电压（每 15 秒） ----
         # 带外 iDRAC 读数一并传入：Dell 机的风扇只由 iDRAC 管，内核里没有通道
-        if now - self._last_sensors_ts >= 15:
+        if not _skip("sensors") and now - self._last_sensors_ts >= 15:
             self._last_sensors = collect_sensors(self._idrac_fast())
             self._last_sensors_ts = now
         snapshot["sensors"] = self._last_sensors
 
         # ---- 风扇通道枚举（每 15 秒，供控制面板使用） ----
-        if now - self._last_fans_ts >= 15:
+        if not _skip("fans") and now - self._last_fans_ts >= 15:
             self._last_fans = _hwmon_fans()
             self._last_fans_ts = now
         snapshot["fans"] = self._last_fans
 
         # ---- 内置应用统计（相册/影视/音乐，每 10 分钟；目录遍历 + 数据库 COUNT 为重操作，手动刷新按钮可即时更新） ----
         # 数据盘休眠时跳过本轮（不更新时间戳，醒来后尽快补采），避免目录扫描唤醒机械硬盘
-        if now - self._last_apps_ts >= 600:
+        if not _skip("apps") and now - self._last_apps_ts >= 600:
             try:
                 if RUNTIME.get("standby_protect", True) and _builtin_appdirs_sleeping():
                     pass
@@ -11124,7 +11215,10 @@ class ProcSampler(threading.Thread):
     def run(self):
         while True:
             try:
-                self.tick()
+                # 「进程」版块被隐藏时停采：这条线程每 10 秒全量扫一遍 /proc，
+                # 是纯 CPU 开销，且进程数据只被首页进程卡使用，停掉不影响别的面板
+                if RUNTIME.get("collect_procs", True):
+                    self.tick()
             except Exception:
                 pass
             time.sleep(self.INTERVAL)

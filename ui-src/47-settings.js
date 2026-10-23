@@ -185,27 +185,71 @@ const SET_SCHEMA = [
     uiItem('fontScale', '字体大小', 'seg', { options: [[0.9, '较小'], [1, '标准'], [1.1, '较大'], [1.25, '特大']] }),
     uiItem('motion', '动效', 'toggle', { hint: '系统开启“减少动态效果”时始终关闭' }),
     { k: 'uiSync', label: '界面设置同步', type: 'action', button: '立即同步', hint: () => `外观、布局与阈值保存在 NAS：<span class="mono">${esc((S.cfg && S.cfg.ui_file) || '数据目录/ui.json')}</span>，换设备或清缓存后自动恢复`, run: async b => { b.disabled = true; const okk = await postUI(); b.disabled = false; toast(okk ? '已同步到 NAS' : '同步失败，请检查连接', okk ? {} : { icon: 'alert' }); } },
-    { k: 'hiddenMods', label: '已隐藏的版块', type: 'info', html: hiddenHTML },
     { k: 'resetLayout', label: '布局', type: 'action', button: '恢复默认布局', run: () => { Object.keys(LAYOUT_DEFAULT).forEach(resetLayout); toast('已恢复默认布局'); syncSettings(); } },
     { k: 'resetUI', label: '一键初始化界面', type: 'action', button: '恢复默认界面', danger: true, hint: '外观、主色、字号、布局与隐藏状态恢复默认（提醒阈值保持不变）', run: resetUI },
   ] },
+  { id: 'blocks', title: '版块显示', icon: 'layout',
+    desc: '按页面列出所有版块，关掉的版块不显示，后端也会尽量停掉对应采集（省 CPU 与磁盘 IO）。顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列与容器列表——这几类数据无论怎么关都会继续采集，否则结论会失真。',
+    custom: renderBlocks },
   { id: 'auth', title: '登录口令', icon: 'lock', desc: '开启后，访问飞牛监控需要先输入口令。', custom: renderAuth },
   { id: 'data', title: '数据', icon: 'folder', custom: renderData },
   { id: 'update', title: '软件更新', icon: 'download', custom: renderUpdate },
   { id: 'about', title: '关于', icon: 'info', custom: renderAbout },
 ];
-function hiddenHTML() {
-  const list = [].concat(...Object.keys(UI.hidden).map(p => UI.hidden[p].map(id => [p, id])));
-  if (!list.length) return '<span class="faint">没有隐藏的版块 · 在「编辑布局」中可隐藏或排序</span>';
-  return `<div class="chips">${list.map(([p, id]) => `<button class="chip-t" type="button" data-restore="${p}:${id}">${ic('eye')}${esc(MODS[id] ? MODS[id].title : id)}</button>`).join('')}<button class="chip-t" type="button" data-restore="*">全部恢复</button></div>`;
+/* ---------------------------------------------------------------------
+   版块显示：直接读写 UI.hidden，与「编辑布局（E 键）」里的开关是同一份状态。
+   BLOCK_KEEP_COLLECT 必须与后端 BLOCK_DEPS（app/server.py）以及顶部健康结论的
+   依赖保持一致：这些版块关掉后页面不再渲染，但后端仍要采它们的一部分数据给
+   顶部结论用，所以提示文案不能说「隐藏后停止采集」。
+   --------------------------------------------------------------------- */
+const BLOCK_KEEP_COLLECT = ['metrics', 'storage', 'thermal', 'network', 'energy', 'containers'];
+const BLOCK_STOP_COLLECT = ['procs', 'apps', 'ports', 'vms'];
+const BLOCK_PAGE_LABEL = { overview: '总览', docker: '容器', vms: '虚拟机' };
+
+function renderBlocks(card) {
+  card.innerHTML = Object.keys(LAYOUT_DEFAULT).map(p => {
+    const rows = LAYOUT_DEFAULT[p].map(id => {
+      if (!MODS[id]) return '';   // 本机不支持（如没装 virsh 的虚拟机页）就不列
+      const title = MODS[id].title;
+      const hint = BLOCK_KEEP_COLLECT.includes(id) ? '隐藏后仍会采集：顶部健康结论依赖它'
+        : BLOCK_STOP_COLLECT.includes(id) ? '隐藏后停止采集，省 CPU'
+          : '隐藏后不再显示';
+      return `<div class="set-row inline blk-row" data-blk="${p}:${id}">
+        <div><div class="lbl">${esc(title)}</div><div class="hint">${hint}</div></div>
+        <div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" aria-label="显示「${esc(title)}」"></button></div>
+      </div>`;
+    }).join('');
+    return rows ? `<div class="set-sub">${BLOCK_PAGE_LABEL[p] || p}</div>` + rows : '';
+  }).join('') +
+    `<div class="set-row inline"><div><div class="lbl">全部显示</div><div class="hint">把所有版块恢复为显示状态，排序不变</div></div><div class="ctl"><button class="btn" type="button" data-blkall="1">${ic('eye')}全部显示</button></div></div>`;
+
+  const split = key => { const i = key.indexOf(':'); return [key.slice(0, i), key.slice(i + 1)]; };
+  card._sync = () => {
+    $$('[data-blk]', card).forEach(row => {
+      const [p, id] = split(row.dataset.blk), sw = row.querySelector('.switch');
+      if (!sw) return;
+      const off = (UI.hidden[p] || []).includes(id);
+      sw.setAttribute('aria-checked', String(!off));
+      row.classList.toggle('blk-off', off);
+    });
+  };
+  card.addEventListener('click', e => {
+    if (e.target.closest('[data-blkall]')) {
+      Object.keys(UI.hidden).forEach(p => { UI.hidden[p] = []; });
+      Object.keys(LAYOUT_DEFAULT).forEach(applyLayout);
+      saveUI(); syncSettings(); toast('已显示全部版块');
+      return;
+    }
+    const sw = e.target.closest('.switch'); if (!sw) return;
+    const box = sw.closest('[data-blk]'); if (!box) return;
+    const [p, id] = split(box.dataset.blk), hid = UI.hidden[p] || [], off = !hid.includes(id);
+    UI.hidden[p] = off ? hid.concat(id) : hid.filter(x => x !== id);
+    applyLayout(p); saveUI(); syncSettings();
+    const title = MODS[id] ? MODS[id].title : id;
+    toast(off ? `已隐藏 · ${title}` : `已显示 · ${title}`, { key: 'blk' });
+  });
+  card._sync();
 }
-document.addEventListener('click', e => {
-  const b = e.target.closest('[data-restore]'); if (!b) return;
-  const v = b.dataset.restore;
-  if (v === '*') Object.keys(UI.hidden).forEach(p => { UI.hidden[p] = []; });
-  else { const [p, id] = v.split(':'); UI.hidden[p] = (UI.hidden[p] || []).filter(x => x !== id); }
-  Object.keys(LAYOUT_DEFAULT).forEach(applyLayout); saveUI(); syncSettings(); toast('已恢复显示');
-});
 
 function renderIgnored(card) {
   card.addEventListener('click', e => {
@@ -726,7 +770,7 @@ function renderUpdate(card) {
 function renderAbout(card) {
   card.innerHTML = `<div class="about"><div class="brand-mark">${ic('logo')}</div><h4>飞牛监控 fnMonitor</h4><p>为飞牛 fnOS 打造的本地系统监控 · <span data-ref="v">v--</span></p>
     <p class="faint" style="margin-top:2px">纯本地运行 · 历史记录、界面设置与配置都保存在 NAS 的程序数据目录中，与访问用的电脑无关</p>
-    <p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a> · <a href="https://github.com/ttkl9559-cell" target="_blank" rel="noopener noreferrer">ttkl9559-cell</a></p>
+    <p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a></p>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:20px;flex-wrap:wrap"><a class="btn" href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">${ic('ext')}项目主页</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/issues" target="_blank" rel="noopener noreferrer">${ic('help')}问题反馈</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/releases/latest" target="_blank" rel="noopener noreferrer">${ic('download')}版本发布</a><button class="btn" type="button" data-sheet="keys">${ic('key')}快捷键</button></div>
     <p class="st-crit" style="margin-top:14px" data-ref="upd" hidden></p></div>`;
   const x = collect(card);

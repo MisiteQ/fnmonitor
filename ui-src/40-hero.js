@@ -27,10 +27,11 @@ function computeHealth(o) {
   const t = cpuTemp(o), lt = LV.temp(t);
   if (lt) add(lt, 'temp', `CPU 温度${lt === 'crit' ? '过高' : '偏高'}（${F.int(t)}℃）`, 'temp');
   disksOf(o).forEach(d => {
-    const sk = 'disk/' + d.name, sm = smartState(d);
-    if (sm.lv === 'crit' || sm.lv === 'warn') add(sm.lv, 'smart:' + d.name, `${d.name}：${sm.text}`, sk, null, [sm.lv, String(d.health || '').toUpperCase()].concat(SMART_KEYS.map(([k]) => +d[k] || 0)).join(':'));
-    if (!isSleep(d)) { const ld = LV.dtemp(d.temp); if (ld) add(ld, 'dt:' + d.name, `${d.name} 温度${ld === 'crit' ? '过高' : '偏高'}（${F.int(d.temp)}℃）`, sk); }
-    if (+d.total > 0) { const lcap = LV.cap(d.percent); if (lcap && Math.abs((+d.percent) - (+o.disk_total)) > 0.5) add(lcap, 'cap:' + d.name, `${d.name} 已用 ${F.int(d.percent)}%`, sk); }
+    /* 文案用 diskLabel（插槽 6），跳转 key 仍用设备名：抽屉按 sdk 定位数据 */
+    const sk = 'disk/' + d.name, sm = smartState(d), lb = diskLabel(d);
+    if (sm.lv === 'crit' || sm.lv === 'warn') add(sm.lv, 'smart:' + d.name, `${lb}：${sm.text}`, sk, null, [sm.lv, String(d.health || '').toUpperCase()].concat(SMART_KEYS.map(([k]) => +d[k] || 0)).join(':'));
+    if (!isSleep(d)) { const ld = LV.dtemp(d.temp); if (ld) add(ld, 'dt:' + d.name, `${lb} 温度${ld === 'crit' ? '过高' : '偏高'}（${F.int(d.temp)}℃）`, sk); }
+    if (+d.total > 0) { const lcap = LV.cap(d.percent); if (lcap && Math.abs((+d.percent) - (+o.disk_total)) > 0.5) add(lcap, 'cap:' + d.name, `${lb} 已用 ${F.int(d.percent)}%`, sk); }
   });
   (o.raid || []).forEach(r => { const bad = (r.members || []).filter(x => /\(F\)/.test(x)); if (bad.length) add('crit', 'raid:' + r.device, `阵列 ${r.device} 有成员盘故障`, 'storage', null, 'crit:' + bad.slice().sort().join('|')); });
   const rc = o.raidcard || {};
