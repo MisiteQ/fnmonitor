@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.18.4-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.19.0-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.18.4**
+- 当前版本：**v2.19.0**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -35,7 +35,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.18.4-x86.fpk`（x86 机型）或 `fnmonitor-2.18.4-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.19.0-x86.fpk`（x86 机型）或 `fnmonitor-2.19.0-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -101,6 +101,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.19.0 | ① **💽 SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 [ttkl9559-cell](https://github.com/ttkl9559-cell)，PR #17）**：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② **🩺 硬盘后台巡检与健康告警（PR #18）**：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ **🖥 iDRAC Redfish 带外监控（PR #19）**：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ **🔍 审查修复**：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复 |
 | v2.18.4 | ① **🔒 CSRF 安全加固（社区贡献者 [iqiuzixuan](https://github.com/iqiuzixuan)，PR #14）**：移除 Origin 比对与本机回环信任，**只保留 `Content-Type: application/json` 和 `X-FNM-Request: 1` 两道闸**——浏览器跨站发送自定义头或 JSON 请求必须先走 CORS 预检，而本服务从不放行预检，跨站页面发不出有效请求。修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf\_rejected<br>② **🐛 修复存储详情「阵列」标题被卡片压住（PR #15）**：新增 `.sheet-stack` 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ **✨ 系统版本显示飞牛 fnOS 版本（PR #16）**：首页概况、主机模块副标题和信息表改为显示 `fnOS 1.2.0800`（不再显示底层 Debian），读取不到时整项不显示 |
 | v2.18.3 | ① **修复飞牛官方手机 app 打开面板仍报 csrf\_rejected（2.18.1/2.18.2 修复不彻底）**：日志定位真实链路——app 面板经飞牛官方远程域名 + fnOS 本机代理转发到本服务（来源为本机回环 ::1），Origin 是官方域名、与被改写后的 Host 不一致，撞上公网跨站拒绝规则；现对**本机回环来源（127.x / ::1）直接信任 CSRF 检查**——该来源由内核网络栈决定，外部浏览器跨站请求不可能伪造，公网防护不受影响                                                                                                                                                                                                                                                                                                                                                             |
 | v2.18.2 | ① **修复飞牛官方手机 app 内嵌打开面板仍报 csrf\_rejected 的问题**：放行 Origin: null 与 app 内部 scheme 等 WebView 特征来源（此前仅放行局域网 Origin 不够），跨站防护不降级（application/json + X-FNM-Request 两道闸拦截浏览器跨站请求）② **新增 CSRF 拒绝日志**：POST 请求被拒时在 server.log 记录具体闸门与来源，便于定位 app 内嵌等特殊访问场景                                                                                                                                                                                                                                                                                                                                                        |
@@ -150,4 +151,4 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 
 ## 📄 许可证
 
-[MIT License](LICENSE) © 2026 Misite齊 · 部分代码 © 2026 iqiuzixuan
+[MIT License](LICENSE) © 2026 Misite齊 · 部分代码 © 2026 iqiuzixuan · 部分代码 © 2026 ttkl9559-cell

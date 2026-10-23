@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.19.0": {
+    "changelog": "v2.19.0<br>① SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 ttkl9559-cell，PR #17）：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② 硬盘后台巡检与健康告警（PR #18）：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ iDRAC Redfish 带外监控（PR #19）：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ 审查修复：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复",
+    "updated_at": "2026-10-23T10:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-x86.fpk",
+      "sha256": "fdfab1fec923d29d565b1fc1c41040887c960dd70167724f8fd20e251d3d1401",
+      "size": 902292
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-arm.fpk",
+      "sha256": "518050890b80b2b2385d6ed052e7ed72a6781ce518f5fd91cc2da96a8ba6fe91",
+      "size": 902287
+     }
+    }
+   },
    "2.18.4": {
     "changelog": "v2.18.4<br>① 安全加固：CSRF 检查简化为两道闸（社区贡献者 iqiuzixuan，PR #14）——移除 Origin 比对与本机回环信任，只保留 Content-Type: application/json 和 X-FNM-Request: 1 两道闸，浏览器跨站必须先走 CORS 预检而本服务从不放行；修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf_rejected<br>② 修复存储详情「阵列」标题被卡片压住（社区贡献者 iqiuzixuan，PR #15）——新增 .sheet-stack 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ 系统版本显示飞牛 fnOS 版本（社区贡献者 iqiuzixuan，PR #16）——首页概况、主机模块副标题和信息表改为显示 fnOS 版本号，不再显示底层 Debian",
     "updated_at": "2026-10-14T16:30:00+08:00",
