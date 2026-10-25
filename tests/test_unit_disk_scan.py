@@ -338,5 +338,50 @@ class ScanOnceTest(unittest.TestCase):
         self.assertEqual(out["error"], "busy")
 
 
+class ScanLogLabelTest(unittest.TestCase):
+    """巡检流水里的硬盘名：有槽位写槽位（并保留设备名），没槽位退回设备名。"""
+
+    def setUp(self):
+        self._mem = dict(srv._DISK_HEALTH_MEM)
+        srv._DISK_HEALTH_MEM.clear()
+        srv._DISK_HEALTH_MEM.update({"sdk": {"serial": "SN-K"}, "sda": {"serial": "SN-A"}})
+        self._patch = mock.patch.object(srv, "idrac_slot_map",
+                                        return_value={"SNK": 6, "SNA": 0})
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        srv._DISK_HEALTH_MEM.clear()
+        srv._DISK_HEALTH_MEM.update(self._mem)
+
+    def test_slot_zero_is_valid(self):
+        # 0 号槽是合法值：写成 if bay 会把它吞掉
+        self.assertEqual(srv.disk_slot_of("sda"), 0)
+        self.assertEqual(srv.disk_label("sda"), "插槽 0（sda）")
+
+    def test_fallback_to_dev_name(self):
+        # 对不上序列号的盘宁可显示 sdk，也不能猜一个槽位
+        self.assertIsNone(srv.disk_slot_of("sdq"))
+        self.assertEqual(srv.disk_label("sdq"), "sdq")
+
+    def test_relabel_devs_is_idempotent(self):
+        t = "sdk 由「正常」变为「故障」；sdq 待映射扇区 0→2"
+        once = srv.relabel_disk_devs(t, {"sdk": 6})
+        self.assertEqual(once, "插槽 6（sdk） 由「正常」变为「故障」；sdq 待映射扇区 0→2")
+        self.assertEqual(srv.relabel_disk_devs(once, {"sdk": 6}), once)
+
+    def test_change_text_uses_slot(self):
+        prev = {"sdk": {"grade": "ok"}}
+        items = [{"dev": "sdk", "serial": "SN-K", "grade": "crit"}]
+        self.assertEqual(srv._scan_change_text(items, prev),
+                         ["插槽 6（sdk） 由「正常」变为「故障」"])
+
+    def test_change_text_growth_uses_slot(self):
+        prev = {"sdk": {"grade": "warn", "defects": 49}}
+        items = [{"dev": "sdk", "serial": "SN-K", "grade": "warn", "defects": 51}]
+        self.assertEqual(srv._scan_change_text(items, prev),
+                         ["插槽 6（sdk） 重映射扇区 49→51"])
+
+
 if __name__ == "__main__":
     unittest.main()

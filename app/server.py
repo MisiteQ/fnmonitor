@@ -3112,21 +3112,24 @@ def _scan_change_text(items, prev):
         dev = it.get("dev") or ""
         if not dev or it.get("standby"):
             continue
+        # 流水是纯文本，没有副标题能补设备名，这里直接把槽位写进文字：
+        # 「插槽 6（sdk） 由「正常」变为「故障」」，一眼能对到机架位置。
+        label = disk_label(dev, it.get("serial"))
         old = (prev or {}).get(dev) or {}
         if not old:
             continue                      # 新接进来的盘不算「变化」
         og, ng = old.get("grade") or "", it.get("grade") or ""
         if og and ng and og != ng:
-            out.append("%s 由「%s」变为「%s」" % (dev, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
+            out.append("%s 由「%s」变为「%s」" % (label, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
             continue
         bits = []
-        for key, label in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
-                           ("uncorr", "不可纠正错误")):
+        for key, label_k in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
+                             ("uncorr", "不可纠正错误")):
             a, b = _nz(old.get(key)), _nz(it.get(key))
             if a is not None and b is not None and a != b:
-                bits.append("%s %s→%s" % (label, a, b))
+                bits.append("%s %s→%s" % (label_k, a, b))
         if bits:
-            out.append("%s %s" % (dev, "，".join(bits)))
+            out.append("%s %s" % (label, "，".join(bits)))
     return out
 
 
@@ -4591,6 +4594,77 @@ def apply_idrac_slots(disks, slots):
     for d in (disks or []):
         d["slot"] = (slots or {}).get(_serial_norm(d.get("serial")))
     return disks
+
+
+_DEV_NAME_RE = re.compile(r"(?<!（)\b(?:sd[a-z]+\d*|nvme\d+n\d+|hd[a-z]+)\b")
+
+
+def disk_slot_of(dev="", serial=""):
+    """设备名 / 序列号 → 机箱槽位号（int）；取不到返回 None。
+
+    只读 iDRAC 缓存，不发请求。槽位 0 是合法值，调用方一律用 is None 判断。"""
+    try:
+        slots = idrac_slot_map()
+    except Exception:
+        return None
+    if not slots:
+        return None
+    for sn in (serial, (_DISK_HEALTH_MEM.get(dev) or {}).get("serial")):
+        if sn:
+            bay = slots.get(_serial_norm(sn))
+            if isinstance(bay, int):
+                return bay
+    return None
+
+
+def disk_label(dev, serial=""):
+    """文本场景（巡检流水 / 通知）的硬盘名：优先机箱槽位，并保留设备名。
+
+    巡检流水是纯文本、没有副标题可以补设备名，所以两者都写进去：
+    「插槽 6（sdk）」，既能在机架上找到位置，也能回系统里核对。"""
+    dev = str(dev or "?").strip() or "?"
+    bay = disk_slot_of(dev, serial)
+    return dev if bay is None else "插槽 %d（%s）" % (bay, dev)
+
+
+def dev_slot_map(db=None):
+    """{设备名: 槽位号}，用于把历史流水里已经写死的 sdk 补成槽位号。"""
+    try:
+        slots = idrac_slot_map()
+    except Exception:
+        return {}
+    if not slots:
+        return {}
+    recs = {}
+    try:
+        if db is not None:
+            recs = db.disk_health_read() or {}
+    except Exception:
+        recs = {}
+    out = {}
+    for src in (recs, _DISK_HEALTH_MEM):
+        for dev, r in (src or {}).items():
+            if dev in out or not dev:
+                continue
+            bay = slots.get(_serial_norm((r or {}).get("serial")))
+            if isinstance(bay, int):
+                out[dev] = bay
+    return out
+
+
+def relabel_disk_devs(text, mapping=None):
+    """把文本里的 sdX / nvme0n1 换成「插槽 6（sdk）」。
+
+    标注后的形式固定是「插槽 6（sdk）」，设备名紧跟全角括号，所以用后行断言
+    跳过已标注的，重复调用不会套娃。取不到槽位的盘原样保留——宁可显示 sdk，
+    也不能猜一个位置。"""
+    text = str(text or "")
+    if not text or not mapping:
+        return text
+    return _DEV_NAME_RE.sub(
+        lambda m: ("插槽 %d（%s）" % (mapping[m.group(0)], m.group(0)))
+        if m.group(0) in mapping else m.group(0),
+        text)
 
 
 def idrac_collect(cfg, force=False):
@@ -9550,6 +9624,17 @@ class MonitorApp:
             items = self.collector.db.disk_scan_log_read(limit) or []
         except Exception:
             items = []
+        # 老记录里写死的是写入当时的设备名（sdk），而那时还没有槽位显示。读的时候
+        # 按当前序列号→槽位映射补一遍，历史记录也能看懂说的是哪块盘。新记录已经
+        # 是「插槽 6（sdk）」，relabel 会跳过已标注的设备名，不会套娃。
+        try:
+            mp = dev_slot_map(self.collector.db)
+        except Exception:
+            mp = {}
+        if mp:
+            for it in items:
+                if it.get("summary"):
+                    it["summary"] = relabel_disk_devs(it["summary"], mp)
         return {"ok": True, "items": items,
                 "keep_ok_days": int(DISK_SCAN_LOG_KEEP_OK // 86400)}
 
