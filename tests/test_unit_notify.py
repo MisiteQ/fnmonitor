@@ -27,6 +27,10 @@ def disk(dev, grade, **kw):
 class FakeDB:
     def __init__(self, d):
         self.db_path = os.path.join(d, "history.db")
+        self.rows = {}
+
+    def disk_health_read(self):
+        return self.rows
 
 
 class NotifyCfgTest(unittest.TestCase):
@@ -231,11 +235,37 @@ class NotifyStateTest(unittest.TestCase):
     def test_unknown_grade_no_event(self):
         self.assertIsNone(self.scan([disk("sdz", "unknown")]))
 
+    def test_rename_after_reboot_is_silent(self):
+        # 断电重启后设备名变了（sdk → sdg），序列号没变：不能当「新增故障」再报一次
+        self.scan([disk("sdk", "warn")])
+        self.assertEqual(len(self.sent), 1)
+        self.assertIsNone(self.scan([disk("sdg", "warn")]))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_legacy_state_migrates_by_serial(self):
+        # 老版本按设备名存状态；迁移到序列号之后，改名也不重报
+        srv.write_json_secure(os.path.join(self.dir, srv.NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": {"sdk": "crit"},
+                               "metrics": {"sdk": {"defects": 49}}})
+        self.db.rows = {"sdk": {"serial": "WAE0J50J", "grade": "crit", "defects": 49}}
+        self.assertIsNone(self.scan([disk("sdg", "crit", defects=49)]))
+        self.assertEqual(len(self.sent), 0)
+
+    def test_name_reused_by_other_disk_drops_old_state(self):
+        # 老状态挂在 sdk 上，但这个名字现在给了另一块盘：不能继承旧等级，
+        # 该报的还得报
+        srv.write_json_secure(os.path.join(self.dir, srv.NOTIFY_STATE_FILE),
+                              {"inited": 1, "notified": {"sdk": "crit"}, "metrics": {}})
+        self.db.rows = {"sdk": {"serial": "WS2331Z5", "grade": "ok"}}
+        r = self.scan([disk("sdk", "warn", serial="WS2331Z5")])
+        self.assertEqual(r["acts"], ["new"])
+
     def test_state_file_survives_restart(self):
         self.scan([disk("sdk", "warn")])
         with open(os.path.join(self.dir, srv.NOTIFY_STATE_FILE), encoding="utf-8") as fh:
             st = json.load(fh)
-        self.assertEqual(st["notified"], {"sdk": "warn"})
+        # 键是「sn:序列号」而不是设备名：设备名跨重启会变
+        self.assertEqual(st["notified"], {"sn:WAE0J50J": "warn"})
         self.assertTrue(st["last"]["ok"])
 
 

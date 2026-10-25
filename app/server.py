@@ -3108,6 +3108,9 @@ def _scan_change_text(items, prev):
     「未见异常」的记录淹掉。
     """
     out = []
+    # 按序列号比对，不看设备名：重启后同一块盘可能从 sdk 变成 sdg，
+    # 按名字比会凭空记下一条「sdg 由正常变为故障」。
+    idx = prev_by_key(prev)
     for it in items or []:
         dev = it.get("dev") or ""
         if not dev or it.get("standby"):
@@ -3115,7 +3118,7 @@ def _scan_change_text(items, prev):
         # 流水是纯文本，没有副标题能补设备名，这里直接把槽位写进文字：
         # 「插槽 6（sdk） 由「正常」变为「故障」」，一眼能对到机架位置。
         label = disk_label(dev, it.get("serial"))
-        old = (prev or {}).get(dev) or {}
+        old = prev_row_for(it, idx)
         if not old:
             continue                      # 新接进来的盘不算「变化」
         og, ng = old.get("grade") or "", it.get("grade") or ""
@@ -3158,6 +3161,56 @@ def _nz(v):
         return int(float(v))
     except Exception:
         return None
+
+
+def disk_key(rec):
+    """跨重启稳定的硬盘身份：优先序列号，没有序列号才退回设备名。
+
+    /dev/sdX 的编号会随重启、换盘、HBA 重新枚举而变——同一块盘 10-24 是 sdk，
+    断电重启后变成 sdg（序列号 WAE0J50J 没变）。按设备名去查「上次状态」会把
+    它当成另一块盘：
+      · 巡检流水记下「sdg 由正常变为故障」，其实什么都没发生；
+      · 缺陷基线取成「同名但换了盘」的那块（0 个），编出「增长 +49 个（0 → 49）」；
+      · 通知状态里 sdk 仍是 crit、sdg 却是新面孔，于是重发一次「新增故障」。
+    所以一切「上次状态」的比较都必须走这个 key。"""
+    sn = _serial_norm((rec or {}).get("serial"))
+    if sn:
+        return "sn:" + sn
+    return "dev:" + str((rec or {}).get("dev") or "")
+
+
+def prev_by_key(rows):
+    """{dev: 行} → {disk_key: 行}，并额外挂一份 dev 别名。
+
+    别名是给「读不到序列号」的场景兜底：休眠盘只回一句 standby，拿不到序列号，
+    这时只能按设备名沿用上次的分级，否则一休眠就退回 unknown。
+    """
+    out = {}
+    for dev, row in (rows or {}).items():
+        r = dict(row or {})
+        r.setdefault("dev", dev)
+        out[disk_key(r)] = r
+        out.setdefault("dev:" + dev, r)
+    return out
+
+
+def prev_row_for(item, idx):
+    """按序列号取上次的巡检记录；取不到再退回设备名。
+
+    退回设备名时要求两边序列号不冲突：名字对上了但序列号不同，说明那块盘已经
+    不在这个位置（是另一块盘顶了这个名字），绝不能拿它的计数当基线。"""
+    row = (idx or {}).get(disk_key(item))
+    if row is not None:
+        return row
+    dev = str((item or {}).get("dev") or "")
+    row = (idx or {}).get("dev:" + dev) if dev else None
+    if row is None:
+        return {}
+    a = _serial_norm(item.get("serial"))
+    b = _serial_norm(row.get("serial"))
+    if a and b and a != b:
+        return {}
+    return row
 
 
 def grade_disk(rec, prev=None):
@@ -3287,6 +3340,8 @@ def disk_scan_once(db, config=None):
             prev = db.disk_health_read() if db else {}
         except Exception:
             prev = {}
+        # 按序列号索引：设备名会随重启轮换，只有序列号能认出「同一块盘」
+        prev_idx = prev_by_key(prev)
         items, skipped, errors = [], [], []
         for d in disk_scan_devices():
             dev = d["dev"]
@@ -3299,7 +3354,7 @@ def disk_scan_once(db, config=None):
             if rec and not rec.get("standby"):
                 _SMART_CACHE[dev] = (ts, rec)
                 _DISK_HEALTH_MEM[dev] = rec
-            old = prev.get(dev) or {}
+            old = prev_row_for({"dev": dev, "serial": rec.get("serial")}, prev_idx) or {}
             if rec.get("standby"):
                 # 休眠盘不唤醒：沿用上次分级与计数，只标记状态
                 if old:
@@ -3806,6 +3861,60 @@ def _disk_metrics_worse(cur, old):
     return out
 
 
+def _notify_state_migrate(st, db, items=None):
+    """把通知状态里的设备名键迁成序列号键。
+
+    老版本按 /dev/sdX 记「哪块盘已经报过」。断电重启后同一块盘换了名字
+    （sdk → sdg），按名字查不到「已报过」，就会把一条老故障再当新增发一遍。
+    迁移优先查 disk_health 的 dev→serial；查不到的（测试里的假库、库还没写）
+    用本轮 items 的设备名反推序列号；名字已经被另一块盘占用的（等级对不上）
+    就丢掉——多报一次比把该报的压掉安全。
+    """
+    notified = dict(st.get("notified") or {})
+    metrics = dict(st.get("metrics") or {})
+    if not notified and not metrics:
+        return notified, metrics
+    rows = {}
+    try:
+        rows = (db.disk_health_read() if db else {}) or {}
+    except Exception:
+        rows = {}
+    live = {}
+    for it in items or []:
+        dev = str((it or {}).get("dev") or "")
+        if dev:
+            live[dev] = it
+
+    def keyed(k):
+        """裸设备名 → (新 key, 已知的旧等级或 None)。"""
+        if k.startswith("sn:") or k.startswith("dev:"):
+            return k, None
+        row = rows.get(k) or {}
+        it = live.get(k) or {}
+        sn = row.get("serial") or it.get("serial")
+        if sn:
+            return disk_key({"dev": k, "serial": sn}), (row.get("grade") or it.get("grade") or "")
+        return "dev:" + k, None
+
+    n_out, m_out, dropped = {}, {}, set()
+    for k, v in notified.items():
+        nk, grade_now = keyed(k)
+        if grade_now and grade_now != v:
+            dropped.add(k)      # 这个名字现在属于另一块盘，旧等级不能继承
+            continue
+        n_out[nk] = v
+        if k in metrics:
+            m_out[nk] = metrics[k]
+    for k, v in metrics.items():
+        if k in notified or k in dropped:
+            continue
+        nk, _grade = keyed(k)
+        m_out[nk] = v
+    if dropped:
+        print("[fnmonitor] 通知状态迁移：丢弃 %d 条已换盘的旧记录" % len(dropped))
+    return n_out, m_out
+
+
 def notify_after_scan(items, ts, db, config=None):
     """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。
 
@@ -3826,28 +3935,29 @@ def notify_after_scan(items, ts, db, config=None):
         if not (cfg.get("enabled") or cfg.get("sct_enabled")):
             return None
         st = notify_state_load(data_dir)
-        notified = dict(st.get("notified") or {})
-        old_metrics = dict(st.get("metrics") or {})
+        # 状态按序列号存：设备名跨重启会变，按名字存会导致同一块盘反复「新增」
+        notified, old_metrics = _notify_state_migrate(st, db, items)
         cur, cur_metrics, events = {}, {}, []
         for it in items or []:
             dev = str(it.get("dev") or "")
             if not dev:
                 continue
+            key = disk_key(it)
             if it.get("standby"):
                 # 休眠盘沿用上次分级，不参与判定。这里必须把旧状态原样带进 cur，
                 # 否则本轮 cur 里少了它，会被当成「已恢复」而清掉已通知标记，
                 # 盘一醒又判一次「新增」——同一块盘重复通知。
-                if dev in notified:
-                    cur[dev] = notified[dev]
-                    if dev in old_metrics:
-                        cur_metrics[dev] = old_metrics[dev]
+                if key in notified:
+                    cur[key] = notified[key]
+                    if key in old_metrics:
+                        cur_metrics[key] = old_metrics[key]
                 continue
             grade = str(it.get("grade") or "")
             met = _disk_metrics(it)
             if grade in ("warn", "crit"):
-                cur[dev] = grade
-                cur_metrics[dev] = met
-            old = str(notified.get(dev) or "")
+                cur[key] = grade
+                cur_metrics[key] = met
+            old = str(notified.get(key) or "")
             if grade not in ("warn", "crit"):
                 if grade == "ok" and old in ("warn", "crit"):
                     events.append({"act": "recovered", "dev": dev, "d": it,
@@ -3865,7 +3975,7 @@ def notify_after_scan(items, ts, db, config=None):
                                        % (it.get("detail") or "")})
                 continue
             # 同档：计数上涨也算恶化，不该等到跨档才提醒
-            grew = _disk_metrics_worse(met, old_metrics.get(dev) or {})
+            grew = _disk_metrics_worse(met, old_metrics.get(key) or {})
             if grew:
                 events.append({"act": "worse", "dev": dev, "d": it,
                                "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
@@ -7286,8 +7396,9 @@ class History:
                  uncorr, temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, detail}]
         返回发生变化的 dev 列表（供通知使用）。"""
         changed = []
+        idx = prev_by_key(prev)
         for it in items or []:
-            old = prev.get(it["dev"]) or {}
+            old = prev_row_for(it, idx)
             sig = ("grade", "defects", "pending_defects", "uncorr")
             if any(old.get(k) != it.get(k) for k in sig):
                 changed.append(it["dev"])

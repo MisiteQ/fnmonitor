@@ -266,6 +266,33 @@ class ScanOnceTest(unittest.TestCase):
         self.assertEqual(out["counts"]["warn"], 1)
         self.assertEqual(out["counts"]["ok"], 13)
 
+    def test_rename_after_reboot_keeps_baseline(self):
+        # 断电重启后 /dev 编号变了（sdk → sdg），序列号没变、缺陷数没涨：
+        # 不能把它当新盘、拿别的盘的 0 当基线，编出「增长 +49 个」判成故障
+        self.db.disk_health_save([{"dev": "sdk", "grade": "warn", "defects": 49,
+                                   "serial": "WAE0J50J", "scan_ts": time.time() - 86400,
+                                   "standby": False, "uncorr": 0, "pending_defects": 0}], {})
+        out = self.run_scan([{"dev": "sdg", "size": 0, "model": ""}],
+                            {"sdg": sas(grown_defects=49, reallocated_sectors=49)})
+        rows = self.db.disk_health_read()
+        self.assertEqual(rows["sdg"]["grade"], "warn")       # 不是 crit
+        self.assertNotIn("增长", rows["sdg"]["detail"])
+        # 也没发生「变化」，流水不该记一条假的「由正常变为故障」
+        self.assertFalse(out["log"]["changed"])
+
+    def test_name_reused_by_other_disk_is_a_new_baseline(self):
+        # 名字被另一块盘顶替（序列号不同）：不能拿前一块盘的计数当基线
+        self.db.disk_health_save([{"dev": "sdg", "grade": "ok", "defects": 0,
+                                   "serial": "WS2331Z5", "scan_ts": time.time() - 86400,
+                                   "standby": False, "uncorr": 0, "pending_defects": 0}], {})
+        out = self.run_scan([{"dev": "sdg", "size": 0, "model": ""}],
+                            {"sdg": sas(serial="WAE0J50J", grown_defects=49,
+                                        reallocated_sectors=49)})
+        rows = self.db.disk_health_read()
+        # 没有基线时按存量判：49 个重映射 → 留意，而不是「增长 49 个」的故障
+        self.assertEqual(rows["sdg"]["grade"], "warn")
+        self.assertNotIn("增长", rows["sdg"]["detail"])
+
     def test_standby_keeps_previous_grade(self):
         self.db.disk_health_save([{"dev": "sdk", "grade": "warn", "defects": 49,
                                    "serial": "WAE0J50J", "scan_ts": time.time() - 86400,
