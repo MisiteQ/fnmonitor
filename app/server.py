@@ -4706,7 +4706,8 @@ def apply_idrac_slots(disks, slots):
     return disks
 
 
-_DEV_NAME_RE = re.compile(r"(?<!（)\b(?:sd[a-z]+\d*|nvme\d+n\d+|hd[a-z]+)\b")
+# 正文里抠设备名用（relabel_disk_devs 的 sub）；别覆盖上面 /api/smart 的白名单校验 _DEV_NAME_RE
+_DEV_NAME_IN_TEXT_RE = re.compile(r"(?<!（)\b(?:sd[a-z]+\d*|nvme\d+n\d+|hd[a-z]+)\b")
 
 
 def disk_slot_of(dev="", serial=""):
@@ -4771,7 +4772,7 @@ def relabel_disk_devs(text, mapping=None):
     text = str(text or "")
     if not text or not mapping:
         return text
-    return _DEV_NAME_RE.sub(
+    return _DEV_NAME_IN_TEXT_RE.sub(
         lambda m: ("插槽 %d（%s）" % (mapping[m.group(0)], m.group(0)))
         if m.group(0) in mapping else m.group(0),
         text)
