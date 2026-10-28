@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.20.0": {
+    "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
+    "updated_at": "2026-10-28T10:30:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-x86.fpk",
+      "sha256": "13807dda0deba949f04b5f409c562d6c0fba7b81a42c10824dfb04c7d8e0333e",
+      "size": 927574
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-arm.fpk",
+      "sha256": "13ceb34c3681ae47b3ad8822a828add14b2373570a472fc9ec3869580dfb292c",
+      "size": 927583
+     }
+    }
+   },
    "2.19.0": {
     "changelog": "v2.19.0<br>① SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 ttkl9559-cell，PR #17）：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② 硬盘后台巡检与健康告警（PR #18）：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ iDRAC Redfish 带外监控（PR #19）：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ 审查修复：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复",
     "updated_at": "2026-10-23T10:00:00+08:00",
