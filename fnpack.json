@@ -28,19 +28,19 @@
    "service_port": "8777",
    "releases": {
    "2.20.0": {
-    "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
+    "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（社区贡献者 ttkl9559-cell，PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（社区贡献者 ttkl9559-cell，PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
     "updated_at": "2026-10-28T10:30:00+08:00",
     "os_min_version": "0.9.0",
     "packages": {
      "x86": {
       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-x86.fpk",
-      "sha256": "13807dda0deba949f04b5f409c562d6c0fba7b81a42c10824dfb04c7d8e0333e",
-      "size": 927574
+      "sha256": "6897634ee346f3bbb514d72f99ab1807651ebb45ce4d5190564041e826d5da6a",
+      "size": 926997
      },
      "arm": {
       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-arm.fpk",
-      "sha256": "13ceb34c3681ae47b3ad8822a828add14b2373570a472fc9ec3869580dfb292c",
-      "size": 927583
+      "sha256": "9400f16740407a7e9ba7cf32e7f641f324b08d9ad278503d81e880eaaaf621c4",
+      "size": 926993
      }
     }
    },
