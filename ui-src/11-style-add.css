@@ -197,3 +197,16 @@ dd .diag-link { margin: 0; height: 24px; }
   .idrac-disks .hr > span:nth-child(3), .idrac-disks .hr > span:nth-child(4),
   .idrac-disks .dr > span:nth-child(3), .idrac-disks .dr > span:nth-child(4) { display: none; }
 }
+
+/* 设置 → 版块显示 */
+.set-sub { margin: 14px 0 2px; color: var(--ink-3); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.set-card > .set-sub:first-child { margin-top: 0; }
+.blk-row .lbl { transition: opacity .15s ease; }
+.blk-row.blk-off .lbl { opacity: .5; }
+
+/* 存储卡告警条：inline-flex 把「插槽 6」当成一个可压缩的 flex item，
+   容器不够宽时会被压到只剩一个汉字宽，槽位号就掉到第二行了。
+   让它不参与收缩、也不在内部换行；后面的长文案照常换行。 */
+.mod-dek .warn.dismissible > b { flex: none; white-space: nowrap; }
+/* 有告警时副标题放宽：槽位 + 型号 + 容量 + 存储空间 + 问题一行放不完至少别挤成三行 */
+.mod-dek.has-warn { max-width: 82ch; }

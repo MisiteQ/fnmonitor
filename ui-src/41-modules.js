@@ -99,14 +99,15 @@ defineModule({
     st('disk', ld || (smartBad ? 'warn' : ''), !has ? '无存储池' : ld ? (ld === 'crit' ? '将满' : '偏满') : smartBad ? smartBad + ' 块需留意' : '充足');
     setText(x.diskSub, has ? `${F.dsizeStr(o.disk_used)} / ${F.dsizeStr(o.disk_size)}${dd.length ? ` · ${dd.length} 块硬盘` : ''}${sleeping ? ` · ${sleeping} 块休眠` : ''}` : (dd.length ? `${dd.length} 块硬盘 · 未读取到存储池用量` : '未检测到存储'));
     const sig = dd.map(d => d.name).join(',');
-    if (m.pipSig !== sig) { m.pipSig = sig; x.diskFoot.innerHTML = dd.length ? `<div class="drive-pips">${dd.slice(0, 12).map(d => `<div><div class="pip" data-d="${esc(d.name)}"><i></i></div><span>${esc(d.name.replace(/^nvme(\d+)n1$/, 'nvme$1'))}</span></div>`).join('')}</div>` : ''; }
+    if (m.pipSig !== sig) { m.pipSig = sig; x.diskFoot.innerHTML = dd.length ? `<div class="drive-pips">${dd.slice(0, 12).map(d => `<div><div class="pip" data-d="${esc(d.name)}"><i></i></div><span>${diskSlot(d) != null ? F.int(diskSlot(d)) : esc(d.name.replace(/^nvme(\d+)n1$/, 'nvme$1'))}</span></div>`).join('')}</div>` : ''; }
     dd.slice(0, 12).forEach(d => {
       const p = x.diskFoot.querySelector(`[data-d="${CSS.escape(d.name)}"]`); if (!p) return;
       const sl = isSleep(d), sm = smartState(d), has2 = +d.total > 0;
       setCls(p, 'pip', sl ? 'sleep' : ['warn', 'crit'].includes(sm.lv) ? 'warn' : '');
       p.firstChild.style.height = (has2 ? clamp(+d.percent, 0, 100) : 0).toFixed(1) + '%';
       const pc = sl || !has2 ? '' : rampAt(+d.percent, 'cap'); if (p.firstChild.style.background !== pc) p.firstChild.style.background = pc;
-      p.title = `${d.name} · ${has2 ? '已用 ' + F.int(d.percent) + '%' : '未挂载 / 无用量数据'}${sl ? ' · 休眠中' : ''}`;
+      // pips 上只印槽位号，hover 补全「插槽 6 · sdk」
+      p.title = `${diskSlot(d) != null ? `插槽 ${diskSlot(d)} · ` : ''}${d.name} · ${has2 ? '已用 ' + F.int(d.percent) + '%' : '未挂载 / 无用量数据'}${sl ? ' · 休眠中' : ''}`;
     });
     // NET
     const rx = sumRx(o), tx = sumTx(o), ni = nets(o);
@@ -175,14 +176,14 @@ defineModule({
       const k = diskKind(d);
       const v = volOf(d);
       const volTxt = v ? `存储空间 vol${v}` : '未挂载';
-      const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(d.name)}，${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
+      const el = mount(`<button class="bay" type="button" data-sheet="disk/${esc(encodeURIComponent(d.name))}" data-type="${k === 'nvme' ? 'nvme' : 'hdd'}" aria-label="硬盘 ${esc(diskLabel(d))}（${esc(d.name)}），${esc(vendorModel(d))}，${esc(volTxt)}，查看详情">
           <span class="bay-top"><span title="${esc(volTxt)}">${volLabel(d)}</span><span class="bay-warn">${ic('alert')}</span><i class="bay-led" data-ref="led"></i></span>
           <span class="bay-body">
             <span class="bay-gauge" data-ref="g"></span>
             <span class="bay-zz" aria-hidden="true"><span class="dm" data-dm="Zz"></span>休眠</span>
             <span class="bay-info">
               <span class="bay-temp"><span data-ref="t">--</span><small>℃</small></span>
-              <span class="bay-name">${esc(d.name)}</span>
+              <span class="bay-name">${esc(diskLabel(d))}</span>
               <span class="bay-model">${esc(vendorModel(d))}</span>
               <span class="bay-cap" data-ref="cap"></span>
             </span>
@@ -214,8 +215,8 @@ defineModule({
       const hasCap = +d.total > 0;
       el._g.set(hasCap ? +d.percent / 100 : 0, bs.lv === 'crit' ? 'crit' : bs.lv === 'warn' ? 'warn' : (LV.cap(d.percent) || ''), 'cap');
       setText(r.cap, hasCap ? `${F.int(d.percent)}% · ${F.dsizeStr(d.used)} / ${F.dsizeStr(d.total)}` : `${F.dsizeStr(d.size)} · 未挂载`);
-      el.title = sl ? `${d.name} 已停转，监控不会唤醒它`
-        : `${d.name} · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
+      el.title = sl ? `${diskLabel(d)}（${d.name}） 已停转，监控不会唤醒它`
+        : `${diskLabel(d)}（${d.name}） · ${bs.text}${bs.detail ? '：' + bs.detail : ''}${S.diskHealth && S.diskHealth.last_ts ? '（巡检于 ' + scanAgo() + '）' : ''}`;
     });
     const ago = scanAgo();
     if (x.scanAgo) setText(x.scanAgo, S.diskHealth ? (ago ? `巡检于 ${ago}` : '尚未巡检') : '');
@@ -231,9 +232,11 @@ defineModule({
       const line = list => {
         const d0 = list[0], bs = bayState(d0), v = volOf(d0);
         const cap = d0.size ? ' ' + F.dsizeStr(d0.size) : '';
-        const where = [v ? `vol${v}` : '未挂载', d0.slot != null ? `插槽 ${d0.slot}` : ''].filter(Boolean).join(' · ');
+        // 主标题已经是槽位，这里只补存储空间；没有槽位时补设备名，保证能定位到具体哪块盘。
+        // slot 用 != null 判断：0 号槽是合法值，真值判断会把它吞掉。
+        const where = [v ? `vol${v}` : '未挂载', diskSlot(d0) == null ? d0.name : ''].filter(Boolean).join(' · ');
         const more = list.length > 1 ? ` 等 ${list.length} 块` : '';
-        return `<b>${esc(d0.name)}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
+        return `<b>${esc(diskLabel(d0))}</b> · ${esc(vendorModel(d0))}${cap}${where ? ' · ' + esc(where) : ''}${more}：${esc(bs.text)}${bs.detail ? ' · ' + esc(bs.detail) : ''}，建议确认备份。`;
       };
       // 签名 = 涉及哪几块盘 + 各自等级 + 具体计数。点过 × 之后只要签名不变就一直隐藏；
       // 一旦多了盘、等级升级、计数又涨，签名变了，提醒自动重新出现。
@@ -244,8 +247,11 @@ defineModule({
         dek += `<span class="warn dismissible" data-warn="${esc(sig)}">${line(warnD)}<button class="warn-x" type="button" aria-label="隐藏本次提醒" title="隐藏本次提醒（状态有变化时会重新出现）">${ic('x')}</button></span>`;
       }
     }
-    if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(d.name)).join('、')} 未巡检</span>。`;
-    if (sleepD.length) dek += `${sleepD.map(d => esc(d.name)).join('、')} 正在休眠。`;
+    if (unknownD.length && S.diskHealth) dek += `<span class="faint">${unknownD.map(d => esc(diskLabel(d))).join('、')} 未巡检</span>。`;
+    if (sleepD.length) dek += `${sleepD.map(d => esc(diskLabel(d))).join('、')} 正在休眠。`;
+    // 有告警时放宽副标题宽度：文案是「槽位 + 型号 + 容量 + 存储空间 + 问题」，
+    // 64ch 里会被挤成三行，且最左边的槽位被压断。类名由现状决定，告警消失后自动去掉。
+    if (m.r.dek) m.r.dek.classList.toggle('has-warn', dek.includes('warn dismissible'));
     setHTML(m.r.dek, dek);
     const bx = m.r.dek && m.r.dek.querySelector ? m.r.dek.querySelector('.warn-x') : null;
     if (bx) bx.onclick = ev => {

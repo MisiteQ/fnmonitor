@@ -114,6 +114,15 @@ const byVol = (a, b) => {
 /** 存储卡副标题里「隐藏本次提醒」的本地记录键（签名变了会自动重新出现） */
 const WARN_DISMISS_KEY = 'fnmWarnDismiss';
 const diskIcon = d => diskKind(d) === 'hdd' || diskKind(d) === 'disk' ? 'hdd' : 'ssd';
+/* ---- 硬盘显示名 ----
+   后端把 iDRAC 物理盘列表按序列号对到 /dev/sdX，给每块盘补了 slot（机箱槽位号）。 */
+/** 槽位号；拿不到返回 null。注意槽位 0 是合法值，只能用 != null 判断，真值判断会把 0 号盘当没槽位。 */
+const diskSlot = d => (d && d.slot != null && d.slot !== '' && isFinite(+d.slot)) ? +d.slot : null;
+/** 显示名统一走这里：优先「插槽 6」这种物理位置，没有槽位才退回设备名 sdk。
+    告警文案、健康清单、盘位卡、抽屉标题全部用它，免得一处改了另一处还印 sdk。 */
+const diskLabel = d => { const s = diskSlot(d); return s != null ? `插槽 ${s}` : String((d && d.name) || ''); };
+/** 只有设备名可用时（抽屉标题、休眠状态表）从当前快照反查槽位 */
+const diskLabelByName = (o, name) => diskLabel(disksOf(o).find(z => z.name === name) || { name });
 /** SMART：通过 / 失败 / 未知；计数字段仅在后端提供时使用 */
 const SMART_KEYS = [['reallocated_sectors', '重映射扇区'], ['reallocated_events', '重映射事件'], ['pending_sectors', '待映射扇区'], ['uncorrectable', '无法纠正错误'], ['udma_crc', 'UDMA CRC 错误']];
 function smartState(d) {

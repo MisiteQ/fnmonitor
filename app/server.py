@@ -348,10 +348,68 @@ VIRT_IFACE_PREFIXES = ("docker", "veth", "br-", "virbr", "tun", "tap", "vnet", "
 # 运行期开关（采集线程按 config 刷新）：standby_protect=休眠硬盘保护，
 # 开启后容量 statvfs / SMART / 温度 / 历史库写入 / 应用目录扫描等磁盘访问
 # 对已 STANDBY 的硬盘一律跳过或走缓存，避免周期性轮询把机械硬盘唤醒
-RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10}
+RUNTIME = {"standby_protect": True, "ec_fan_probe": False, "interval": 10,
+           "collect_procs": True}
 # 巡检结果的内存副本：dev → 与 smart_detail 同形状的 dict。
 # 60 秒采集循环与详情面板都从这里取，避免反复跑 smartctl（真正的读盘只发生在后台巡检线程）。
 _DISK_HEALTH_MEM = {}
+
+# ---------------------------------------------------------------------------
+# 版块隐藏 → 停采
+# ---------------------------------------------------------------------------
+# 前端「设置 → 版块显示」把隐藏项写进 ui.json 的 hidden（{页面: [版块 id]}）。
+# 下面这张表决定某项采集能不能省：只有「会用到它的版块」全部被隐藏，才停。
+# 顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列
+# 与容器列表，这些项因此不进表——怎么隐藏都照常采，否则结论会失真。
+BLOCK_DEPS = {
+    "procs":   ("procs",),               # 全量 /proc 扫描，纯 CPU 开销，最值得停
+    "sensors": ("thermal",),             # 温度分类 / 风扇 / 电压
+    "fans":    ("thermal",),             # 风扇通道枚举
+    "diskio":  ("storage",),             # 磁盘吞吐
+    "net":     ("network", "metrics"),   # 网卡速率（核心指标卡也显示网络）
+    "power":   ("energy", "metrics"),    # 功耗（核心指标卡也显示功耗）
+    "apps":    ("apps",),                # 内置应用统计（目录遍历 + 数据库 COUNT）
+    "ports":   ("ports", "apps"),        # 端口占用（ss + docker）
+}
+_UI_HIDDEN_LOCK = threading.Lock()
+_UI_HIDDEN = {"mtime": None, "ids": frozenset()}
+
+
+def ui_hidden_blocks(data_dir):
+    """ui.json 里被隐藏的版块 id 集合。按 mtime 缓存，采集线程每轮调用不产生 IO 压力。"""
+    path = os.path.join(data_dir or "", "ui.json")
+    try:
+        mt = os.path.getmtime(path)
+    except Exception:
+        with _UI_HIDDEN_LOCK:
+            _UI_HIDDEN["mtime"] = None
+            _UI_HIDDEN["ids"] = frozenset()
+        return frozenset()
+    with _UI_HIDDEN_LOCK:
+        if _UI_HIDDEN["mtime"] == mt:
+            return _UI_HIDDEN["ids"]
+    ids = set()
+    try:
+        with open(path, "r", errors="ignore") as f:
+            hid = (json.load(f) or {}).get("hidden") or {}
+        if isinstance(hid, dict):
+            for v in hid.values():
+                for i in (v or []):
+                    if isinstance(i, str):
+                        ids.add(i)
+    except Exception:
+        pass
+    fs = frozenset(ids)
+    with _UI_HIDDEN_LOCK:
+        _UI_HIDDEN["mtime"] = mt
+        _UI_HIDDEN["ids"] = fs
+    return fs
+
+
+def can_skip_collect(hidden, key):
+    """该项采集是否可以停：表里列出的版块必须全部被隐藏。"""
+    deps = BLOCK_DEPS.get(key)
+    return bool(deps) and bool(hidden) and all(d in hidden for d in deps)
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -3050,25 +3108,31 @@ def _scan_change_text(items, prev):
     「未见异常」的记录淹掉。
     """
     out = []
+    # 按序列号比对，不看设备名：重启后同一块盘可能从 sdk 变成 sdg，
+    # 按名字比会凭空记下一条「sdg 由正常变为故障」。
+    idx = prev_by_key(prev)
     for it in items or []:
         dev = it.get("dev") or ""
         if not dev or it.get("standby"):
             continue
-        old = (prev or {}).get(dev) or {}
+        # 流水是纯文本，没有副标题能补设备名，这里直接把槽位写进文字：
+        # 「插槽 6（sdk） 由「正常」变为「故障」」，一眼能对到机架位置。
+        label = disk_label(dev, it.get("serial"))
+        old = prev_row_for(it, idx)
         if not old:
             continue                      # 新接进来的盘不算「变化」
         og, ng = old.get("grade") or "", it.get("grade") or ""
         if og and ng and og != ng:
-            out.append("%s 由「%s」变为「%s」" % (dev, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
+            out.append("%s 由「%s」变为「%s」" % (label, GRADE_LABEL.get(og, og), GRADE_LABEL.get(ng, ng)))
             continue
         bits = []
-        for key, label in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
-                           ("uncorr", "不可纠正错误")):
+        for key, label_k in (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
+                             ("uncorr", "不可纠正错误")):
             a, b = _nz(old.get(key)), _nz(it.get(key))
             if a is not None and b is not None and a != b:
-                bits.append("%s %s→%s" % (label, a, b))
+                bits.append("%s %s→%s" % (label_k, a, b))
         if bits:
-            out.append("%s %s" % (dev, "，".join(bits)))
+            out.append("%s %s" % (label, "，".join(bits)))
     return out
 
 
@@ -3097,6 +3161,56 @@ def _nz(v):
         return int(float(v))
     except Exception:
         return None
+
+
+def disk_key(rec):
+    """跨重启稳定的硬盘身份：优先序列号，没有序列号才退回设备名。
+
+    /dev/sdX 的编号会随重启、换盘、HBA 重新枚举而变——同一块盘 10-24 是 sdk，
+    断电重启后变成 sdg（序列号 WAE0J50J 没变）。按设备名去查「上次状态」会把
+    它当成另一块盘：
+      · 巡检流水记下「sdg 由正常变为故障」，其实什么都没发生；
+      · 缺陷基线取成「同名但换了盘」的那块（0 个），编出「增长 +49 个（0 → 49）」；
+      · 通知状态里 sdk 仍是 crit、sdg 却是新面孔，于是重发一次「新增故障」。
+    所以一切「上次状态」的比较都必须走这个 key。"""
+    sn = _serial_norm((rec or {}).get("serial"))
+    if sn:
+        return "sn:" + sn
+    return "dev:" + str((rec or {}).get("dev") or "")
+
+
+def prev_by_key(rows):
+    """{dev: 行} → {disk_key: 行}，并额外挂一份 dev 别名。
+
+    别名是给「读不到序列号」的场景兜底：休眠盘只回一句 standby，拿不到序列号，
+    这时只能按设备名沿用上次的分级，否则一休眠就退回 unknown。
+    """
+    out = {}
+    for dev, row in (rows or {}).items():
+        r = dict(row or {})
+        r.setdefault("dev", dev)
+        out[disk_key(r)] = r
+        out.setdefault("dev:" + dev, r)
+    return out
+
+
+def prev_row_for(item, idx):
+    """按序列号取上次的巡检记录；取不到再退回设备名。
+
+    退回设备名时要求两边序列号不冲突：名字对上了但序列号不同，说明那块盘已经
+    不在这个位置（是另一块盘顶了这个名字），绝不能拿它的计数当基线。"""
+    row = (idx or {}).get(disk_key(item))
+    if row is not None:
+        return row
+    dev = str((item or {}).get("dev") or "")
+    row = (idx or {}).get("dev:" + dev) if dev else None
+    if row is None:
+        return {}
+    a = _serial_norm(item.get("serial"))
+    b = _serial_norm(row.get("serial"))
+    if a and b and a != b:
+        return {}
+    return row
 
 
 def grade_disk(rec, prev=None):
@@ -3226,6 +3340,8 @@ def disk_scan_once(db, config=None):
             prev = db.disk_health_read() if db else {}
         except Exception:
             prev = {}
+        # 按序列号索引：设备名会随重启轮换，只有序列号能认出「同一块盘」
+        prev_idx = prev_by_key(prev)
         items, skipped, errors = [], [], []
         for d in disk_scan_devices():
             dev = d["dev"]
@@ -3238,7 +3354,7 @@ def disk_scan_once(db, config=None):
             if rec and not rec.get("standby"):
                 _SMART_CACHE[dev] = (ts, rec)
                 _DISK_HEALTH_MEM[dev] = rec
-            old = prev.get(dev) or {}
+            old = prev_row_for({"dev": dev, "serial": rec.get("serial")}, prev_idx) or {}
             if rec.get("standby"):
                 # 休眠盘不唤醒：沿用上次分级与计数，只标记状态
                 if old:
@@ -3654,7 +3770,17 @@ def notify_build(events, ts, port=8777):
                                  % (time.strftime("%Y-%m-%d %H:%M", time.localtime(first)),
                                     _dur_cn(ts - first)))
             else:
-                lines.append("%s · %s · %s · %s" % (d.get("dev") or "?", d.get("model") or "未知型号",
+                # 邮件正文同样标出机箱槽位：收到告警时按 sdk 去系统里翻太慢，
+                # 槽位号能直接对上机架上的位置。idrac_slot_map 只读缓存，不发请求。
+                # 槽位 0 是合法值，必须用 is not None 判断。
+                dev = d.get("dev") or "?"
+                try:
+                    bay = idrac_slot_map().get(_serial_norm(d.get("serial")))
+                except Exception:
+                    bay = None
+                if bay is not None:
+                    dev = "插槽 %s（%s）" % (bay, dev)
+                lines.append("%s · %s · %s · %s" % (dev, d.get("model") or "未知型号",
                                                     d.get("serial") or "无序列号",
                                                     GRADE_LABEL.get(d.get("grade"), d.get("grade") or "-")))
             lines.append("  %s" % (e.get("text") or ""))
@@ -3735,6 +3861,60 @@ def _disk_metrics_worse(cur, old):
     return out
 
 
+def _notify_state_migrate(st, db, items=None):
+    """把通知状态里的设备名键迁成序列号键。
+
+    老版本按 /dev/sdX 记「哪块盘已经报过」。断电重启后同一块盘换了名字
+    （sdk → sdg），按名字查不到「已报过」，就会把一条老故障再当新增发一遍。
+    迁移优先查 disk_health 的 dev→serial；查不到的（测试里的假库、库还没写）
+    用本轮 items 的设备名反推序列号；名字已经被另一块盘占用的（等级对不上）
+    就丢掉——多报一次比把该报的压掉安全。
+    """
+    notified = dict(st.get("notified") or {})
+    metrics = dict(st.get("metrics") or {})
+    if not notified and not metrics:
+        return notified, metrics
+    rows = {}
+    try:
+        rows = (db.disk_health_read() if db else {}) or {}
+    except Exception:
+        rows = {}
+    live = {}
+    for it in items or []:
+        dev = str((it or {}).get("dev") or "")
+        if dev:
+            live[dev] = it
+
+    def keyed(k):
+        """裸设备名 → (新 key, 已知的旧等级或 None)。"""
+        if k.startswith("sn:") or k.startswith("dev:"):
+            return k, None
+        row = rows.get(k) or {}
+        it = live.get(k) or {}
+        sn = row.get("serial") or it.get("serial")
+        if sn:
+            return disk_key({"dev": k, "serial": sn}), (row.get("grade") or it.get("grade") or "")
+        return "dev:" + k, None
+
+    n_out, m_out, dropped = {}, {}, set()
+    for k, v in notified.items():
+        nk, grade_now = keyed(k)
+        if grade_now and grade_now != v:
+            dropped.add(k)      # 这个名字现在属于另一块盘，旧等级不能继承
+            continue
+        n_out[nk] = v
+        if k in metrics:
+            m_out[nk] = metrics[k]
+    for k, v in metrics.items():
+        if k in notified or k in dropped:
+            continue
+        nk, _grade = keyed(k)
+        m_out[nk] = v
+    if dropped:
+        print("[fnmonitor] 通知状态迁移：丢弃 %d 条已换盘的旧记录" % len(dropped))
+    return n_out, m_out
+
+
 def notify_after_scan(items, ts, db, config=None):
     """巡检后按状态变化推送。返回通知摘要（未发或未配置返回 None），异常不外抛。
 
@@ -3755,28 +3935,29 @@ def notify_after_scan(items, ts, db, config=None):
         if not (cfg.get("enabled") or cfg.get("sct_enabled")):
             return None
         st = notify_state_load(data_dir)
-        notified = dict(st.get("notified") or {})
-        old_metrics = dict(st.get("metrics") or {})
+        # 状态按序列号存：设备名跨重启会变，按名字存会导致同一块盘反复「新增」
+        notified, old_metrics = _notify_state_migrate(st, db, items)
         cur, cur_metrics, events = {}, {}, []
         for it in items or []:
             dev = str(it.get("dev") or "")
             if not dev:
                 continue
+            key = disk_key(it)
             if it.get("standby"):
                 # 休眠盘沿用上次分级，不参与判定。这里必须把旧状态原样带进 cur，
                 # 否则本轮 cur 里少了它，会被当成「已恢复」而清掉已通知标记，
                 # 盘一醒又判一次「新增」——同一块盘重复通知。
-                if dev in notified:
-                    cur[dev] = notified[dev]
-                    if dev in old_metrics:
-                        cur_metrics[dev] = old_metrics[dev]
+                if key in notified:
+                    cur[key] = notified[key]
+                    if key in old_metrics:
+                        cur_metrics[key] = old_metrics[key]
                 continue
             grade = str(it.get("grade") or "")
             met = _disk_metrics(it)
             if grade in ("warn", "crit"):
-                cur[dev] = grade
-                cur_metrics[dev] = met
-            old = str(notified.get(dev) or "")
+                cur[key] = grade
+                cur_metrics[key] = met
+            old = str(notified.get(key) or "")
             if grade not in ("warn", "crit"):
                 if grade == "ok" and old in ("warn", "crit"):
                     events.append({"act": "recovered", "dev": dev, "d": it,
@@ -3794,7 +3975,7 @@ def notify_after_scan(items, ts, db, config=None):
                                        % (it.get("detail") or "")})
                 continue
             # 同档：计数上涨也算恶化，不该等到跨档才提醒
-            grew = _disk_metrics_worse(met, old_metrics.get(dev) or {})
+            grew = _disk_metrics_worse(met, old_metrics.get(key) or {})
             if grew:
                 events.append({"act": "worse", "dev": dev, "d": it,
                                "text": "；".join("%s %d → %d" % (lb, a, b) for lb, a, b in grew)})
@@ -4523,6 +4704,78 @@ def apply_idrac_slots(disks, slots):
     for d in (disks or []):
         d["slot"] = (slots or {}).get(_serial_norm(d.get("serial")))
     return disks
+
+
+# 正文里抠设备名用（relabel_disk_devs 的 sub）；别覆盖上面 /api/smart 的白名单校验 _DEV_NAME_RE
+_DEV_NAME_IN_TEXT_RE = re.compile(r"(?<!（)\b(?:sd[a-z]+\d*|nvme\d+n\d+|hd[a-z]+)\b")
+
+
+def disk_slot_of(dev="", serial=""):
+    """设备名 / 序列号 → 机箱槽位号（int）；取不到返回 None。
+
+    只读 iDRAC 缓存，不发请求。槽位 0 是合法值，调用方一律用 is None 判断。"""
+    try:
+        slots = idrac_slot_map()
+    except Exception:
+        return None
+    if not slots:
+        return None
+    for sn in (serial, (_DISK_HEALTH_MEM.get(dev) or {}).get("serial")):
+        if sn:
+            bay = slots.get(_serial_norm(sn))
+            if isinstance(bay, int):
+                return bay
+    return None
+
+
+def disk_label(dev, serial=""):
+    """文本场景（巡检流水 / 通知）的硬盘名：优先机箱槽位，并保留设备名。
+
+    巡检流水是纯文本、没有副标题可以补设备名，所以两者都写进去：
+    「插槽 6（sdk）」，既能在机架上找到位置，也能回系统里核对。"""
+    dev = str(dev or "?").strip() or "?"
+    bay = disk_slot_of(dev, serial)
+    return dev if bay is None else "插槽 %d（%s）" % (bay, dev)
+
+
+def dev_slot_map(db=None):
+    """{设备名: 槽位号}，用于把历史流水里已经写死的 sdk 补成槽位号。"""
+    try:
+        slots = idrac_slot_map()
+    except Exception:
+        return {}
+    if not slots:
+        return {}
+    recs = {}
+    try:
+        if db is not None:
+            recs = db.disk_health_read() or {}
+    except Exception:
+        recs = {}
+    out = {}
+    for src in (recs, _DISK_HEALTH_MEM):
+        for dev, r in (src or {}).items():
+            if dev in out or not dev:
+                continue
+            bay = slots.get(_serial_norm((r or {}).get("serial")))
+            if isinstance(bay, int):
+                out[dev] = bay
+    return out
+
+
+def relabel_disk_devs(text, mapping=None):
+    """把文本里的 sdX / nvme0n1 换成「插槽 6（sdk）」。
+
+    标注后的形式固定是「插槽 6（sdk）」，设备名紧跟全角括号，所以用后行断言
+    跳过已标注的，重复调用不会套娃。取不到槽位的盘原样保留——宁可显示 sdk，
+    也不能猜一个位置。"""
+    text = str(text or "")
+    if not text or not mapping:
+        return text
+    return _DEV_NAME_IN_TEXT_RE.sub(
+        lambda m: ("插槽 %d（%s）" % (mapping[m.group(0)], m.group(0)))
+        if m.group(0) in mapping else m.group(0),
+        text)
 
 
 def idrac_collect(cfg, force=False):
@@ -7144,8 +7397,9 @@ class History:
                  uncorr, temp_c, power_on_hours, rpm, manufactured, standby, scan_ts, detail}]
         返回发生变化的 dev 列表（供通知使用）。"""
         changed = []
+        idx = prev_by_key(prev)
         for it in items or []:
-            old = prev.get(it["dev"]) or {}
+            old = prev_row_for(it, idx)
             sig = ("grade", "defects", "pending_defects", "uncorr")
             if any(old.get(k) != it.get(k) for k in sig):
                 changed.append(it["dev"])
@@ -7889,6 +8143,7 @@ class Collector(threading.Thread):
         self._prev_cores = None
         self._prev_net = None
         self._prev_net_ts = None
+        self._last_ifaces = []
         self._prev_diskio = None
         self._prev_diskio_ts = 0.0
         self._prev_disk_percent = {}
@@ -8031,6 +8286,14 @@ class Collector(threading.Thread):
         now = time.time()
         interval = self.config.get("interval", 10)
         RUNTIME["interval"] = interval
+        # 版块隐藏 → 停采：读一次 ui.json（按 mtime 缓存），决定这轮哪些采集能省。
+        # 用户可能同时开多个页面/多台设备，改完立刻生效，靠的就是这里每轮重读。
+        self._hidden = ui_hidden_blocks(self.data_dir)
+        RUNTIME["collect_procs"] = not can_skip_collect(self._hidden, "procs")
+
+        def _skip(key):
+            return can_skip_collect(self._hidden, key)
+
         # 每个采集周期统一探测一次硬盘电源状态，请求线程在周期内只读缓存。
         # 首轮跳过：14 块盘串行 CHECK POWER MODE 要 3~6 秒，首屏不能被它堵住，
         # 紧接着的完整那一轮会补上。
@@ -8106,14 +8369,28 @@ class Collector(threading.Thread):
                                                      self._idrac_slots())
         snapshot["idrac_slot_state"] = _slot_state
         # ---- 网络 ----
-        ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
-        self._prev_net = read_net_dev()
-        self._prev_net_ts = now
+        if _skip("net"):
+            # 网络版块与核心指标卡都关了：不读 /proc/net/dev。保留上一轮结果给
+            # 功耗估算用（无 RAPL 的机器按活动网卡数估算整机功耗），累计值清空，
+            # 重新显示时差分窗口从新起点算，不会冒出一个暴涨的假速率。
+            ifaces = self._last_ifaces
+            self._prev_net = None
+            self._prev_net_ts = None
+        else:
+            ifaces = collect_net(self._prev_net, self._prev_net_ts, now)
+            self._prev_net = read_net_dev()
+            self._prev_net_ts = now
+            self._last_ifaces = ifaces
         snapshot["net"] = ifaces
         # ---- 磁盘 IO ----
-        diskio = collect_disk_io(self._prev_diskio, self._prev_diskio_ts, now)
-        self._prev_diskio = read_diskstats()
-        self._prev_diskio_ts = now
+        if _skip("diskio"):
+            diskio = []
+            self._prev_diskio = None
+            self._prev_diskio_ts = 0.0
+        else:
+            diskio = collect_disk_io(self._prev_diskio, self._prev_diskio_ts, now)
+            self._prev_diskio = read_diskstats()
+            self._prev_diskio_ts = now
         snapshot["diskio"] = diskio
         # ---- 温度 ----
         temps = read_temps(with_disks=not bootstrap)
@@ -8145,7 +8422,7 @@ class Collector(threading.Thread):
         # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
         # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
-            if now - self._last_power_ts >= 10:
+            if not _skip("power") and now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
                 # 与旧行为一致，明确 standby 的盘才剔除
                 disks_active = sum(1 for d in (self._last_disks_detail or [])
@@ -8345,7 +8622,7 @@ class Collector(threading.Thread):
 
         # ---- 端口占用（每 60 秒） ----
         try:
-            if now - self._last_ports_ts >= 60:
+            if not _skip("ports") and now - self._last_ports_ts >= 60:
                 self._last_ports = collect_ports(self._last_docker)
                 self._last_ports_ts = now
         except Exception:
@@ -8372,20 +8649,20 @@ class Collector(threading.Thread):
 
         # ---- 传感器：温度分类 / 风扇 / 电压（每 15 秒） ----
         # 带外 iDRAC 读数一并传入：Dell 机的风扇只由 iDRAC 管，内核里没有通道
-        if now - self._last_sensors_ts >= 15:
+        if not _skip("sensors") and now - self._last_sensors_ts >= 15:
             self._last_sensors = collect_sensors(self._idrac_fast())
             self._last_sensors_ts = now
         snapshot["sensors"] = self._last_sensors
 
         # ---- 风扇通道枚举（每 15 秒，供控制面板使用） ----
-        if now - self._last_fans_ts >= 15:
+        if not _skip("fans") and now - self._last_fans_ts >= 15:
             self._last_fans = _hwmon_fans()
             self._last_fans_ts = now
         snapshot["fans"] = self._last_fans
 
         # ---- 内置应用统计（相册/影视/音乐，每 10 分钟；目录遍历 + 数据库 COUNT 为重操作，手动刷新按钮可即时更新） ----
         # 数据盘休眠时跳过本轮（不更新时间戳，醒来后尽快补采），避免目录扫描唤醒机械硬盘
-        if now - self._last_apps_ts >= 600:
+        if not _skip("apps") and now - self._last_apps_ts >= 600:
             try:
                 if RUNTIME.get("standby_protect", True) and _builtin_appdirs_sleeping():
                     pass
@@ -9459,6 +9736,17 @@ class MonitorApp:
             items = self.collector.db.disk_scan_log_read(limit) or []
         except Exception:
             items = []
+        # 老记录里写死的是写入当时的设备名（sdk），而那时还没有槽位显示。读的时候
+        # 按当前序列号→槽位映射补一遍，历史记录也能看懂说的是哪块盘。新记录已经
+        # 是「插槽 6（sdk）」，relabel 会跳过已标注的设备名，不会套娃。
+        try:
+            mp = dev_slot_map(self.collector.db)
+        except Exception:
+            mp = {}
+        if mp:
+            for it in items:
+                if it.get("summary"):
+                    it["summary"] = relabel_disk_devs(it["summary"], mp)
         return {"ok": True, "items": items,
                 "keep_ok_days": int(DISK_SCAN_LOG_KEEP_OK // 86400)}
 
@@ -11124,7 +11412,10 @@ class ProcSampler(threading.Thread):
     def run(self):
         while True:
             try:
-                self.tick()
+                # 「进程」版块被隐藏时停采：这条线程每 10 秒全量扫一遍 /proc，
+                # 是纯 CPU 开销，且进程数据只被首页进程卡使用，停掉不影响别的面板
+                if RUNTIME.get("collect_procs", True):
+                    self.tick()
             except Exception:
                 pass
             time.sleep(self.INTERVAL)

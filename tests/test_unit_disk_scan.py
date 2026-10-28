@@ -266,6 +266,33 @@ class ScanOnceTest(unittest.TestCase):
         self.assertEqual(out["counts"]["warn"], 1)
         self.assertEqual(out["counts"]["ok"], 13)
 
+    def test_rename_after_reboot_keeps_baseline(self):
+        # 断电重启后 /dev 编号变了（sdk → sdg），序列号没变、缺陷数没涨：
+        # 不能把它当新盘、拿别的盘的 0 当基线，编出「增长 +49 个」判成故障
+        self.db.disk_health_save([{"dev": "sdk", "grade": "warn", "defects": 49,
+                                   "serial": "WAE0J50J", "scan_ts": time.time() - 86400,
+                                   "standby": False, "uncorr": 0, "pending_defects": 0}], {})
+        out = self.run_scan([{"dev": "sdg", "size": 0, "model": ""}],
+                            {"sdg": sas(grown_defects=49, reallocated_sectors=49)})
+        rows = self.db.disk_health_read()
+        self.assertEqual(rows["sdg"]["grade"], "warn")       # 不是 crit
+        self.assertNotIn("增长", rows["sdg"]["detail"])
+        # 也没发生「变化」，流水不该记一条假的「由正常变为故障」
+        self.assertFalse(out["log"]["changed"])
+
+    def test_name_reused_by_other_disk_is_a_new_baseline(self):
+        # 名字被另一块盘顶替（序列号不同）：不能拿前一块盘的计数当基线
+        self.db.disk_health_save([{"dev": "sdg", "grade": "ok", "defects": 0,
+                                   "serial": "WS2331Z5", "scan_ts": time.time() - 86400,
+                                   "standby": False, "uncorr": 0, "pending_defects": 0}], {})
+        out = self.run_scan([{"dev": "sdg", "size": 0, "model": ""}],
+                            {"sdg": sas(serial="WAE0J50J", grown_defects=49,
+                                        reallocated_sectors=49)})
+        rows = self.db.disk_health_read()
+        # 没有基线时按存量判：49 个重映射 → 留意，而不是「增长 49 个」的故障
+        self.assertEqual(rows["sdg"]["grade"], "warn")
+        self.assertNotIn("增长", rows["sdg"]["detail"])
+
     def test_standby_keeps_previous_grade(self):
         self.db.disk_health_save([{"dev": "sdk", "grade": "warn", "defects": 49,
                                    "serial": "WAE0J50J", "scan_ts": time.time() - 86400,
@@ -336,6 +363,51 @@ class ScanOnceTest(unittest.TestCase):
             srv._DISK_SCAN_LOCK.release()
         self.assertFalse(out["ok"])
         self.assertEqual(out["error"], "busy")
+
+
+class ScanLogLabelTest(unittest.TestCase):
+    """巡检流水里的硬盘名：有槽位写槽位（并保留设备名），没槽位退回设备名。"""
+
+    def setUp(self):
+        self._mem = dict(srv._DISK_HEALTH_MEM)
+        srv._DISK_HEALTH_MEM.clear()
+        srv._DISK_HEALTH_MEM.update({"sdk": {"serial": "SN-K"}, "sda": {"serial": "SN-A"}})
+        self._patch = mock.patch.object(srv, "idrac_slot_map",
+                                        return_value={"SNK": 6, "SNA": 0})
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        srv._DISK_HEALTH_MEM.clear()
+        srv._DISK_HEALTH_MEM.update(self._mem)
+
+    def test_slot_zero_is_valid(self):
+        # 0 号槽是合法值：写成 if bay 会把它吞掉
+        self.assertEqual(srv.disk_slot_of("sda"), 0)
+        self.assertEqual(srv.disk_label("sda"), "插槽 0（sda）")
+
+    def test_fallback_to_dev_name(self):
+        # 对不上序列号的盘宁可显示 sdk，也不能猜一个槽位
+        self.assertIsNone(srv.disk_slot_of("sdq"))
+        self.assertEqual(srv.disk_label("sdq"), "sdq")
+
+    def test_relabel_devs_is_idempotent(self):
+        t = "sdk 由「正常」变为「故障」；sdq 待映射扇区 0→2"
+        once = srv.relabel_disk_devs(t, {"sdk": 6})
+        self.assertEqual(once, "插槽 6（sdk） 由「正常」变为「故障」；sdq 待映射扇区 0→2")
+        self.assertEqual(srv.relabel_disk_devs(once, {"sdk": 6}), once)
+
+    def test_change_text_uses_slot(self):
+        prev = {"sdk": {"grade": "ok"}}
+        items = [{"dev": "sdk", "serial": "SN-K", "grade": "crit"}]
+        self.assertEqual(srv._scan_change_text(items, prev),
+                         ["插槽 6（sdk） 由「正常」变为「故障」"])
+
+    def test_change_text_growth_uses_slot(self):
+        prev = {"sdk": {"grade": "warn", "defects": 49}}
+        items = [{"dev": "sdk", "serial": "SN-K", "grade": "warn", "defects": 51}]
+        self.assertEqual(srv._scan_change_text(items, prev),
+                         ["插槽 6（sdk） 重映射扇区 49→51"])
 
 
 if __name__ == "__main__":
