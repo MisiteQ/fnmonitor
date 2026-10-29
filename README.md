@@ -13,6 +13,7 @@
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
 - 运行身份：**root**（需访问 sysfs 风扇转速读取、docker.sock、virsh（libvirt）、smartctl 与 /proc 跨用户进程信息）
+- 相关项目：**[Q飞牛+](https://github.com/MisiteQ/qfnplus-ha)** —— 把 fnmonitor 数据接入 Home Assistant 的 HACS 集成（纯只读，60+ 实体：CPU/内存/磁盘 SMART/GPU/Docker/网卡流量/功耗用电等）
 
 ## ✨ 功能
 
