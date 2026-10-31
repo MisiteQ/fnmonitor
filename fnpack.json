@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.30.1": {
+    "changelog": "v2.30.1<br>① 修复定时推送报告中虚拟机数据为空：虚拟机（VMs）是按需采集的（只在打开虚拟机页时轮询），不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存，不影响性能），正常推送到报告中",
+    "updated_at": "2026-11-01T10:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/fnmonitor-2.30.1-x86.fpk",
+      "sha256": "b290e8a4a4eb0fdda0963961052210da0e7c961ae72445bd3380b7cdb5f5790c",
+      "size": 621488
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/fnmonitor-2.30.1-arm.fpk",
+      "sha256": "ece5ebaf634df2ebd0d59e8dc5bc94590c082b76b69b891a19af0e6f1cd0f2a1",
+      "size": 621488
+     }
+    }
+   },
    "2.30.0": {
     "changelog": "v2.30.0<br>① 通知推送系统全面升级：新增企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / 通用 Webhook 共 7 个推送渠道；9 个渠道统一为动态列表，每渠道可自定义消息模板（{title}/{content}/{text}/{time}）；全局通知设置含标题前缀、勿扰模式、极简推送；设置页新增使用说明抽屉<br>② 新增「定时推送报告」：可按时/天/周/月/自定义间隔，把 17 个模块数据汇总推送 Markdown 报告；模块自由勾选，支持简略 / 详细两档，Markdown + emoji 排版，网络自动过滤虚拟网卡，支持测试发送；定时报告不受全局极简推送截断<br>③ 致谢：通知推送与定时报告的多平台通知架构思路参考了 Sunanang/FNMessageBots 的日志推送实现，向作者 Sunanang 致谢",
     "updated_at": "2026-10-31T20:00:00+08:00",

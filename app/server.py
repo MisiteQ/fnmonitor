@@ -62,7 +62,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.30.0"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.30.1"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -5181,7 +5181,7 @@ def _fmt_uptime(sec):
     return "%d 分" % m
 
 
-def notify_report_collect(snapshot, data_dir, cfg, extra=None):
+def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None):
     """从采集快照中按用户勾选的模块收集报告数据。
 
     extra：补充数据（如 weather，不在 collector 快照里），可选。
@@ -5403,6 +5403,14 @@ def notify_report_collect(snapshot, data_dir, cfg, extra=None):
     if "vms" in mods:
         vms = snap.get("vms") or {}
         vlist = vms.get("vms") or vms.get("list") or []
+        # VMs 不在 collector 快照里（按需采集），若快照为空且提供了 vms_monitor，则现采一次
+        if not vlist and vms_monitor is not None:
+            try:
+                vdata = vms_monitor.collect()
+                if isinstance(vdata, dict):
+                    vlist = vdata.get("vms") or []
+            except Exception:
+                traceback.print_exc()
         running = sum(1 for v in vlist if isinstance(v, dict) and (v.get("state") or "").lower() in ("running", "运行中", "on"))
         vm_list = []
         for v in vlist:
@@ -5701,7 +5709,7 @@ def notify_report_build(cfg, payload, now):
     return "\n".join(lines)
 
 
-def notify_report_tick(data_dir, config, snapshot):
+def notify_report_tick(data_dir, config, snapshot, vms_monitor=None):
     """后台线程：采集 → 组装 → 发送定时报告。"""
     try:
         cfg = notify_load(data_dir)
@@ -5716,7 +5724,7 @@ def notify_report_tick(data_dir, config, snapshot):
                 extra["weather"] = fetch_weather(config.get("weather_city") or "")
             except Exception:
                 extra["weather"] = {}
-        payload = notify_report_collect(snapshot, data_dir, cfg, extra=extra)
+        payload = notify_report_collect(snapshot, data_dir, cfg, extra=extra, vms_monitor=vms_monitor)
         now = time.time()
         body = notify_report_build(cfg, payload, now)
         prefix = cfg.get("notify_title_prefix") or "飞牛监控"
@@ -5744,7 +5752,7 @@ def notify_report_tick(data_dir, config, snapshot):
         return None
 
 
-def notify_report_schedule(data_dir, config, snapshot):
+def notify_report_schedule(data_dir, config, snapshot, vms_monitor=None):
     """采集线程每轮调用：到点就起后台线程发报告，立刻返回。"""
     try:
         if _REPORT_JOB[0] is not None and _REPORT_JOB[0].is_alive():
@@ -5752,7 +5760,7 @@ def notify_report_schedule(data_dir, config, snapshot):
         cfg = notify_load(data_dir)
         if not _report_due(cfg):
             return False
-        t = threading.Thread(target=notify_report_tick, args=(data_dir, config, snapshot),
+        t = threading.Thread(target=notify_report_tick, args=(data_dir, config, snapshot, vms_monitor),
                              name="fnm-report", daemon=True)
         _REPORT_JOB[0] = t
         t.start()
@@ -10192,7 +10200,7 @@ class Collector(threading.Thread):
 
         # ---- 定时推送报告（按用户设定的周期汇总各模块数据推送）----
         try:
-            notify_report_schedule(self.data_dir, self.config, snapshot)
+            notify_report_schedule(self.data_dir, self.config, snapshot, vms_monitor=self.vms)
         except Exception:
             traceback.print_exc()
 
@@ -11361,7 +11369,7 @@ class MonitorApp:
             except Exception:
                 extra["weather"] = {}
         try:
-            payload = notify_report_collect(snap, self.data_dir, cfg, extra=extra)
+            payload = notify_report_collect(snap, self.data_dir, cfg, extra=extra, vms_monitor=self.vms)
             now = time.time()
             body = notify_report_build(cfg, payload, now)
         except Exception as e:
