@@ -351,102 +351,470 @@ async function loadNotify(force) {
   return NB;
 }
 function renderNotify(card) {
+  // 各渠道字段定义：type=text/password/number/seg/textarea，advanced 折叠，secret 保密字段
+  const SCHEMA = {
+    mail: { color: '#4f8cff', fields: [
+      { key: 'provider', label: '邮箱服务商', type: 'seg', options: NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), hint: '选择后自动填入服务器、端口与加密方式' },
+      { key: 'host', label: 'SMTP 服务器', type: 'text', mono: true, placeholder: 'smtp.qq.com' },
+      { key: 'port', label: '端口', type: 'number', min: 1, max: 65535 },
+      { key: 'secure', label: '加密方式', type: 'seg', options: [['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不加密']] },
+      { key: 'user', label: '发件账号', type: 'text', placeholder: 'you@qq.com' },
+      { key: 'password', label: '授权码', type: 'password', secret: true, hint: '邮箱网页端开启 SMTP 后生成的授权码，不是登录密码' },
+      { key: 'to', label: '收件人', type: 'text', placeholder: '多个用英文逗号分隔' },
+    ]},
+    sct: { color: '#07c160', fields: [
+      { key: 'key', label: 'SendKey', type: 'password', secret: true, placeholder: 'SCT…', hint: 'sct.ftqq.com 注册并关注「方糖」服务号后复制' },
+    ]},
+    wechat: { color: '#2dc100', fields: [
+      { key: 'url', label: 'Webhook 地址', type: 'password', secret: true, mono: true, placeholder: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…', hint: '群机器人 → 添加机器人 → 复制 Webhook' },
+      { key: 'msg_type', label: '消息类型', type: 'seg', options: [['markdown', 'Markdown'], ['text', '纯文本']], advanced: true },
+    ]},
+    dingtalk: { color: '#1677ff', fields: [
+      { key: 'url', label: 'Webhook 地址', type: 'password', secret: true, mono: true, placeholder: 'https://oapi.dingtalk.com/robot/send?access_token=…', hint: '群设置 → 智能群助手 → 添加机器人 → 自定义' },
+      { key: 'secret', label: '加签密钥', type: 'password', secret: true, mono: true, placeholder: 'SEC…', advanced: true, hint: '安全设置选了「加签」时填，未选留空' },
+      { key: 'msg_type', label: '消息类型', type: 'seg', options: [['markdown', 'Markdown'], ['text', '纯文本']], advanced: true },
+    ]},
+    feishu: { color: '#3370ff', fields: [
+      { key: 'url', label: 'Webhook 地址', type: 'password', secret: true, mono: true, placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/…', hint: '群设置 → 群机器人 → 添加机器人 → 自定义' },
+      { key: 'msg_type', label: '消息类型', type: 'seg', options: [['text', '纯文本'], ['post', '富文本']], advanced: true },
+    ]},
+    bark: { color: '#ff7a00', fields: [
+      { key: 'url', label: '推送地址', type: 'password', secret: true, mono: true, placeholder: 'https://api.day.app/…', hint: 'iOS App「Bark」里复制的服务器地址' },
+      { key: 'icon', label: '图标 URL', type: 'text', mono: true, placeholder: 'https://…/icon.png', advanced: true },
+      { key: 'sound', label: '铃声', type: 'text', mono: true, placeholder: 'alarm', advanced: true },
+      { key: 'group', label: '分组', type: 'text', mono: true, placeholder: 'fnmonitor', advanced: true },
+      { key: 'jump_url', label: '跳转链接', type: 'text', mono: true, placeholder: 'https://…', advanced: true },
+    ]},
+    pushplus: { color: '#f5a623', fields: [
+      { key: 'token', label: 'Token', type: 'password', secret: true, mono: true, placeholder: 'PushPlus Token', hint: 'pushplus.plus 登录后在「发送消息」页复制' },
+      { key: 'channel', label: '推送渠道', type: 'seg', options: [['wechat', '微信公众号'], ['app', 'App'], ['extension', '插件/桌面'], ['webhook', 'Webhook'], ['clawbot', 'ClawBot'], ['qq', 'QQ'], ['cp', '企微应用'], ['mail', '邮箱']], advanced: true },
+      { key: 'template', label: '消息格式', type: 'seg', options: [['txt', 'TXT'], ['html', 'HTML'], ['markdown', 'Markdown'], ['json', 'JSON']], advanced: true, hint: 'PushPlus 的消息渲染格式' },
+      { key: 'topic', label: '群组编码', type: 'text', mono: true, placeholder: '群组 topic', advanced: true },
+      { key: 'option', label: '渠道配置', type: 'text', mono: true, placeholder: '渠道配置编码', advanced: true, hint: 'webhook/cp/mail/qq 渠道需填' },
+    ]},
+    webhook: { color: '#8e44ad', fields: [
+      { key: 'url', label: 'Webhook 地址', type: 'password', secret: true, mono: true, placeholder: 'https://your-server.com/webhook', hint: '默认 POST JSON {title, content}，可在下方自定义' },
+      { key: 'method', label: '请求方法', type: 'seg', options: [['POST', 'POST'], ['GET', 'GET'], ['PUT', 'PUT']], advanced: true },
+      { key: 'content_type', label: 'Content-Type', type: 'seg', options: [['json', 'JSON'], ['form', 'FORM'], ['text', 'TEXT']], advanced: true },
+      { key: 'headers', label: '自定义请求头', type: 'textarea', mono: true, placeholder: 'Authorization: Bearer xxx\nX-Custom: value', advanced: true, hint: '每行 "K: V"，或直接写 JSON 对象' },
+      { key: 'body', label: 'Body 模板', type: 'textarea', mono: true, placeholder: '{"msg":"{title}","detail":"{content}"}', advanced: true, hint: '支持 {title}{content}{text}{time} 占位符；留空用默认 {"title":"...","content":"..."}' },
+    ]},
+    wecom_app: { color: '#00d4b4', fields: [
+      { key: 'corp_id', label: 'CorpID', type: 'text', mono: true, placeholder: '企业 ID', hint: '企业微信管理后台 → 我的企业 → 企业 ID' },
+      { key: 'corp_secret', label: 'Secret', type: 'password', secret: true, mono: true, placeholder: '应用 Secret' },
+      { key: 'agent_id', label: 'AgentId', type: 'text', mono: true, placeholder: '1000002' },
+      { key: 'to_user', label: '接收人', type: 'text', mono: true, placeholder: '@all', hint: '默认 @all；多人用 | 分隔' },
+      { key: 'to_party', label: '接收部门', type: 'text', mono: true, placeholder: '1|2', advanced: true },
+      { key: 'to_tag', label: '接收标签', type: 'text', mono: true, placeholder: '1|2', advanced: true },
+      { key: 'msg_type', label: '消息类型', type: 'seg', options: [['text', '纯文本'], ['markdown', 'Markdown']], advanced: true },
+    ]},
+  };
+  const TPL_HINT = '留空用默认格式。可用占位符：{title}=告警标题，{content}=告警正文，{text}=正文别名，{time}=当前时间';
+  const TYPE_LABELS = { mail: '邮件', sct: 'Server酱', wechat: '企业微信群机器人', dingtalk: '钉钉群机器人',
+    feishu: '飞书群机器人', bark: 'Bark', pushplus: 'PushPlus', webhook: '通用 Webhook', wecom_app: '企业微信应用' };
+  // 状态：channels 是可变数组，每项 {id,type,name,enabled,config:{...}}
+  let f = { channels: [], hw_enabled: 0, hw_time: '08:00', notify_title_prefix: '飞牛监控',
+    notify_dnd_enabled: 0, notify_dnd_start: '23:00', notify_dnd_end: '08:00', notify_minimal: 0,
+    report_enabled: 0, report_detail: 'detail',
+    report_schedule: { type: 'daily', time: '08:00', weekday: 0, day: 1, interval_minutes: 60 },
+    report_modules: ['system', 'cpu', 'memory', 'disk', 'network'] };
+  // 报告模块定义：key → [中文标签, 分类]
+  const REPORT_MODS = {
+    system: ['系统信息', '系统'], cpu: ['CPU', '系统'], memory: ['内存', '系统'], load: ['负载', '系统'], gpu: ['显卡', '系统'],
+    disk: ['硬盘状态', '存储'], smart: ['SMART 健康', '存储'], storage: ['存储池/阵列', '存储'],
+    network: ['网络', '网络'], temp: ['温度', '散热'], fan: ['风扇', '散热'], power: ['功耗与电费', '功耗'],
+    docker: ['Docker 容器', '容器'], vms: ['虚拟机', '容器'],
+    idrac: ['iDRAC 硬件', '硬件'], ups: ['UPS', '硬件'], weather: ['天气', '其他'],
+  };
+  const REPORT_MOD_ORDER = ['system', 'cpu', 'memory', 'load', 'gpu', 'disk', 'smart', 'storage', 'network', 'temp', 'fan', 'power', 'docker', 'vms', 'idrac', 'ups', 'weather'];
+  let chSeq = 0; // 新建渠道 id 自增
+  const newId = () => 'ch_' + Date.now().toString(36) + (chSeq++);
+
   card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
 · <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
 · <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
-    <div class="set-row inline"><div><div class="lbl">邮件通知</div><div class="hint" data-ref="hMail"></div></div><div class="ctl"><span class="test-msg" data-ref="mMail"></span><button class="btn" type="button" data-ref="tMail">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMail" aria-label="邮件通知"></button></div></div>
-    <div class="set-row"><div><div class="lbl">邮箱服务商</div><div class="hint">选择后自动填入服务器、端口与加密方式</div></div><div class="ctl" data-ref="segP"></div></div>
-    <div class="set-row"><div><div class="lbl">服务器与端口</div><div class="hint">QQ / 163 等需在邮箱网页端开启 SMTP 服务</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input class="textfield mono" style="width:190px" data-ref="host" placeholder="smtp.qq.com" spellcheck="false" aria-label="SMTP 服务器"><input class="textfield mono" style="width:86px" type="number" min="1" max="65535" data-ref="port" aria-label="SMTP 端口"><span data-ref="segSec"></span></div></div>
-    <div class="set-row"><div><div class="lbl">发件账号</div><div class="hint">完整邮箱地址，同时作为发件人</div></div><div class="ctl"><input class="textfield" data-ref="user" placeholder="you@qq.com" spellcheck="false" autocomplete="username" aria-label="发件账号"></div></div>
-    <div class="set-row"><div><div class="lbl">授权码</div><div class="hint" data-ref="hPw"></div></div><div class="ctl"><input class="textfield" type="password" data-ref="pw" placeholder="邮箱授权码" autocomplete="new-password" aria-label="授权码"></div></div>
-    <div class="set-row"><div><div class="lbl">收件人</div><div class="hint">多个地址用英文逗号分隔</div></div><div class="ctl"><input class="textfield" data-ref="to" placeholder="you@qq.com" spellcheck="false" aria-label="收件人"></div></div>
-    <div class="set-row inline"><div><div class="lbl">微信通知（Server酱）</div><div class="hint">sct.ftqq.com 注册并关注「方糖」服务号后复制 SendKey；免费版每天 5 条</div></div><div class="ctl"><span class="test-msg" data-ref="mSct"></span><button class="btn" type="button" data-ref="tSct">发送测试</button><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swSct" aria-label="微信通知"></button></div></div>
-    <div class="set-row"><div><div class="lbl">SendKey</div><div class="hint" data-ref="hKey"></div></div><div class="ctl"><input class="textfield mono" type="password" data-ref="sctkey" placeholder="SCT…" autocomplete="new-password" aria-label="SendKey"></div></div>
+    <div class="notify-channels" data-ref="chList"></div>
+    <div style="display:flex;gap:8px;margin:8px 0 16px">
+      <button class="btn" type="button" data-ref="addCh" style="flex:1">+ 添加推送渠道</button>
+      <button class="btn" type="button" data-ref="guideBtn" style="flex:0 0 auto">? 使用说明</button>
+    </div>
+    <div class="set-row"><div><div class="lbl" style="margin-top:6px">全局通知设置</div><div class="hint">标题前缀、勿扰模式、极简推送，对所有渠道生效</div></div></div>
+    <div class="set-row"><div><div class="lbl">标题前缀</div><div class="hint">每条通知标题前加的前缀，默认「飞牛监控」</div></div><div class="ctl"><input class="textfield" data-ref="titlePrefix" placeholder="飞牛监控" maxlength="32" aria-label="通知标题前缀"></div></div>
+    <div class="set-row inline"><div><div class="lbl">极简推送</div><div class="hint" data-ref="hMin"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMin" aria-label="极简推送"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">勿扰模式</div><div class="hint" data-ref="hDnd"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swDnd" aria-label="勿扰模式"></button></div></div>
+    <div class="set-row"><div><div class="lbl">勿扰时段</div><div class="hint">该时段内的通知会缓存，结束后汇总成一条发送</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:90px" type="time" data-ref="dndStart" aria-label="勿扰开始时间"><span>至</span><input class="textfield mono" style="width:90px" type="time" data-ref="dndEnd" aria-label="勿扰结束时间"></div></div>
     <div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
     <div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
+    <div class="set-row"><div><div class="lbl" style="margin-top:6px">定时推送报告</div><div class="hint">按设定周期把系统各模块数据汇总推送一条报告；与告警推送互不干扰</div></div></div>
+    <div class="set-row inline"><div><div class="lbl">开启定时报告</div><div class="hint" data-ref="hRep"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swRep" aria-label="开启定时报告"></button></div></div>
+    <div class="set-row" data-ref="repSchRow"><div><div class="lbl">推送周期</div><div class="hint">到点自动发一条汇总报告</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <select class="textfield" data-ref="repType" aria-label="推送周期类型" style="width:auto">
+        <option value="hourly">每小时</option>
+        <option value="daily">每天</option>
+        <option value="weekly">每周</option>
+        <option value="monthly">每月</option>
+        <option value="interval">自定义间隔</option>
+      </select>
+      <input class="textfield mono" type="time" data-ref="repTime" aria-label="推送时间" style="width:90px">
+      <select class="textfield" data-ref="repWeekday" aria-label="星期" style="width:auto;display:none">
+        <option value="0">周一</option><option value="1">周二</option><option value="2">周三</option><option value="3">周四</option><option value="4">周五</option><option value="5">周六</option><option value="6">周日</option>
+      </select>
+      <input class="textfield mono" type="number" min="1" max="31" data-ref="repDay" aria-label="日期" style="width:60px;display:none" placeholder="日">
+      <input class="textfield mono" type="number" min="1" max="10080" data-ref="repInterval" aria-label="间隔分钟" style="width:90px;display:none" placeholder="分钟">
+    </div></div>
+    <div class="set-row wide" data-ref="repModRow"><div><div class="lbl">推送内容</div><div class="hint">勾选要在报告里推送的模块，并选择详细程度</div></div><div class="ctl" style="flex-direction:column;align-items:stretch;gap:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="set-sub" style="margin:0">详细程度</span>
+        <div data-ref="repDetailSeg"></div>
+      </div>
+      <div class="rep-mods" data-ref="repMods"></div>
+    </div></div>
+    <div class="set-row" data-ref="repTestRow"><div><div class="lbl">测试报告</div><div class="hint" data-ref="hRepTest">点「发送测试报告」立刻发一条当前数据的汇总报告</div></div><div class="ctl"><button class="btn" type="button" data-ref="repTestBtn">发送测试报告</button></div></div>
     <div class="set-row"><div><div class="lbl">保存设置</div><div class="hint" data-ref="hMsg"></div></div><div class="ctl"><button class="btn primary" type="button" data-ref="save">保存</button></div></div>`;
   const x = collect(card);
-  const f = { enabled: 0, provider: 'qq', host: '', port: 465, secure: 'ssl', user: '', to: '',
-              password: '', sct_enabled: 0, sct_key: '', hw_enabled: 0, hw_time: '08:00' };
-  const segP = makeSeg(NOTIFY_PROVIDERS.map(p => [p[0], p[1]]), 'qq', v => {
-    f.provider = v;
-    const pv = NOTIFY_PROVIDERS.find(p => p[0] === v);
-    if (pv && pv[2]) { f.host = pv[2]; f.port = pv[3]; f.secure = pv[4]; x.host.value = pv[2]; x.port.value = pv[3]; segSec.set(pv[4]); }
-  }, 'sm');
-  const segSec = makeSeg([['ssl', 'SSL'], ['starttls', 'STARTTLS'], ['none', '不加密']], 'ssl', v => { f.secure = v; }, 'sm');
-  x.segP.append(segP); x.segSec.append(segSec);
+
+  // 生成单个字段的 HTML + 绑定
+  function fieldHtml(chIdx, field, value) {
+    const k = field.key;
+    const id = `f_${chIdx}_${k}`;
+    const adv = field.advanced ? ' ch-advanced' : '';
+    const mono = field.mono ? ' mono' : '';
+    const label = `<div class="lbl">${esc(field.label)}</div>` + (field.hint ? `<div class="hint">${esc(field.hint)}</div>` : '');
+    let ctl = '';
+    if (field.type === 'seg') {
+      ctl = `<div class="ctl" data-seg="${id}" data-k="${k}"></div>`;
+    } else if (field.type === 'textarea') {
+      ctl = `<div class="ctl"><textarea class="textfield${mono}" style="width:100%;min-height:56px;font-size:12px" data-id="${id}" data-k="${k}" placeholder="${esc(field.placeholder || '')}" spellcheck="false">${esc(value || '')}</textarea></div>`;
+    } else if (field.type === 'number') {
+      ctl = `<div class="ctl"><input class="textfield${mono}" style="width:86px" type="number" min="${field.min || ''}" max="${field.max || ''}" data-id="${id}" data-k="${k}" value="${esc(value || '')}" aria-label="${esc(field.label)}"></div>`;
+    } else {
+      const pwd = field.type === 'password';
+      ctl = `<div class="ctl"><input class="textfield${mono}" type="${pwd ? 'password' : 'text'}" data-id="${id}" data-k="${k}" value="${pwd ? '' : esc(value || '')}" placeholder="${esc(field.placeholder || '')}" spellcheck="false" autocomplete="${pwd ? 'new-password' : 'off'}" aria-label="${esc(field.label)}"></div>`;
+    }
+    return `<div class="set-row${adv}"><div>${label}</div>${ctl}</div>`;
+  }
+
+  // 渲染一个渠道卡片
+  function renderChannel(ch, idx) {
+    const schema = SCHEMA[ch.type] || { fields: [] };
+    const cfg = ch.config || {};
+    const isSet = k => cfg[k + '_set'] === true || cfg[k + '_set'] === 1;
+    // 普通字段 + 高级字段分别渲染
+    const normal = schema.fields.filter(f2 => !f2.advanced);
+    const adv = schema.fields.filter(f2 => f2.advanced);
+    const rows = normal.map(f2 => fieldHtml(idx, f2, cfg[f2.key])).join('');
+    const advRows = adv.map(f2 => fieldHtml(idx, f2, cfg[f2.key])).join('');
+    // 消息模板字段（webhook 已有 body，其它渠道加 template）
+    const tplKey = ch.type === 'pushplus' ? 'msg_template' : 'template';
+    const tplField = ch.type === 'webhook' ? '' :
+      `<div class="set-row ch-advanced"><div><div class="lbl">消息模板</div><div class="hint">${TPL_HINT}</div></div><div class="ctl"><textarea class="textfield mono" style="width:100%;min-height:56px;font-size:12px" data-id="f_${idx}_tpl" data-k="${tplKey}" placeholder="**{title}**\n{content}" spellcheck="false">${esc(cfg[tplKey] || '')}</textarea></div></div>`;
+    const hasAdv = advRows || tplField;
+    return `<div class="ch-group" data-ch="${esc(ch.type)}" data-idx="${idx}">
+      <div class="ch-head">
+        <div class="ch-name-row" style="display:flex;align-items:center;gap:8px;min-width:0">
+          <input class="ch-name-input" style="flex:1;min-width:0;background:transparent;border:0;font-weight:600;font-size:14px;color:var(--ink);outline:none" data-k="name" value="${esc(ch.name || TYPE_LABELS[ch.type] || ch.type)}" aria-label="渠道名称">
+        </div>
+        <div class="ch-ctl" style="display:flex;align-items:center;gap:8px">
+          <span class="ch-type-badge" style="font-size:11px;color:var(--ink-3);background:var(--bg-2);padding:2px 8px;border-radius:10px;white-space:nowrap">${esc(TYPE_LABELS[ch.type] || ch.type)}</span>
+          <span class="test-msg" data-ref="mCh"></span>
+          <button class="btn" type="button" data-ref="tCh">测试</button>
+          <button class="switch" type="button" role="switch" aria-checked="${!!ch.enabled}" data-ref="swCh" aria-label="启用该渠道"></button>
+          <button class="btn" type="button" data-ref="delCh" aria-label="删除渠道" style="padding:4px 8px;color:var(--warn)">✕</button>
+        </div>
+      </div>
+      <div class="ch-body">${rows}${advRows}${tplField}</div>
+      ${hasAdv ? '<div class="ch-adv-toggle" style="padding:6px 14px;border-top:1px solid var(--line)">高级设置 ▾</div>' : ''}
+    </div>`;
+  }
+
+  function renderAll() {
+    // 保留滚动位置与高级设置展开状态，避免重渲染后页面跳动
+    const scrollTop = window.scrollY;
+    const advStates = {};
+    x.chList.querySelectorAll('.ch-group').forEach(g => { advStates[g.dataset.idx] = g.classList.contains('show-adv'); });
+    x.chList.innerHTML = f.channels.map((ch, i) => renderChannel(ch, i)).join('');
+    bindChannels();
+    x.chList.querySelectorAll('.ch-group').forEach(g => { if (advStates[g.dataset.idx]) g.classList.add('show-adv'); });
+    // 恢复展开/折叠按钮文字
+    x.chList.querySelectorAll('.ch-adv-toggle').forEach(tog => {
+      const show = tog.closest('.ch-group').classList.contains('show-adv');
+      tog.textContent = show ? '高级设置 ▴' : '高级设置 ▾';
+    });
+    window.scrollTo(0, scrollTop);
+  }
+
+  // 绑定所有渠道卡片的事件
+  function bindChannels() {
+    x.chList.querySelectorAll('.ch-group').forEach(group => {
+      const idx = +group.dataset.idx;
+      const ch = f.channels[idx];
+      if (!ch) return;
+      const r = collect(group);
+      const cfg = ch.config;
+      // 名称
+      const nameEl = group.querySelector('[data-k="name"]');
+      nameEl.addEventListener('input', () => { ch.name = nameEl.value; });
+      // 开关
+      r.swCh.addEventListener('click', () => {
+        const on = r.swCh.getAttribute('aria-checked') !== 'true';
+        r.swCh.setAttribute('aria-checked', String(on)); ch.enabled = on ? 1 : 0;
+      });
+      // 删除
+      r.delCh.addEventListener('click', () => {
+        f.channels.splice(idx, 1); renderAll(); sync();
+      });
+      // 测试
+      r.tCh.addEventListener('click', () => testChannel(ch, r.tCh, r.mCh));
+      // 高级设置折叠
+      const tog = group.querySelector('.ch-adv-toggle');
+      if (tog) tog.addEventListener('click', () => {
+        const show = group.classList.toggle('show-adv');
+        tog.textContent = show ? '高级设置 ▴' : '高级设置 ▾';
+      });
+      // 字段输入
+      group.querySelectorAll('[data-k]').forEach(el => {
+        const k = el.dataset.k;
+        if (k === 'name') return;
+        el.addEventListener('input', () => {
+          if (el.tagName === 'TEXTAREA' || el.type === 'text' || el.type === 'password') {
+            cfg[k] = el.value;
+          } else if (el.type === 'number') {
+            cfg[k] = parseInt(el.value, 10) || 0;
+          }
+        });
+      });
+      // seg 控件
+      group.querySelectorAll('[data-seg]').forEach(segEl => {
+        const k = segEl.dataset.k;
+        const field = (SCHEMA[ch.type]?.fields || []).find(f2 => f2.key === k);
+        if (!field) return;
+        const seg = makeSeg(field.options, cfg[k] || field.options[0][0], v => { cfg[k] = v; }, 'sm');
+        segEl.innerHTML = ''; segEl.appendChild(seg);
+        // mail provider 联动 host/port/secure
+        if (ch.type === 'mail' && k === 'provider') {
+          seg.addEventListener('click', () => {
+            const pv = NOTIFY_PROVIDERS.find(p => p[0] === cfg.provider);
+            if (pv && pv[2]) {
+              cfg.host = pv[2]; cfg.port = pv[3]; cfg.secure = pv[4];
+              const hostEl = group.querySelector('[data-k="host"]');
+              const portEl = group.querySelector('[data-k="port"]');
+              if (hostEl) hostEl.value = pv[2];
+              if (portEl) portEl.value = pv[3];
+              const secSeg = group.querySelector('[data-seg$="secure"]');
+              if (secSeg) { const s = secSeg.querySelector('.seg'); if (s && s.set) s.set(pv[4]); }
+            }
+          });
+        }
+      });
+      // 保密字段 placeholder（已保存则提示留空不修改）
+      const schema = SCHEMA[ch.type] || { fields: [] };
+      schema.fields.forEach(f2 => {
+        if (!f2.secret) return;
+        const el = group.querySelector(`[data-k="${f2.key}"]`);
+        if (el && cfg[f2.key + '_set']) el.placeholder = '已保存 · 留空不修改';
+      });
+    });
+  }
+
+  // 测试单个渠道
+  async function testChannel(ch, btn, msg) {
+    btn.disabled = true; setText(msg, '发送中…');
+    try {
+      const j = await API.post('/api/notify/test', { channel: ch.id });
+      if (j && j.ok) {
+        setText(msg, '已发送');
+        toast((ch.name || TYPE_LABELS[ch.type] || '渠道') + ' 测试消息已发出', { icon: 'check', ms: 5000 });
+      } else {
+        setText(msg, '');
+        toast('测试失败 · ' + String(((j && j.error) || '未知错误')).slice(0, 100), { icon: 'alert', ms: 7000 });
+      }
+    } catch (e) { setText(msg, ''); toast('测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 6000 }); }
+    btn.disabled = false;
+  }
+
+  // 添加渠道
+  x.guideBtn.addEventListener('click', () => openSheet('notifyguide'));
+  x.addCh.addEventListener('click', () => {
+    // 弹窗选类型（用 prompt 简单实现，或做成下拉）
+    const types = Object.keys(SCHEMA);
+    // 简单做法：弹出一个选择层
+    const pick = mount(`<div class="ch-pick" style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:9999">
+      <div style="background:var(--bg);border-radius:12px;padding:16px;min-width:280px;max-width:90vw">
+        <div style="font-weight:600;margin-bottom:12px">选择推送渠道类型</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${types.map(t => `<button class="btn" type="button" data-t="${t}" style="justify-content:flex-start"><span style="width:10px;height:10px;border-radius:50%;background:${SCHEMA[t].color};display:inline-block;margin-right:8px"></span>${esc(TYPE_LABELS[t])}</button>`).join('')}
+        </div>
+        <button class="btn" type="button" data-ref="cancel" style="width:100%;margin-top:12px">取消</button>
+      </div></div>`);
+    document.body.appendChild(pick);
+    const close = () => pick.remove();
+    pick.querySelector('[data-ref="cancel"]').addEventListener('click', close);
+    pick.addEventListener('click', e => { if (e.target === pick) close(); });
+    pick.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => {
+      const t = b.dataset.t;
+      const defaults = {};
+      (SCHEMA[t].fields || []).forEach(f2 => {
+        if (f2.type === 'seg') defaults[f2.key] = f2.options[0][0];
+        else if (f2.type === 'number') defaults[f2.key] = f2.key === 'port' ? 465 : 0;
+        else defaults[f2.key] = '';
+      });
+      if (t === 'pushplus') defaults.msg_template = '';
+      else if (t !== 'webhook') defaults.template = '';
+      f.channels.push({ id: newId(), type: t, name: TYPE_LABELS[t], enabled: 0, config: defaults });
+      close(); renderAll(); sync();
+    }));
+  });
+
+  // 全局设置绑定
   const bind = (el, k, num) => el.addEventListener('input', () => { f[k] = num ? (parseInt(el.value, 10) || 0) : el.value; });
-  bind(x.host, 'host'); bind(x.port, 'port', true); bind(x.user, 'user'); bind(x.to, 'to');
-  bind(x.pw, 'password'); bind(x.sctkey, 'sct_key'); bind(x.hwTime, 'hw_time');
+  bind(x.titlePrefix, 'notify_title_prefix');
+  bind(x.dndStart, 'notify_dnd_start'); bind(x.dndEnd, 'notify_dnd_end'); bind(x.hwTime, 'hw_time');
   const setSw = (el, k) => el.addEventListener('click', () => {
     const on = el.getAttribute('aria-checked') !== 'true';
     el.setAttribute('aria-checked', String(on)); f[k] = on ? 1 : 0; sync();
   });
-  setSw(x.swMail, 'enabled'); setSw(x.swSct, 'sct_enabled'); setSw(x.swHw, 'hw_enabled');
+  setSw(x.swMin, 'notify_minimal'); setSw(x.swDnd, 'notify_dnd_enabled'); setSw(x.swHw, 'hw_enabled');
+
+  // ---- 定时推送报告 ----
+  setSw(x.swRep, 'report_enabled');
+  // 渲染模块勾选框（按分类分组）
+  function renderRepMods() {
+    const cats = {};
+    REPORT_MOD_ORDER.forEach(k => { const [label, cat] = REPORT_MODS[k]; (cats[cat] = cats[cat] || []).push([k, label]); });
+    x.repMods.innerHTML = Object.entries(cats).map(([cat, items]) =>
+      `<div style="margin-bottom:8px"><div class="set-sub" style="margin:0 0 4px">${esc(cat)}</div><div class="chips">` +
+      items.map(([k, label]) => {
+        const on = f.report_modules.includes(k);
+        return `<button type="button" class="chip-t" data-repmod="${k}" aria-pressed="${on}">${esc(label)}</button>`;
+      }).join('') + '</div></div>'
+    ).join('');
+    x.repMods.querySelectorAll('[data-repmod]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const k = btn.dataset.repmod;
+        const on = btn.getAttribute('aria-pressed') === 'true';
+        if (on) { f.report_modules = f.report_modules.filter(m => m !== k); btn.setAttribute('aria-pressed', 'false'); }
+        else { if (!f.report_modules.includes(k)) f.report_modules.push(k); btn.setAttribute('aria-pressed', 'true'); }
+      });
+    });
+  }
+  // 周期类型切换：显示/隐藏对应输入
+  function syncRepSchVis() {
+    const t = x.repType.value;
+    x.repTime.style.display = (t === 'hourly' || t === 'interval') ? 'none' : '';
+    x.repWeekday.style.display = t === 'weekly' ? '' : 'none';
+    x.repDay.style.display = t === 'monthly' ? '' : 'none';
+    x.repInterval.style.display = t === 'interval' ? '' : 'none';
+  }
+  x.repType.addEventListener('change', () => { f.report_schedule.type = x.repType.value; syncRepSchVis(); });
+  x.repTime.addEventListener('input', () => { f.report_schedule.time = x.repTime.value; });
+  x.repWeekday.addEventListener('change', () => { f.report_schedule.weekday = parseInt(x.repWeekday.value, 10); });
+  x.repDay.addEventListener('input', () => { f.report_schedule.day = parseInt(x.repDay.value, 10) || 1; });
+  x.repInterval.addEventListener('input', () => { f.report_schedule.interval_minutes = parseInt(x.repInterval.value, 10) || 60; });
+  // 详细程度分段控件
+  const repDetailSeg = makeSeg([['brief', '简略'], ['detail', '详细']], f.report_detail || 'detail', v => { f.report_detail = v; }, 'sm');
+  x.repDetailSeg.appendChild(repDetailSeg);
+  // 测试报告
+  x.repTestBtn.addEventListener('click', async () => {
+    x.repTestBtn.disabled = true; setText(x.hRepTest, '正在发送测试报告…');
+    try {
+      const j = await API.post('/api/notify/report_test', {});
+      if (j && j.ok) { setText(x.hRepTest, '测试报告已发送，请到推送渠道查看'); toast('测试报告已发送', { icon: 'check', ms: 4000 }); }
+      else { setText(x.hRepTest, '发送失败：' + ((j && j.error) || '未知错误')); toast('测试报告发送失败', { icon: 'alert', ms: 5000 }); }
+    } catch (e) { setText(x.hRepTest, '发送失败：' + String(e.message).slice(0, 60)); toast('测试报告发送失败', { icon: 'alert', ms: 5000 }); }
+    x.repTestBtn.disabled = false;
+  });
+
   const stamp = ts => { try { return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }); } catch (e) { return ''; } };
+
   function sync() {
     const n = NB || {};
-    x.swMail.setAttribute('aria-checked', String(!!+f.enabled));
-    x.swSct.setAttribute('aria-checked', String(!!+f.sct_enabled));
+    x.swMin.setAttribute('aria-checked', String(!!+f.notify_minimal));
+    x.swDnd.setAttribute('aria-checked', String(!!+f.notify_dnd_enabled));
     x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
-    segP.set(f.provider); segSec.set(f.secure);
-    if (document.activeElement !== x.host) x.host.value = f.host || '';
-    if (document.activeElement !== x.port) x.port.value = f.port || 465;
-    if (document.activeElement !== x.user) x.user.value = f.user || '';
-    if (document.activeElement !== x.to) x.to.value = f.to || '';
+    if (document.activeElement !== x.titlePrefix) x.titlePrefix.value = f.notify_title_prefix || '飞牛监控';
+    if (document.activeElement !== x.dndStart) x.dndStart.value = f.notify_dnd_start || '23:00';
+    if (document.activeElement !== x.dndEnd) x.dndEnd.value = f.notify_dnd_end || '08:00';
     if (document.activeElement !== x.hwTime) x.hwTime.value = f.hw_time || '08:00';
-    x.pw.placeholder = n.password_set ? '已保存 · 留空不修改' : '邮箱授权码';
-    x.sctkey.placeholder = n.sct_key_set ? '已保存 · 留空不修改' : 'SCT 开头的 SendKey';
-    setText(x.hMail, +f.enabled ? (+f.enabled && n.password_set && f.user && f.to ? '已开启：巡检发现变化时发邮件' : '已开启，保存前请补全账号、授权码与收件人') : '关闭：只做巡检，不发消息');
-    setText(x.hPw, n.password_set ? '已保存过授权码，留空表示不修改' : '邮箱网页端「账户 → POP3/SMTP」开启后生成的授权码，不是登录密码');
-    setText(x.hKey, n.sct_key_set ? '已保存过 SendKey，留空表示不修改' : '服务酱 SendKey，可在 sct.ftqq.com 的 SendKey 页复制');
+    const onCnt = f.channels.filter(c => c.enabled).length;
+    setText(x.hMin, +f.notify_minimal ? '已开启：只推送一行关键信息' : '关闭：推送完整告警正文');
+    setText(x.hDnd, +f.notify_dnd_enabled ? `已开启：${f.notify_dnd_start || '23:00'}–${f.notify_dnd_end || '08:00'} 时段缓存，结束后汇总发送` : '关闭：有告警立即推送');
     setText(x.hHw, +f.hw_enabled
       ? `已开启：每天 ${f.hw_time || '08:00'} 汇总发一封，只发到点仍未恢复的`
       : '关闭：SEL 硬件日志与风扇 / 温度 / 电源不推送（硬盘巡检仍按上面的开关走）');
+    // 定时报告
+    x.swRep.setAttribute('aria-checked', String(!!+f.report_enabled));
+    const sch = f.report_schedule || {};
+    if (document.activeElement !== x.repType) x.repType.value = sch.type || 'daily';
+    if (document.activeElement !== x.repTime) x.repTime.value = sch.time || '08:00';
+    if (document.activeElement !== x.repWeekday) x.repWeekday.value = String(sch.weekday || 0);
+    if (document.activeElement !== x.repDay) x.repDay.value = String(sch.day || 1);
+    if (document.activeElement !== x.repInterval) x.repInterval.value = String(sch.interval_minutes || 60);
+    repDetailSeg.set(f.report_detail || 'detail');
+    syncRepSchVis();
+    renderRepMods();
+    const schLabel = ({ hourly: '每小时整点', daily: `每天 ${sch.time || '08:00'}`, weekly: `每周${'一二三四五六日'[sch.weekday || 0]} ${sch.time || '08:00'}`, monthly: `每月 ${sch.day || 1} 日 ${sch.time || '08:00'}`, interval: `每 ${sch.interval_minutes || 60} 分钟` })[sch.type || 'daily'] || '每天';
+    setText(x.hRep, +f.report_enabled
+      ? `已开启：${schLabel} 推送，${f.report_modules.length} 个模块`
+      : '关闭：不发送定时汇总报告');
     const last = n.last || {};
+    const failCh = last.channels ? Object.entries(last.channels).filter(([, v]) => v && !v.ok).map(([, v]) => v.err).filter(Boolean).join('；') : '';
     setText(x.hMsg, n.load_error ? '读取配置失败：' + n.load_error : last.ts
-      ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + ((last.channels && Object.values(last.channels).filter(c => c && !c.ok).map(c => c.err).join('；')) || '未知错误')}`
-      : '还没有推送记录：状态变化时才发消息。想现在确认配置可用，先「保存」再点上方对应通道的「发送测试」');
+      ? `上次推送 ${stamp(last.ts)} · ${last.ok ? '成功' : '失败：' + (failCh || '未知错误')} · ${onCnt} 个渠道已启用`
+      : `共 ${f.channels.length} 个渠道，${onCnt} 个已启用。想确认配置可用，先「保存」再点渠道上的「测试」`);
   }
+
   async function doSave() {
     x.save.disabled = true;
-    const body = { enabled: f.enabled, provider: f.provider, host: f.host, port: f.port, secure: f.secure,
-                   user: f.user, to: f.to, sct_enabled: f.sct_enabled,
-                   hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00' };
-    if (f.password) body.password = f.password;
-    if (f.sct_key) body.sct_key = f.sct_key;
+    const body = {
+      channels: f.channels.map(c => ({ id: c.id, type: c.type, name: c.name, enabled: c.enabled, config: Object.assign({}, c.config) })),
+      hw_enabled: f.hw_enabled, hw_time: f.hw_time || '08:00',
+      notify_title_prefix: f.notify_title_prefix || '飞牛监控',
+      notify_dnd_enabled: f.notify_dnd_enabled,
+      notify_dnd_start: f.notify_dnd_start || '23:00',
+      notify_dnd_end: f.notify_dnd_end || '08:00',
+      notify_minimal: f.notify_minimal,
+      report_enabled: f.report_enabled,
+      report_detail: f.report_detail || 'detail',
+      report_schedule: Object.assign({}, f.report_schedule),
+      report_modules: f.report_modules.slice(),
+    };
     try {
       const j = await API.post('/api/notify/save', body);
       if (!j || !j.ok) throw new Error((j && j.error) || '未知错误');
       NB = Object.assign(await loadNotify(true), { last: (NB || {}).last || {} });
-      f.password = ''; f.sct_key = ''; x.pw.value = ''; x.sctkey.value = '';
+      // 保存后清空本地的保密字段值（后端不回传，留空表示不修改）
+      f.channels.forEach(c => {
+        const secrets = { mail: ['password'], sct: ['key'], wechat: ['url'], dingtalk: ['url', 'secret'],
+          feishu: ['url'], bark: ['url'], pushplus: ['token'], webhook: ['url'], wecom_app: ['corp_secret'] }[c.type] || [];
+        secrets.forEach(s => { c.config[s] = ''; });
+      });
+      renderAll();
       toast('通知配置已保存', { key: 'save' }); flashRow(x.save.closest('.set-row'));
     } catch (e) { toast('保存失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 5000 }); }
     x.save.disabled = false; sync();
   }
   x.save.onclick = doSave;
-  // 每个通道一个测试按钮：点哪个只发哪个，不会顺带把另一个通道也触发
-  const testOne = async (kind, btn, msg, name) => {
-    btn.disabled = true; setText(msg, '发送中…');
-    try {
-      const j = await API.post('/api/notify/test', { channel: kind });
-      if (j && j.ok) {
-        setText(msg, '已发送');
-        toast(name + '测试消息已发出，请查看' + (kind === 'mail' ? '邮箱收件箱' : '「方糖」服务号消息'), { icon: 'check', ms: 5000 });
-      } else {
-        setText(msg, '');
-        toast(name + '测试失败 · ' + String(((j && j.error) || '未知错误')).slice(0, 100), { icon: 'alert', ms: 7000 });
-      }
-    } catch (e) { setText(msg, ''); toast(name + '测试失败 · ' + String(e.message).slice(0, 80), { icon: 'alert', ms: 6000 }); }
-    btn.disabled = false;
-  };
-  x.tMail.onclick = () => testOne('mail', x.tMail, x.mMail, '邮件');
-  x.tSct.onclick = () => testOne('sct', x.tSct, x.mSct, '微信');
   card._sync = sync;
+
   loadNotify().then(() => {
     const n = NB || {};
-    Object.keys(f).forEach(k => { if (n[k] !== undefined && k !== 'password' && k !== 'sct_key') f[k] = n[k]; });
-    f.password = ''; f.sct_key = '';
+    // 深拷贝 channels，config 里的保密字段已被后端替换为 xxx_set
+    f.channels = (n.channels || []).map(c => ({
+      id: c.id, type: c.type, name: c.name, enabled: c.enabled,
+      config: Object.assign({}, c.config || {}),
+    }));
+    f.hw_enabled = n.hw_enabled || 0;
+    f.hw_time = n.hw_time || '08:00';
+    f.notify_title_prefix = n.notify_title_prefix || '飞牛监控';
+    f.notify_dnd_enabled = n.notify_dnd_enabled || 0;
+    f.notify_dnd_start = n.notify_dnd_start || '23:00';
+    f.notify_dnd_end = n.notify_dnd_end || '08:00';
+    f.notify_minimal = n.notify_minimal || 0;
+    f.report_enabled = n.report_enabled || 0;
+    f.report_detail = (n.report_detail === 'brief' || n.report_detail === 'detail') ? n.report_detail : 'detail';
+    f.report_schedule = Object.assign({ type: 'daily', time: '08:00', weekday: 0, day: 1, interval_minutes: 60 }, n.report_schedule || {});
+    f.report_modules = Array.isArray(n.report_modules) && n.report_modules.length ? n.report_modules.slice() : ['system', 'cpu', 'memory', 'disk', 'network'];
+    renderAll();
     sync();
   });
   sync();
@@ -770,7 +1138,7 @@ function renderUpdate(card) {
 function renderAbout(card) {
   card.innerHTML = `<div class="about"><div class="brand-mark">${ic('logo')}</div><h4>飞牛监控 fnMonitor</h4><p>为飞牛 fnOS 打造的本地系统监控 · <span data-ref="v">v--</span></p>
     <p class="faint" style="margin-top:2px">纯本地运行 · 历史记录、界面设置与配置都保存在 NAS 的程序数据目录中，与访问用的电脑无关</p>
-    <p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a>、<a href="https://github.com/ttkl9559-cell" target="_blank" rel="noopener noreferrer">ttkl9559-cell</a></p>
+    <p class="about-credit">作者 <a href="https://github.com/MisiteQ" target="_blank" rel="noopener noreferrer">Misite齊（@MisiteQ）</a> · 项目 <a href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">github.com/MisiteQ/fnmonitor</a><br>界面与功能贡献 <a href="https://github.com/iqiuzixuan" target="_blank" rel="noopener noreferrer">iqiuzixuan</a>、<a href="https://github.com/ttkl9559-cell" target="_blank" rel="noopener noreferrer">ttkl9559-cell</a><br>通知推送架构参考 <a href="https://github.com/Sunanang/FNMessageBots" target="_blank" rel="noopener noreferrer">Sunanang/FNMessageBots</a>，致谢作者 Sunanang</p>
     <div style="display:flex;gap:8px;justify-content:center;margin-top:20px;flex-wrap:wrap"><a class="btn" href="https://github.com/MisiteQ/fnmonitor" target="_blank" rel="noopener noreferrer">${ic('ext')}项目主页</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/issues" target="_blank" rel="noopener noreferrer">${ic('help')}问题反馈</a><a class="btn" href="https://github.com/MisiteQ/fnmonitor/releases/latest" target="_blank" rel="noopener noreferrer">${ic('download')}版本发布</a><button class="btn" type="button" data-sheet="keys">${ic('key')}快捷键</button></div>
     <p class="st-crit" style="margin-top:14px" data-ref="upd" hidden></p></div>`;
   const x = collect(card);

@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.20.0-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.30.0-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.20.0**
+- 当前版本：**v2.30.0**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -36,7 +36,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.20.0-x86.fpk`（x86 机型）或 `fnmonitor-2.20.0-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.30.0-x86.fpk`（x86 机型）或 `fnmonitor-2.30.0-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -97,11 +97,13 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 - 飞牛 fnOS 与 [FnDepot](https://github.com/EWEDLCM/FnDepot)
 - 特别感谢 **[iqiuzixuan](https://github.com/iqiuzixuan)**：fnmonitor迎来了他的神，感谢iqiuzixuan为本项目贡献了全新界面与设计体系、虚拟机（QEMU/KVM）监控页、后端安全加固，以及回归测试套件与 GitHub Actions CI（上游 PR [#8](https://github.com/MisiteQ/fnmonitor/pull/8) / [#9](https://github.com/MisiteQ/fnmonitor/pull/9) / [#10](https://github.com/MisiteQ/fnmonitor/pull/10) / [#12](https://github.com/MisiteQ/fnmonitor/pull/12)）
 - 感谢 **[ttkl9559-cell](https://github.com/ttkl9559-cell)**：贡献 SAS/SCSI 硬盘 SMART 解析（增长缺陷表、不可纠正错误计数）、硬盘后台巡检与邮件/Server酱告警、iDRAC Redfish 带外监控（PR [#17](https://github.com/MisiteQ/fnmonitor/pull/17) / [#18](https://github.com/MisiteQ/fnmonitor/pull/18) / [#19](https://github.com/MisiteQ/fnmonitor/pull/19)）
+- 感谢 **[Sunanang](https://github.com/Sunanang)** 及其项目 **[FNMessageBots](https://github.com/Sunanang/FNMessageBots)**：本项目通知推送系统与定时报告的多平台通知架构思路参考了 FNMessageBots 的日志推送实现
 
 ## 📋 版本历史
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.30.0 | ① **📢 通知推送系统全面升级**：在 SMTP 邮件 + Server酱 基础上新增企业微信、钉钉、飞书、Bark、PushPlus、企业微信应用、通用 Webhook 共 7 个推送渠道；9 个渠道统一为动态列表（任意增删 / 命名 / 排序 / 独立开关与测试按钮），每渠道可自定义消息模板（`{title}` / `{content}` / `{text}` / `{time}` 占位符）；全局通知设置含标题前缀、勿扰模式（时段内缓存、结束后汇总发送）、极简推送（只发一行）；设置页新增「使用说明」抽屉<br>② **📊 新增「定时推送报告」**：可按每小时 / 每天 / 每周 / 每月 / 自定义间隔，把 fnmonitor 采集的 17 个模块数据（系统 / CPU / 内存 / 硬盘 / SMART / 阵列 / 网络 / 温度 / 风扇 / 功耗 / GPU / Docker / 虚拟机 / iDRAC / UPS / 天气）汇总推送一条 Markdown 报告；模块自由勾选，支持「简略 / 详细」两档（简略只汇总、详细逐条罗列），Markdown + emoji 排版，网络自动过滤虚拟网卡，支持测试发送；定时报告不受全局「极简推送」截断<br>③ **🙏 致谢**：通知推送与定时报告的多平台通知架构思路参考了 [Sunanang/FNMessageBots](https://github.com/Sunanang/FNMessageBots) 的日志推送实现，向作者 Sunanang 致谢 |
 | v2.20.0 | ① **⚙️ 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 [ttkl9559-cell](https://github.com/ttkl9559-cell)，PR #22）**：设置页新增分组按页面列出全部版块（总览 10 / 容器 3 / 虚拟机 1），一行一个开关，与 E 键编辑布局双向同步；每行标注隐藏后是「停止采集」还是「仍会采集（顶部健康结论依赖）」；后端按依赖表联动——用到该数据的版块全隐藏才真停（/proc 全量扫描、传感器风扇枚举、磁盘 IO、端口扫描、内置应用遍历、网络、功耗），CPU / 内存 / 容量 / 温度 / 阵列 / 容器列表为保顶部结论照常采<br>② **🖥 硬盘统一显示机箱槽位（社区贡献者 [ttkl9559-cell](https://github.com/ttkl9559-cell)，PR #22）**：有 iDRAC 槽位映射时，硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启后设备名漂移不再误报「新增故障」<br>③ **⚡ 进程采样直读 /proc + 冷启动首屏加速（社区贡献者 [ttkl9559-cell](https://github.com/ttkl9559-cell)，PR #21）**：进程 Top 的 CPU 改用 /proc/[pid]/stat 区间差分（ps 的 %CPU 为生命周期平均，尖峰被摊平），PID 复用按 starttime 识别，进程卡改「占整机」口径；冷启动先预载上次巡检结果再开采集，更新后首次打开不再空等 5~8 秒磁盘 SMART<br>④ **🔒 审查修复**：硬盘槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验（安全回归修复） |
 | v2.19.0 | ① **💽 SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 [ttkl9559-cell](https://github.com/ttkl9559-cell)，PR #17）**：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② **🩺 硬盘后台巡检与健康告警（PR #18）**：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ **🖥 iDRAC Redfish 带外监控（PR #19）**：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ **🔍 审查修复**：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复 |
 | v2.18.4 | ① **🔒 CSRF 安全加固（社区贡献者 [iqiuzixuan](https://github.com/iqiuzixuan)，PR #14）**：移除 Origin 比对与本机回环信任，**只保留 `Content-Type: application/json` 和 `X-FNM-Request: 1` 两道闸**——浏览器跨站发送自定义头或 JSON 请求必须先走 CORS 预检，而本服务从不放行预检，跨站页面发不出有效请求。修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf\_rejected<br>② **🐛 修复存储详情「阵列」标题被卡片压住（PR #15）**：新增 `.sheet-stack` 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ **✨ 系统版本显示飞牛 fnOS 版本（PR #16）**：首页概况、主机模块副标题和信息表改为显示 `fnOS 1.2.0800`（不再显示底层 Debian），读取不到时整项不显示 |

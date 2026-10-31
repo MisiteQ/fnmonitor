@@ -210,3 +210,29 @@ dd .diag-link { margin: 0; height: 24px; }
 .mod-dek .warn.dismissible > b { flex: none; white-space: nowrap; }
 /* 有告警时副标题放宽：槽位 + 型号 + 容量 + 存储空间 + 问题一行放不完至少别挤成三行 */
 .mod-dek.has-warn { max-width: 82ch; }
+
+/* 通知渠道分组卡片 */
+.ch-group { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; overflow: hidden; }
+.ch-group .ch-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s3); padding: 10px 14px; background: var(--bg-2); border-bottom: 1px solid var(--line); }
+.ch-group .ch-head .ch-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.ch-group .ch-head .ch-name::before { content: ''; width: 4px; height: 16px; border-radius: 2px; background: var(--accent); flex: none; }
+.ch-group .ch-head .ch-hint { font-size: var(--fs-xs); color: var(--ink-3); margin-top: 2px; }
+.ch-group .ch-head .ch-ctl { display: flex; align-items: center; gap: 8px; }
+.ch-group .ch-body { padding: 0 14px; }
+.ch-group .ch-body .set-row { border-top: 1px solid var(--line); }
+.ch-group .ch-body .set-row:first-child { border-top: 0; }
+/* 不同渠道用不同色条区分 */
+.ch-group[data-ch="mail"] .ch-name::before { background: #4f8cff; }
+.ch-group[data-ch="sct"] .ch-name::before { background: #07c160; }
+.ch-group[data-ch="wechat"] .ch-name::before { background: #2dc100; }
+.ch-group[data-ch="dingtalk"] .ch-name::before { background: #1677ff; }
+.ch-group[data-ch="feishu"] .ch-name::before { background: #3370ff; }
+.ch-group[data-ch="bark"] .ch-name::before { background: #ff7a00; }
+.ch-group[data-ch="pushplus"] .ch-name::before { background: #f5a623; }
+.ch-group[data-ch="webhook"] .ch-name::before { background: #8e44ad; }
+.ch-group[data-ch="wecom_app"] .ch-name::before { background: #00d4b4; }
+/* 高级配置折叠 */
+.ch-group .ch-advanced { display: none; }
+.ch-group.show-adv .ch-advanced { display: block; }
+.ch-adv-toggle { font-size: var(--fs-xs); color: var(--accent); cursor: pointer; user-select: none; padding: 2px 0; }
+.ch-adv-toggle:hover { text-decoration: underline; }

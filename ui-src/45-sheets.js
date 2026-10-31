@@ -421,6 +421,31 @@ const SHEETS = {
       b.innerHTML = `<div class="card"><div class="keys">${k.map(([a, d]) => `<span>${d}</span><span>${a.split(' / ').map(z => `<span class="kbd">${z}</span>`).join(' ')}</span>`).join('')}</div></div>`;
     },
   },
+  notifyguide: {
+    icon: () => 'bell', title: () => '推送渠道设置指南', sub: () => '9 种渠道的配置方法与消息模板',
+    build(b) {
+      const chs = [
+        { name: '邮件（SMTP）', icon: 'mail', key: ['SMTP 服务器', '发件账号', '授权码（非登录密码）', '收件人'], get: '邮箱网页端 → 设置 → 开启 SMTP 服务 → 生成授权码' },
+        { name: 'Server酱', icon: 'bell', key: ['SendKey（SCT 开头）'], get: 'sct.ftqq.com 注册 → 关注「方糖」公众号 → 复制 SendKey' },
+        { name: '企业微信群机器人', icon: 'chat', key: ['Webhook 地址'], get: '群设置 → 群机器人 → 添加 → 自定义 → 复制 Webhook' },
+        { name: '钉钉群机器人', icon: 'chat', key: ['Webhook 地址', '加签密钥 SEC…（选加签时）'], get: '群设置 → 智能群助手 → 添加机器人 → 自定义 → 选加签安全设置 → 复制 Webhook 和密钥' },
+        { name: '飞书群机器人', icon: 'chat', key: ['Webhook 地址'], get: '群设置 → 群机器人 → 添加机器人 → 自定义 → 复制 Webhook' },
+        { name: 'Bark', icon: 'bell', key: ['推送地址'], get: 'iOS 安装 Bark App → 首页复制服务器地址（api.day.app/xxx）' },
+        { name: 'PushPlus', icon: 'send', key: ['Token'], get: 'pushplus.plus 微信扫码登录 → 发送消息页复制 Token' },
+        { name: '通用 Webhook', icon: 'link', key: ['URL', '可选 method/headers/body 模板'], get: '自行搭建的接收端；默认 POST JSON {"title","content"}' },
+        { name: '企业微信应用', icon: 'chat', key: ['CorpID', 'Secret', 'AgentId', '接收人（默认 @all）'], get: 'work.weixin.qq.com → 应用管理 → 自建应用 → 获取 CorpID/Secret/AgentId' },
+      ];
+      const rows = chs.map(c => `<div class="card" style="margin-bottom:10px"><div style="font-weight:600;margin-bottom:6px">${c.name}</div><div style="font-size:12px;color:var(--ink-2);line-height:1.7"><b>需要填写：</b>${c.key.join('、')}<br><b>获取方式：</b>${c.get}</div></div>`).join('');
+      b.innerHTML = `<div class="card" style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:6px">消息模板占位符</div><div style="font-size:12px;color:var(--ink-2);line-height:1.8"><code style="background:var(--bg-2);padding:1px 5px;border-radius:3px">{title}</code> 告警标题　<code style="background:var(--bg-2);padding:1px 5px;border-radius:3px">{content}</code> 告警正文　<code style="background:var(--bg-2);padding:1px 5px;border-radius:3px">{text}</code> 正文别名　<code style="background:var(--bg-2);padding:1px 5px;border-radius:3px">{time}</code> 当前时间</div></div>
+      <div class="card" style="margin-bottom:12px"><div style="font-weight:600;margin-bottom:6px">常用模板示例</div><pre style="font-size:12px;color:var(--ink-2);white-space:pre-wrap;margin:0;line-height:1.7">{title}
+
+{content}
+
+告警时间：{time}</pre></div>
+      ${rows}
+      <div class="card"><div style="font-size:12px;color:var(--ink-3);line-height:1.7">提示：每个渠道卡片都有「测试」按钮，保存后可立即验证配置是否正确。全局设置（标题前缀 / 极简推送 / 勿扰模式）对所有渠道生效。</div></div>`;
+    },
+  },
 };
 const ICO_OF = (type, arg) => { const d = SHEETS[type]; return typeof d.icon === 'function' ? d.icon(arg) : d.icon; };
 const SHEET_DC = { cpu: 'util', mem: 'util', storage: 'util', disk: 'util', net: 'io', temp: 'temp', power: 'pwr' };

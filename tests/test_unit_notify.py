@@ -33,6 +33,18 @@ class FakeDB:
         return self.rows
 
 
+def _mail_ch(enabled=0, **cfg):
+    c = {"provider": "qq", "host": "smtp.qq.com", "port": 465, "secure": "ssl",
+         "user": "", "password": "", "to": "", "template": ""}
+    c.update(cfg)
+    return {"id": "ch_mail", "type": "mail", "name": "邮件", "enabled": enabled, "config": c}
+
+def _sct_ch(enabled=0, **cfg):
+    c = {"key": "", "template": ""}
+    c.update(cfg)
+    return {"id": "ch_sct", "type": "sct", "name": "Server酱", "enabled": enabled, "config": c}
+
+
 class NotifyCfgTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -43,77 +55,101 @@ class NotifyCfgTest(unittest.TestCase):
 
     def test_defaults(self):
         cfg = srv.notify_load(self.dir)
-        self.assertEqual(cfg["enabled"], 0)
-        self.assertEqual(cfg["sct_enabled"], 0)
-        self.assertEqual(cfg["provider"], "qq")
-        self.assertEqual(cfg["host"], "smtp.qq.com")
-        self.assertEqual(cfg["port"], 465)
-        self.assertEqual(cfg["secure"], "ssl")
-        self.assertEqual(cfg["password"], "")
+        self.assertEqual(cfg["channels"], [])
+        self.assertEqual(cfg["hw_enabled"], 0)
+        self.assertEqual(cfg["notify_title_prefix"], "飞牛监控")
 
     def test_save_public_masks_secrets(self):
-        cfg, err = srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com",
-                                             "password": "authcode", "sct_enabled": 1,
-                                             "sct_key": "SCT123"})
+        cfg, err = srv.notify_save(self.dir, {"channels": [
+            _mail_ch(enabled=1, user="a@qq.com", to="b@qq.com", password="authcode"),
+            _sct_ch(enabled=1, key="SCT123"),
+        ]})
         self.assertEqual(err, "")
         pub = srv.notify_public(cfg)
-        self.assertTrue(pub["password_set"])
-        self.assertTrue(pub["sct_key_set"])
-        self.assertNotIn("password", pub)
-        self.assertNotIn("sct_key", pub)
-        # 落盘内容确实有授权码，且权限收紧（Windows 无 POSIX 权限位，跳过）
+        pub_ch = {c["id"]: c for c in pub["channels"]}
+        self.assertTrue(pub_ch["ch_mail"]["config"]["password_set"])
+        self.assertTrue(pub_ch["ch_sct"]["config"]["key_set"])
+        self.assertNotIn("password", pub_ch["ch_mail"]["config"])
+        self.assertNotIn("key", pub_ch["ch_sct"]["config"])
         with open(os.path.join(self.dir, srv.NOTIFY_FILE), encoding="utf-8") as fh:
             raw = json.load(fh)
-        self.assertEqual(raw["password"], "authcode")
+        mail = next(c for c in raw["channels"] if c["id"] == "ch_mail")
+        self.assertEqual(mail["config"]["password"], "authcode")
         if os.name == "posix":
             self.assertEqual(os.stat(os.path.join(self.dir, srv.NOTIFY_FILE)).st_mode & 0o777, 0o600)
 
     def test_empty_secret_keeps_old_value(self):
-        srv.notify_save(self.dir, {"password": "first", "sct_key": "SCT1"})
-        cfg, err = srv.notify_save(self.dir, {"password": "", "sct_key": ""})
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(password="first"), _sct_ch(key="SCT1")]})
+        cfg, err = srv.notify_save(self.dir, {"channels": [
+            _mail_ch(password=""), _sct_ch(key="")]})
         self.assertEqual(err, "")
-        self.assertEqual(cfg["password"], "first")
-        self.assertEqual(cfg["sct_key"], "SCT1")
+        mail = next(c for c in cfg["channels"] if c["type"] == "mail")
+        sct = next(c for c in cfg["channels"] if c["type"] == "sct")
+        self.assertEqual(mail["config"]["password"], "first")
+        self.assertEqual(sct["config"]["key"], "SCT1")
 
     def test_clear_secret_flags(self):
-        srv.notify_save(self.dir, {"password": "first", "sct_key": "SCT1"})
-        cfg, _ = srv.notify_save(self.dir, {"clear_password": 1, "clear_sct_key": 1})
-        self.assertEqual(cfg["password"], "")
-        self.assertEqual(cfg["sct_key"], "")
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(password="first"), _sct_ch(key="SCT1")]})
+        cfg, _ = srv.notify_save(self.dir, {"channels": [
+            {"id": "ch_mail", "type": "mail", "name": "邮件", "enabled": 0,
+             "config": {"password": "", "clear_password": 1}},
+            {"id": "ch_sct", "type": "sct", "name": "Server酱", "enabled": 0,
+             "config": {"key": "", "clear_key": 1}},
+        ]})
+        mail = next(c for c in cfg["channels"] if c["type"] == "mail")
+        sct = next(c for c in cfg["channels"] if c["type"] == "sct")
+        self.assertEqual(mail["config"]["password"], "")
+        self.assertEqual(sct["config"]["key"], "")
 
     def test_provider_preset_fills_host(self):
-        cfg, err = srv.notify_save(self.dir, {"provider": "outlook"})
+        cfg, err = srv.notify_save(self.dir, {"channels": [_mail_ch(provider="outlook")]})
         self.assertEqual(err, "")
-        self.assertEqual(cfg["host"], "smtp.office365.com")
-        self.assertEqual(cfg["port"], 587)
-        self.assertEqual(cfg["secure"], "starttls")
+        mail = cfg["channels"][0]["config"]
+        self.assertEqual(mail["host"], "smtp.office365.com")
+        self.assertEqual(mail["port"], 587)
+        self.assertEqual(mail["secure"], "starttls")
 
     def test_provider_custom_keeps_host(self):
-        srv.notify_save(self.dir, {"provider": "custom", "host": "mail.example.com", "port": 2525})
-        cfg, _ = srv.notify_save(self.dir, {"provider": "custom"})
-        self.assertEqual(cfg["host"], "mail.example.com")
-        self.assertEqual(cfg["port"], 2525)
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(provider="custom", host="mail.example.com", port=2525)]})
+        cfg, _ = srv.notify_save(self.dir, {"channels": [
+            _mail_ch(provider="custom", host="mail.example.com", port=2525)]})
+        mail = cfg["channels"][0]["config"]
+        self.assertEqual(mail["host"], "mail.example.com")
+        self.assertEqual(mail["port"], 2525)
 
     def test_enable_mail_without_fields_rejected(self):
-        cfg, err = srv.notify_save(self.dir, {"enabled": 1})
+        cfg, err = srv.notify_save(self.dir, {"channels": [_mail_ch(enabled=1)]})
         self.assertIn("缺少", err)
         self.assertFalse(os.path.exists(os.path.join(self.dir, srv.NOTIFY_FILE)))
 
     def test_enable_sct_without_key_rejected(self):
-        _, err = srv.notify_save(self.dir, {"sct_enabled": 1})
+        _, err = srv.notify_save(self.dir, {"channels": [_sct_ch(enabled=1)]})
         self.assertIn("SendKey", err)
 
     def test_bad_port_rejected(self):
-        _, err = srv.notify_save(self.dir, {"port": "abc"})
+        _, err = srv.notify_save(self.dir, {"channels": [_mail_ch(port="abc")]})
         self.assertIn("端口", err)
 
     def test_unknown_values_ignored(self):
-        cfg = srv.notify_load(self.dir)
-        _, err = srv.notify_save(self.dir, {"provider": "nope", "secure": "plaintext"})
+        srv.notify_load(self.dir)
+        _, err = srv.notify_save(self.dir, {"channels": [
+            _mail_ch(provider="nope", secure="plaintext")]})
         self.assertEqual(err, "")
         cfg = srv.notify_load(self.dir)
-        self.assertEqual(cfg["provider"], "qq")
-        self.assertEqual(cfg["secure"], "ssl")
+        mail = cfg["channels"][0]["config"]
+        self.assertEqual(mail["provider"], "qq")
+        self.assertEqual(mail["secure"], "ssl")
+
+    def test_template_field_saved(self):
+        cfg, err = srv.notify_save(self.dir, {"channels": [
+            {"id": "ch_wx", "type": "wechat", "name": "企微", "enabled": 0,
+             "config": {"url": "", "msg_type": "markdown",
+                        "template": "**{title}**\n{content}"}}]})
+        self.assertEqual(err, "")
+        self.assertEqual(cfg["channels"][0]["config"]["template"], "**{title}**\n{content}")
 
 
 class NotifyStateTest(unittest.TestCase):
@@ -123,8 +159,8 @@ class NotifyStateTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = self.tmp.name
         self.db = FakeDB(self.dir)
-        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com",
-                                   "password": "x"})
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(enabled=1, user="a@qq.com", to="b@qq.com", password="x")]})
         # 除首次静默那个用例，其余都从「已经建立过基线」开始
         self.mark_inited()
         self.sent = []
@@ -309,7 +345,8 @@ class NotifyTestEndpointTest(unittest.TestCase):
         self.assertIn("开启", r["error"])
 
     def test_ok_path_calls_both_channels(self):
-        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com", "password": "x"})
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(enabled=1, user="a@qq.com", to="b@qq.com", password="x")]})
         with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")) as m:
             r = srv.notify_test(self.dir)
         self.assertTrue(r["ok"])
@@ -317,36 +354,38 @@ class NotifyTestEndpointTest(unittest.TestCase):
         self.assertIn("测试", m.call_args[0][1])
 
     def _both(self):
-        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com", "password": "x",
-                                   "sct_enabled": 1, "sct_key": "SCT123"})
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(enabled=1, user="a@qq.com", to="b@qq.com", password="x"),
+            _sct_ch(enabled=1, key="SCT123")]})
 
     def test_channel_mail_only_sends_mail(self):
         # 设置页每个通道一个按钮：点邮件的「发送测试」不能连带把微信也发出去
         self._both()
         with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")), \
                 mock.patch.object(srv, "notify_sct_send", return_value=(True, "")) as sct:
-            r = srv.notify_test(self.dir, "mail")
+            r = srv.notify_test(self.dir, "ch_mail")
         self.assertTrue(r["ok"])
-        self.assertEqual(r["channel"], "mail")
-        self.assertEqual(list(r["channels"]), ["mail"])
+        self.assertEqual(r["channel"], "ch_mail")
+        self.assertEqual(list(r["channels"]), ["ch_mail"])
         self.assertFalse(sct.called)
 
     def test_channel_sct_only_sends_sct(self):
         self._both()
         with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")) as mail, \
                 mock.patch.object(srv, "notify_sct_send", return_value=(True, "")):
-            r = srv.notify_test(self.dir, "sct")
+            r = srv.notify_test(self.dir, "ch_sct")
         self.assertTrue(r["ok"])
-        self.assertEqual(list(r["channels"]), ["sct"])
+        self.assertEqual(list(r["channels"]), ["ch_sct"])
         self.assertFalse(mail.called)
 
     def test_channel_disabled_is_rejected(self):
-        # 只开了邮件时点微信的测试：给出「微信通知当前是关闭的」，而不是悄悄发邮件
-        srv.notify_save(self.dir, {"enabled": 1, "user": "a@qq.com", "to": "b@qq.com", "password": "x"})
+        # 只开了邮件、微信关闭时点微信的测试：给出「关闭」提示，而不是悄悄发邮件
+        srv.notify_save(self.dir, {"channels": [
+            _mail_ch(enabled=1, user="a@qq.com", to="b@qq.com", password="x"),
+            _sct_ch(enabled=0, key="SCT123")]})
         with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")) as mail:
-            r = srv.notify_test(self.dir, "sct")
+            r = srv.notify_test(self.dir, "ch_sct")
         self.assertFalse(r["ok"])
-        self.assertIn("微信", r["error"])
         self.assertIn("关闭", r["error"])
         self.assertFalse(mail.called)
 
@@ -355,7 +394,7 @@ class NotifyTestEndpointTest(unittest.TestCase):
         with mock.patch.object(srv, "notify_mail_send", return_value=(True, "")), \
                 mock.patch.object(srv, "notify_sct_send", return_value=(True, "")):
             r = srv.notify_test(self.dir, "bogus")
-        self.assertEqual(sorted(r["channels"]), ["mail", "sct"])
+        self.assertEqual(sorted(r["channels"]), ["ch_mail", "ch_sct"])
 
 
 class DiskScanNotifyHookTest(unittest.TestCase):
@@ -428,9 +467,10 @@ class HwNotifyTest(unittest.TestCase):
         os.rmdir(self.dir)
 
     def _cfg(self, **kw):
-        cfg = {"enabled": 1, "provider": "qq", "host": "smtp.qq.com", "port": 465,
-               "secure": "ssl", "user": "u@qq.com", "password": "pw",
-               "sender": "u@qq.com", "to": "d@qq.com", "sct_enabled": 0, "sct_key": "",
+        mail = {"provider": "qq", "host": "smtp.qq.com", "port": 465, "secure": "ssl",
+                "user": "u@qq.com", "password": "pw", "to": "d@qq.com", "template": ""}
+        cfg = {"channels": [{"id": "ch_mail", "type": "mail", "name": "邮件",
+                             "enabled": 1, "config": mail}],
                "hw_enabled": 1, "hw_time": "00:00"}
         cfg.update(kw)
         with open(os.path.join(self.dir, "notify.json"), "w", encoding="utf-8") as f:

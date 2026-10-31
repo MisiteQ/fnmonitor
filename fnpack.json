@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.30.0": {
+    "changelog": "v2.30.0<br>① 通知推送系统全面升级：新增企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / 通用 Webhook 共 7 个推送渠道；9 个渠道统一为动态列表，每渠道可自定义消息模板（{title}/{content}/{text}/{time}）；全局通知设置含标题前缀、勿扰模式、极简推送；设置页新增使用说明抽屉<br>② 新增「定时推送报告」：可按时/天/周/月/自定义间隔，把 17 个模块数据汇总推送 Markdown 报告；模块自由勾选，支持简略 / 详细两档，Markdown + emoji 排版，网络自动过滤虚拟网卡，支持测试发送；定时报告不受全局极简推送截断<br>③ 致谢：通知推送与定时报告的多平台通知架构思路参考了 Sunanang/FNMessageBots 的日志推送实现，向作者 Sunanang 致谢",
+    "updated_at": "2026-10-31T20:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-x86.fpk",
+      "sha256": "a75855fe49aa078e581972cb73f3953774435ca7f319394638c87f5434eed71d",
+      "size": 621181
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-arm.fpk",
+      "sha256": "fd2584b3534aeac2644def3632387ae14b8af20f4bfb47c56b55d42ef625852e",
+      "size": 621178
+     }
+    }
+   },
    "2.20.0": {
     "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（社区贡献者 ttkl9559-cell，PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（社区贡献者 ttkl9559-cell，PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
     "updated_at": "2026-10-28T10:30:00+08:00",

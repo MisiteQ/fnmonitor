@@ -41,6 +41,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import urllib.parse
 import urllib.request
+import urllib.error
 
 def _read_manifest_version():
     """从 manifest 读取权威版本号（打包版本由 manifest 决定，避免与应用内常量双处维护不一致）。
@@ -61,7 +62,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.20.0"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.30.0"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3498,19 +3499,125 @@ NOTIFY_PROVIDERS = (
     ("outlook", "Outlook / Office365", "smtp.office365.com", 587, "starttls"),
     ("custom", "自定义", "", 465, "ssl"),
 )
-NOTIFY_DEFAULT = {"enabled": 0, "provider": "qq", "host": "smtp.qq.com", "port": 465,
-                  "secure": "ssl", "user": "", "password": "", "sender": "", "to": "",
-                  "sct_enabled": 0, "sct_key": "",
-                  # 硬件告警（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）单独一组：
-                  # 默认关闭，开启了也只在你指定的时刻统一发一封，恢复的不发、没恢复的才发
-                  "hw_enabled": 0, "hw_time": "08:00"}
-NOTIFY_SECRET_KEYS = ("password", "sct_key")
+# 通知配置：统一渠道列表模式。channels 是 [{id,type,name,enabled,config:{...}}]
+# 每个渠道的 config 按 type 不同而不同（见 NOTIFY_CHANNEL_CONFIG_DEFAULTS）。
+NOTIFY_DEFAULT = {
+    "channels": [],
+    # 硬件告警（SEL 硬件日志 + iDRAC 实时风扇/温度/电源）单独一组：
+    # 默认关闭，开启了也只在你指定的时刻统一发一封，恢复的不发、没恢复的才发
+    "hw_enabled": 0, "hw_time": "08:00",
+    # 全局通知设置
+    "notify_title_prefix": "飞牛监控",
+    "notify_dnd_enabled": 0, "notify_dnd_start": "23:00",
+    "notify_dnd_end": "08:00", "notify_minimal": 0,
+    # 定时推送报告
+    "report_enabled": 0,
+    "report_detail": "detail",  # brief=简略 / detail=详细
+    "report_schedule": {"type": "daily", "time": "08:00", "weekday": 0, "day": 1, "interval_minutes": 60},
+    "report_modules": ["system", "cpu", "memory", "disk", "network"],
+    "report_last_sent": 0,
+}
+
+# 渠道类型 → 中文标签
+NOTIFY_CHANNEL_TYPE_LABELS = {
+    "mail": "邮件",
+    "sct": "Server酱",
+    "wechat": "企业微信群机器人",
+    "dingtalk": "钉钉群机器人",
+    "feishu": "飞书群机器人",
+    "bark": "Bark",
+    "pushplus": "PushPlus",
+    "webhook": "通用Webhook",
+    "wecom_app": "企业微信应用",
+}
+
+# 每个渠道类型的 config 默认值与字段定义（label 给前端用，secret 标记保密字段）
+# template：自定义消息内容模板，留空用各渠道默认格式。占位符：{title}{content}{text}{time}
+NOTIFY_CHANNEL_CONFIG_DEFAULTS = {
+    "mail": {"provider": "qq", "host": "smtp.qq.com", "port": 465, "secure": "ssl",
+             "user": "", "password": "", "to": "", "template": ""},
+    "sct": {"key": "", "template": ""},
+    "wechat": {"url": "", "msg_type": "markdown", "template": ""},
+    "dingtalk": {"url": "", "secret": "", "msg_type": "markdown", "template": ""},
+    "feishu": {"url": "", "msg_type": "text", "template": ""},
+    "bark": {"url": "", "icon": "", "sound": "", "group": "", "jump_url": "", "template": ""},
+    "pushplus": {"token": "", "channel": "wechat", "template": "txt", "topic": "", "option": "",
+                 "msg_template": ""},
+    "webhook": {"url": "", "method": "POST", "content_type": "json", "headers": "", "body": ""},
+    "wecom_app": {"corp_id": "", "corp_secret": "", "agent_id": "",
+                  "to_user": "@all", "to_party": "", "to_tag": "", "msg_type": "text",
+                  "template": ""},
+}
+
+# 每个渠道类型中属于保密的 config 字段（只写不读，前端只给「是否已填」）
+NOTIFY_CHANNEL_SECRET_KEYS = {
+    "mail": ["password"],
+    "sct": ["key"],
+    "wechat": ["url"],
+    "dingtalk": ["url", "secret"],
+    "feishu": ["url"],
+    "bark": ["url"],
+    "pushplus": ["token"],
+    "webhook": ["url"],
+    "wecom_app": ["corp_secret"],
+}
+
+# 渠道类型 → 发送函数名（用字符串便于测试 mock）
+NOTIFY_CHANNEL_SEND_FUNCS = {
+    "mail": "notify_mail_send",
+    "sct": "notify_sct_send",
+    "wechat": "notify_wechat_send",
+    "dingtalk": "notify_dingtalk_send",
+    "feishu": "notify_feishu_send",
+    "bark": "notify_bark_send",
+    "pushplus": "notify_pushplus_send",
+    "webhook": "notify_webhook_send",
+    "wecom_app": "notify_wecom_app_send",
+}
 GRADE_LABEL = {"ok": "正常", "warn": "留意", "crit": "故障", "unknown": "未知"}
 
 # 同一条硬件告警一直没恢复时，隔多久再提醒一次（天）
 HW_REMIND_DAYS = 7
 # 发送失败后的退避：避免采集线程每 10 秒重试一次把SMTP打爆
 HW_RETRY_GAP = 600
+
+# ---- 定时推送报告 ----
+# 可选推送模块：key → (中文标签, 分类)
+REPORT_MODULES = {
+    "system":   ("系统信息", "系统"),
+    "cpu":      ("CPU", "系统"),
+    "memory":   ("内存", "系统"),
+    "load":     ("负载", "系统"),
+    "gpu":      ("显卡", "系统"),
+    "disk":     ("硬盘状态", "存储"),
+    "smart":    ("SMART 健康", "存储"),
+    "storage":  ("存储池/阵列", "存储"),
+    "network":  ("网络", "网络"),
+    "temp":     ("温度", "散热"),
+    "fan":      ("风扇", "散热"),
+    "power":    ("功耗与电费", "功耗"),
+    "docker":   ("Docker 容器", "容器"),
+    "vms":      ("虚拟机", "容器"),
+    "idrac":    ("iDRAC 硬件", "硬件"),
+    "ups":      ("UPS", "硬件"),
+    "weather":  ("天气", "其他"),
+}
+REPORT_MODULE_ORDER = ["system", "cpu", "memory", "load", "gpu",
+                       "disk", "smart", "storage",
+                       "network", "temp", "fan", "power",
+                       "docker", "vms",
+                       "idrac", "ups",
+                       "weather"]
+# 推送周期类型
+REPORT_SCHEDULE_TYPES = {
+    "hourly":   "每小时",
+    "daily":    "每天",
+    "weekly":   "每周",
+    "monthly":  "每月",
+    "interval": "自定义间隔",
+}
+# 报告发送失败退避（秒）
+REPORT_RETRY_GAP = 600
 
 
 def notify_hw_time(cfg):
@@ -3525,8 +3632,113 @@ def notify_hw_time(cfg):
     return h, mi
 
 
+def _notify_migrate_legacy(user):
+    """把旧版扁平配置（enabled/wechat_webhook_url/...）迁移为统一 channels 列表。
+
+    旧格式每个渠道一个 xxx_enabled 开关 + xxx_url 等字段；新格式统一收进
+    channels 数组，每项 {id,type,name,enabled,config:{...}}。迁移时只把已填了
+    地址/Token 的渠道纳入（避免产生一堆空壳）。
+    """
+    channels = []
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    _url = lambda k: re.sub(r"[\x00-\x1f\x7f]", "", str(user.get(k) or "")).strip()[:512]
+
+    if user.get("password") or user.get("user") or user.get("to"):
+        ch = {"id": "ch_mail", "type": "mail", "name": "邮件",
+              "enabled": onoff(user.get("enabled")),
+              "config": {"provider": str(user.get("provider") or "qq"),
+                         "host": str(user.get("host") or ""),
+                         "port": int(user.get("port") or 465),
+                         "secure": str(user.get("secure") or "ssl"),
+                         "user": str(user.get("user") or ""),
+                         "password": str(user.get("password") or ""),
+                         "to": str(user.get("to") or "")}}
+        channels.append(ch)
+    if user.get("sct_key"):
+        channels.append({"id": "ch_sct", "type": "sct", "name": "Server酱",
+                         "enabled": onoff(user.get("sct_enabled")),
+                         "config": {"key": _url("sct_key")}})
+    if user.get("wechat_webhook_url"):
+        channels.append({"id": "ch_wechat", "type": "wechat", "name": "企业微信群机器人",
+                         "enabled": onoff(user.get("wechat_webhook_enabled")),
+                         "config": {"url": _url("wechat_webhook_url"), "msg_type": "markdown"}})
+    if user.get("dingtalk_webhook_url"):
+        channels.append({"id": "ch_dingtalk", "type": "dingtalk", "name": "钉钉群机器人",
+                         "enabled": onoff(user.get("dingtalk_webhook_enabled")),
+                         "config": {"url": _url("dingtalk_webhook_url"),
+                                    "secret": _url("dingtalk_webhook_secret"),
+                                    "msg_type": "markdown"}})
+    if user.get("feishu_webhook_url"):
+        channels.append({"id": "ch_feishu", "type": "feishu", "name": "飞书群机器人",
+                         "enabled": onoff(user.get("feishu_webhook_enabled")),
+                         "config": {"url": _url("feishu_webhook_url"), "msg_type": "text"}})
+    if user.get("bark_url"):
+        channels.append({"id": "ch_bark", "type": "bark", "name": "Bark",
+                         "enabled": onoff(user.get("bark_enabled")),
+                         "config": {"url": _url("bark_url"),
+                                    "icon": _url("bark_icon"),
+                                    "sound": str(user.get("bark_sound") or "").strip()[:128],
+                                    "group": str(user.get("bark_group") or "").strip()[:128],
+                                    "jump_url": _url("bark_jump_url")}})
+    if user.get("pushplus_token"):
+        channels.append({"id": "ch_pushplus", "type": "pushplus", "name": "PushPlus",
+                         "enabled": onoff(user.get("pushplus_enabled")),
+                         "config": {"token": _url("pushplus_token"),
+                                    "channel": str(user.get("pushplus_channel") or "wechat"),
+                                    "template": str(user.get("pushplus_template") or "txt"),
+                                    "topic": _url("pushplus_topic"),
+                                    "option": _url("pushplus_option")}})
+    if user.get("webhook_url"):
+        channels.append({"id": "ch_webhook", "type": "webhook", "name": "通用Webhook",
+                         "enabled": onoff(user.get("webhook_enabled")),
+                         "config": {"url": _url("webhook_url"),
+                                    "method": str(user.get("webhook_method") or "POST").upper(),
+                                    "content_type": str(user.get("webhook_content_type") or "json").lower(),
+                                    "headers": str(user.get("webhook_headers") or "")[:2048],
+                                    "body": str(user.get("webhook_body") or "")[:2048]}})
+    if user.get("wecom_app_corp_id") or user.get("wecom_app_agent_id"):
+        channels.append({"id": "ch_wecom_app", "type": "wecom_app", "name": "企业微信应用",
+                         "enabled": onoff(user.get("wecom_app_enabled")),
+                         "config": {"corp_id": _url("wecom_app_corp_id"),
+                                    "corp_secret": _url("wecom_app_corp_secret"),
+                                    "agent_id": _url("wecom_app_agent_id"),
+                                    "to_user": _url("wecom_app_to_user") or "@all",
+                                    "to_party": _url("wecom_app_to_party"),
+                                    "to_tag": _url("wecom_app_to_tag"),
+                                    "msg_type": "text"}})
+    return channels
+
+
+def _notify_clean_channel(ch):
+    """规范化单个渠道：补齐默认 config、去控制字符、限长。"""
+    if not isinstance(ch, dict):
+        return None
+    ctype = str(ch.get("type") or "").strip()
+    if ctype not in NOTIFY_CHANNEL_CONFIG_DEFAULTS:
+        return None
+    defaults = NOTIFY_CHANNEL_CONFIG_DEFAULTS[ctype]
+    config = dict(defaults)
+    src = ch.get("config") or {}
+    if isinstance(src, dict):
+        for k in defaults:
+            if k in src:
+                config[k] = src[k]
+    onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
+    clean = {"id": str(ch.get("id") or ("ch_%s" % ctype))[:64],
+             "type": ctype,
+             "name": clean_text(ch.get("name") or NOTIFY_CHANNEL_TYPE_LABELS.get(ctype, ctype), 32),
+             "enabled": onoff(ch.get("enabled")),
+             "config": config}
+    return clean
+
+
 def notify_load(data_dir):
-    """读 notify.json；缺字段回落默认值，格式错误不影响其余字段。"""
+    """读 notify.json；缺字段回落默认值，格式错误不影响其余字段。
+
+    支持两种格式：
+    - 新格式：{channels:[...], hw_enabled, ...}
+    - 旧格式（扁平）：自动调用 _notify_migrate_legacy 迁移为 channels
+    """
     cfg = dict(NOTIFY_DEFAULT)
     if not data_dir:
         return cfg
@@ -3537,84 +3749,194 @@ def notify_load(data_dir):
             user = {}
     except Exception:
         user = {}
+    # 渠道列表：新格式直接读，旧格式迁移
+    if isinstance(user.get("channels"), list):
+        channels = []
+        for ch in user["channels"]:
+            cleaned = _notify_clean_channel(ch)
+            if cleaned:
+                channels.append(cleaned)
+        cfg["channels"] = channels
+    else:
+        cfg["channels"] = _notify_migrate_legacy(user)
     onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
-    for k in ("enabled", "sct_enabled", "hw_enabled"):
+    for k in ("hw_enabled", "notify_dnd_enabled", "notify_minimal"):
         if k in user:
             cfg[k] = onoff(user[k])
     if "hw_time" in user:
         hh, mm = notify_hw_time({"hw_time": user["hw_time"]})
         cfg["hw_time"] = "%02d:%02d" % (hh, mm)
-    if str(user.get("provider") or "") in [p[0] for p in NOTIFY_PROVIDERS]:
-        cfg["provider"] = str(user["provider"])
-    for k in ("host", "user", "sender", "to", "password", "sct_key"):
+    # 全局通知设置
+    if "notify_title_prefix" in user:
+        cfg["notify_title_prefix"] = clean_text(user["notify_title_prefix"], 32) or "飞牛监控"
+    for k in ("notify_dnd_start", "notify_dnd_end"):
         if k in user:
-            cfg[k] = str(user[k] or "")
-    if "port" in user:
+            hh, mm = notify_hw_time({"hw_time": user[k]})
+            cfg[k] = "%02d:%02d" % (hh, mm)
+    # 定时推送报告
+    if "report_enabled" in user:
+        cfg["report_enabled"] = onoff(user["report_enabled"])
+    if isinstance(user.get("report_schedule"), dict):
+        sch = dict(cfg.get("report_schedule") or {})
+        sch.update({k: v for k, v in user["report_schedule"].items() if k in ("type", "time", "weekday", "day", "interval_minutes")})
+        cfg["report_schedule"] = sch
+    if isinstance(user.get("report_modules"), list):
+        mods = [str(m).strip() for m in user["report_modules"] if str(m).strip() in REPORT_MODULES]
+        cfg["report_modules"] = mods or list(NOTIFY_DEFAULT["report_modules"])
+    rd = str(user.get("report_detail") or "").strip().lower()
+    cfg["report_detail"] = rd if rd in ("brief", "detail") else NOTIFY_DEFAULT["report_detail"]
+    if "report_last_sent" in user:
         try:
-            cfg["port"] = max(1, min(65535, int(user["port"])))
+            cfg["report_last_sent"] = float(user["report_last_sent"])
         except Exception:
             pass
-    if str(user.get("secure") or "").lower() in ("ssl", "starttls", "none"):
-        cfg["secure"] = str(user["secure"]).lower()
     return cfg
 
 
 def notify_public(cfg):
-    """对外配置：授权码 / SendKey 换成「是否已填」，绝不回传明文。"""
-    out = {k: v for k, v in cfg.items() if k not in NOTIFY_SECRET_KEYS}
-    out["password_set"] = bool(cfg.get("password"))
-    out["sct_key_set"] = bool(cfg.get("sct_key"))
+    """对外配置：保密字段（密码 / URL / Token）换成「是否已填」，绝不回传明文。"""
+    out = {k: v for k, v in cfg.items() if k != "channels"}
+    pub_channels = []
+    for ch in (cfg.get("channels") or []):
+        ctype = ch.get("type")
+        config = ch.get("config") or {}
+        secrets = NOTIFY_CHANNEL_SECRET_KEYS.get(ctype, [])
+        pub_cfg = {k: v for k, v in config.items() if k not in secrets}
+        for sk in secrets:
+            pub_cfg[sk + "_set"] = bool(config.get(sk))
+        pub_channels.append({"id": ch.get("id"), "type": ctype,
+                             "name": ch.get("name"), "enabled": ch.get("enabled"),
+                             "config": pub_cfg})
+    out["channels"] = pub_channels
     return out
 
 
 def notify_save(data_dir, data, cur=None):
-    """合并保存通知配置：空值 / 未提供的密码项保留原值，返回 (配置, 错误)。"""
+    """保存通知配置：channels 列表 + 全局设置。
+
+    保密字段（密码 / URL / Token）空串表示「不修改」，需从已保存配置中保留原值；
+    想清除请在该渠道 config 里传 clear_<field>。
+    """
     cfg = dict(cur) if cur else notify_load(data_dir)
     onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
-    for k in ("enabled", "sct_enabled", "hw_enabled"):
+
+    # 全局设置
+    for k in ("hw_enabled", "notify_dnd_enabled", "notify_minimal"):
         if k in data:
             cfg[k] = onoff(data[k])
     if "hw_time" in data:
         hh, mm = notify_hw_time({"hw_time": data["hw_time"]})
         cfg["hw_time"] = "%02d:%02d" % (hh, mm)
-    if "provider" in data:
-        p = str(data["provider"] or "")
-        if p in [x[0] for x in NOTIFY_PROVIDERS]:
-            cfg["provider"] = p
-            for pid, _l, host, port, sec in NOTIFY_PROVIDERS:
-                if pid == p and host:      # 选预设就把服务器参数一起带过来
-                    cfg["host"], cfg["port"], cfg["secure"] = host, port, sec
-    if "host" in data:
-        cfg["host"] = clean_text(data["host"], 128)
-    if "port" in data:
-        try:
-            cfg["port"] = max(1, min(65535, int(data["port"])))
-        except Exception:
-            return cfg, "端口须为 1–65535 的整数"
-    if "secure" in data:
-        s = str(data["secure"] or "").lower()
-        if s in ("ssl", "starttls", "none"):
-            cfg["secure"] = s
-    for k, n in (("user", 128), ("sender", 128), ("to", 400)):
+    if "notify_title_prefix" in data:
+        cfg["notify_title_prefix"] = clean_text(data["notify_title_prefix"], 32) or "飞牛监控"
+    for k in ("notify_dnd_start", "notify_dnd_end"):
         if k in data:
-            cfg[k] = clean_text(data[k], n)
-    # 密码 / SendKey：只有前端真的传了新值才覆盖；传空串按「不改」处理，
-    # 想清除请显式传 clear_password / clear_sct_key（前端未使用，保留 API 能力）
-    if str(data.get("password") or ""):
-        cfg["password"] = str(data["password"])[:256]
-    if str(data.get("sct_key") or ""):
-        cfg["sct_key"] = str(data["sct_key"])[:256]
-    if data.get("clear_password"):
-        cfg["password"] = ""
-    if data.get("clear_sct_key"):
-        cfg["sct_key"] = ""
-    if cfg.get("enabled"):
-        miss = [name for name, ok in (("SMTP 服务器", cfg.get("host")), ("发件账号", cfg.get("user")),
-                                      ("授权码", cfg.get("password")), ("收件人", cfg.get("to"))) if not ok]
-        if miss:
-            return cfg, "邮件通知缺少：%s" % "、".join(miss)
-    if cfg.get("sct_enabled") and not cfg.get("sct_key"):
-        return cfg, "微信通知缺少 SendKey"
+            hh, mm = notify_hw_time({"hw_time": data[k]})
+            cfg[k] = "%02d:%02d" % (hh, mm)
+
+    # 定时推送报告
+    if "report_enabled" in data:
+        cfg["report_enabled"] = onoff(data["report_enabled"])
+    if "report_schedule" in data and isinstance(data["report_schedule"], dict):
+        sch = dict(cfg.get("report_schedule") or {})
+        src = data["report_schedule"]
+        t = str(src.get("type") or "daily").strip()
+        if t in REPORT_SCHEDULE_TYPES:
+            sch["type"] = t
+        if "time" in src:
+            hh, mm = notify_hw_time({"hw_time": src["time"]})
+            sch["time"] = "%02d:%02d" % (hh, mm)
+        if "weekday" in src:
+            try:
+                sch["weekday"] = max(0, min(6, int(src["weekday"])))
+            except Exception:
+                pass
+        if "day" in src:
+            try:
+                sch["day"] = max(1, min(31, int(src["day"])))
+            except Exception:
+                pass
+        if "interval_minutes" in src:
+            try:
+                sch["interval_minutes"] = max(1, min(10080, int(src["interval_minutes"])))
+            except Exception:
+                pass
+        cfg["report_schedule"] = sch
+    if "report_modules" in data and isinstance(data["report_modules"], list):
+        mods = [str(m).strip() for m in data["report_modules"] if str(m).strip() in REPORT_MODULES]
+        cfg["report_modules"] = mods or list(NOTIFY_DEFAULT["report_modules"])
+    if "report_detail" in data:
+        rd = str(data["report_detail"] or "").strip().lower()
+        cfg["report_detail"] = rd if rd in ("brief", "detail") else NOTIFY_DEFAULT["report_detail"]
+
+    # 渠道列表
+    old_channels = {ch.get("id"): ch for ch in (cfg.get("channels") or [])}
+    new_channels = []
+    for ch in (data.get("channels") or []):
+        cleaned = _notify_clean_channel(ch)
+        if not cleaned:
+            continue
+        ctype = cleaned["type"]
+        secrets = NOTIFY_CHANNEL_SECRET_KEYS.get(ctype, [])
+        old = old_channels.get(cleaned["id"]) or {}
+        old_cfg = old.get("config") or {}
+        # 保密字段：前端传空串表示不改，保留已保存的原值
+        for sk in secrets:
+            if not cleaned["config"].get(sk):
+                cleaned["config"][sk] = old_cfg.get(sk) or ""
+            # 显式清除
+            if ch.get("config", {}).get("clear_" + sk):
+                cleaned["config"][sk] = ""
+        # 端口校验（在 provider 预设覆盖之前，避免坏端口被预设值盖掉）
+        if ctype == "mail":
+            try:
+                cleaned["config"]["port"] = max(1, min(65535, int(cleaned["config"].get("port") or 465)))
+            except Exception:
+                return cfg, "邮件端口须为 1–65535 的整数"
+        # mail 的 provider 预设：选了预设就把 host/port/secure 带过来
+        if ctype == "mail":
+            p = str(cleaned["config"].get("provider") or "qq")
+            known = [x[0] for x in NOTIFY_PROVIDERS]
+            if p not in known:
+                cleaned["config"]["provider"] = "qq"
+                p = "qq"
+            if p in known:
+                for pid, _l, host, port, sec in NOTIFY_PROVIDERS:
+                    if pid == p and host:
+                        cleaned["config"]["host"] = host
+                        cleaned["config"]["port"] = port
+                        cleaned["config"]["secure"] = sec
+        new_channels.append(cleaned)
+    cfg["channels"] = new_channels
+
+    # 校验：开启的渠道必须有必要配置
+    for ch in new_channels:
+        if not ch.get("enabled"):
+            continue
+        ctype = ch["type"]
+        c = ch["config"]
+        if ctype == "mail":
+            miss = [n for n, v in (("SMTP 服务器", c.get("host")), ("发件账号", c.get("user")),
+                                   ("授权码", c.get("password")), ("收件人", c.get("to"))) if not v]
+            if miss:
+                return cfg, "%s 已开启但缺少：%s" % (ch.get("name") or "邮件", "、".join(miss))
+        elif ctype == "sct":
+            if not c.get("key"):
+                return cfg, "%s 已开启但缺少 SendKey" % (ch.get("name") or "Server酱")
+        elif ctype in ("wechat", "dingtalk", "feishu", "bark", "pushplus", "webhook"):
+            key_field = "url" if ctype != "pushplus" else "token"
+            if not c.get(key_field):
+                label = {"wechat": "Webhook 地址", "dingtalk": "Webhook 地址",
+                         "feishu": "Webhook 地址", "bark": "地址",
+                         "pushplus": "Token", "webhook": "Webhook 地址"}[ctype]
+                return cfg, "%s 已开启但缺少%s" % (ch.get("name") or ctype, label)
+        elif ctype == "wecom_app":
+            miss = [n for n, v in (("CorpID", c.get("corp_id")),
+                                   ("Secret", c.get("corp_secret")),
+                                   ("AgentId", c.get("agent_id"))) if not v]
+            if miss:
+                return cfg, "%s 已开启但缺少：%s" % (ch.get("name") or "企业微信应用", "、".join(miss))
+
     write_json_secure(os.path.join(data_dir, NOTIFY_FILE), cfg)
     return cfg, ""
 
@@ -3644,24 +3966,28 @@ def notify_short_err(msg):
     return (m[:60] + "…") if len(m) > 60 else (m or "未知错误")
 
 
-def notify_mail_send(cfg, subject, body):
-    """发一封纯文本邮件。返回 (成功, 错误描述)。"""
+def notify_mail_send(ch, subject, body):
+    """发一封纯文本邮件。ch 是渠道对象，配置在 ch['config']。返回 (成功, 错误描述)。"""
     import smtplib
     from email.mime.text import MIMEText
     from email.header import Header
-    host = (cfg.get("host") or "").strip()
-    user = (cfg.get("user") or "").strip()
-    pwd = cfg.get("password") or ""
-    sender = (cfg.get("sender") or "").strip() or user
-    to = (cfg.get("to") or "").strip()
+    c = ch.get("config") or {}
+    host = (c.get("host") or "").strip()
+    user = (c.get("user") or "").strip()
+    pwd = c.get("password") or ""
+    sender = (c.get("sender") or "").strip() or user
+    to = (c.get("to") or "").strip()
     if not host or not user or not pwd or not to:
         return False, "配置不完整（缺少服务器 / 账号 / 授权码 / 收件人）"
     try:
-        port = int(cfg.get("port") or 465)
+        port = int(c.get("port") or 465)
     except Exception:
         port = 465
-    sec = str(cfg.get("secure") or "ssl").lower()
-    msg = MIMEText(body, "plain", "utf-8")
+    sec = str(c.get("secure") or "ssl").lower()
+    # 自定义模板：覆盖默认正文（subject 仍作邮件标题）
+    tpl = (c.get("template") or "").strip()
+    send_body = _notify_render_body(tpl, subject, body) if tpl else body
+    msg = MIMEText(send_body, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = sender
     msg["To"] = to
@@ -3687,13 +4013,17 @@ def notify_mail_send(cfg, subject, body):
                 pass
 
 
-def notify_sct_send(cfg, title, desp):
+def notify_sct_send(ch, title, desp):
     """Server酱：POST https://sctapi.ftqq.com/<SendKey>.send。返回 (成功, 错误描述)。"""
-    key = (cfg.get("sct_key") or "").strip()
+    c = ch.get("config") or {}
+    key = (c.get("key") or "").strip()
     if not key:
         return False, "未配置 SendKey"
     url = "https://sctapi.ftqq.com/%s.send" % key
-    data = urllib.parse.urlencode({"title": title, "desp": desp}).encode()
+    # 自定义模板：覆盖默认正文（title 仍作消息标题）
+    tpl = (c.get("template") or "").strip()
+    send_desp = _notify_render_body(tpl, title, desp) if tpl else desp
+    data = urllib.parse.urlencode({"title": title, "desp": send_desp}).encode()
     try:
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
@@ -3708,6 +4038,394 @@ def notify_sct_send(cfg, title, desp):
         return False, str(j.get("message") or raw[:80] or "未知错误")
     except Exception as e:
         return False, str(e)
+
+
+def _notify_post_json(url, payload, timeout=15):
+    """统一的 JSON POST 工具，返回 (响应体字符串, 错误描述)。错误时响应体为空。"""
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode("utf-8", "replace"), ""
+    except urllib.error.HTTPError as e:
+        return "", "HTTP %d：%s" % (e.code, (e.reason or "")[:80])
+    except Exception as e:
+        return "", str(e)
+
+
+def notify_wechat_send(ch, subject, body):
+    """企业微信群机器人 Webhook：支持 text / markdown 两种消息类型。返回 (成功, 错误描述)。"""
+    c = ch.get("config") or {}
+    url = (c.get("url") or "").strip()
+    if not url:
+        return False, "未配置企业微信 Webhook 地址"
+    msg_type = (c.get("msg_type") or "markdown").strip().lower()
+    if msg_type not in ("text", "markdown"):
+        msg_type = "markdown"
+    # 自定义模板：覆盖默认的「标题加粗 + 正文」组合
+    tpl = (c.get("template") or "").strip()
+    if tpl:
+        content = _notify_render_body(tpl, subject, body)
+    elif msg_type == "markdown":
+        # 企微 markdown 不支持整段换行，用 \n 转义；标题单独一行加粗
+        content = "**%s**\n%s" % (subject, body.replace("\r\n", "\n"))
+    else:
+        content = "%s\n%s" % (subject, body)
+    if msg_type == "markdown":
+        payload = {"msgtype": "markdown", "markdown": {"content": content}}
+    else:
+        payload = {"msgtype": "text", "text": {"content": content}}
+    raw, err = _notify_post_json(url, payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    if j.get("errcode") == 0:
+        return True, ""
+    return False, str(j.get("errmsg") or raw[:80] or "未知错误")
+
+
+def notify_dingtalk_send(ch, subject, body):
+    """钉钉群机器人 Webhook：支持 text / markdown，支持加签。返回 (成功, 错误描述)。"""
+    import hmac
+    import hashlib
+    import base64
+    c = ch.get("config") or {}
+    url = (c.get("url") or "").strip()
+    if not url:
+        return False, "未配置钉钉 Webhook 地址"
+    secret = (c.get("secret") or "").strip()
+    # 加签：timestamp + "\n" + secret 做 HMAC-SHA256，base64 后 urlencode
+    if secret:
+        ts = str(int(time.time() * 1000))
+        string_to_sign = "%s\n%s" % (ts, secret)
+        hmac_code = hmac.new(secret.encode("utf-8"),
+                             string_to_sign.encode("utf-8"),
+                             digestmod=hashlib.sha256).digest()
+        sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+        sep = "&" if "?" in url else "?"
+        url = "%s%stimestamp=%s&sign=%s" % (url, sep, ts, sign)
+    msg_type = (c.get("msg_type") or "markdown").strip().lower()
+    if msg_type not in ("text", "markdown"):
+        msg_type = "markdown"
+    # 自定义模板：覆盖默认的「### 标题 + 正文」组合
+    tpl = (c.get("template") or "").strip()
+    if tpl:
+        text = _notify_render_body(tpl, subject, body)
+    elif msg_type == "markdown":
+        text = "### %s\n\n%s" % (subject, body.replace("\r\n", "\n"))
+    else:
+        text = "%s\n%s" % (subject, body)
+    if msg_type == "markdown":
+        payload = {"msgtype": "markdown", "markdown": {"title": subject, "text": text}}
+    else:
+        payload = {"msgtype": "text", "text": {"content": text}}
+    raw, err = _notify_post_json(url, payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    if j.get("errcode") == 0:
+        return True, ""
+    return False, str(j.get("errmsg") or raw[:80] or "未知错误")
+
+
+def notify_feishu_send(ch, subject, body):
+    """飞书群机器人 Webhook：支持 text / post（富文本）两种消息类型。返回 (成功, 错误描述)。"""
+    c = ch.get("config") or {}
+    url = (c.get("url") or "").strip()
+    if not url:
+        return False, "未配置飞书 Webhook 地址"
+    msg_type = (c.get("msg_type") or "text").strip().lower()
+    if msg_type not in ("text", "post", "markdown"):
+        msg_type = "text"
+    # 自定义模板：覆盖默认的「标题 + 正文」组合
+    tpl = (c.get("template") or "").strip()
+    if tpl:
+        rendered = _notify_render_body(tpl, subject, body)
+        if msg_type == "post":
+            lines = rendered.replace("\r\n", "\n").split("\n")
+            content = [[{"tag": "text", "text": line}] for line in lines if line]
+            payload = {"msg_type": "post", "content": {
+                "post": {"zh_cn": {"title": subject, "content": content}}}}
+        else:
+            payload = {"msg_type": "text", "content": {"text": rendered}}
+    elif msg_type == "post":
+        # 飞书 post 富文本：title + content 二维数组
+        lines = body.replace("\r\n", "\n").split("\n")
+        content = [[{"tag": "text", "text": line}] for line in lines if line]
+        payload = {"msg_type": "post", "content": {
+            "post": {"zh_cn": {"title": subject, "content": content}}}}
+    elif msg_type == "markdown":
+        # 飞书 text 类型实际不支持 markdown，用 interactive 卡片太复杂，这里回退到 text
+        text = "%s\n%s" % (subject, body)
+        payload = {"msg_type": "text", "content": {"text": text}}
+    else:
+        text = "%s\n%s" % (subject, body)
+        payload = {"msg_type": "text", "content": {"text": text}}
+    raw, err = _notify_post_json(url, payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    # 飞书响应有两种：{"code":0,"msg":"success"} 或 {"StatusCode":0,"StatusMessage":"success"}
+    if j.get("code") == 0 or j.get("StatusCode") == 0:
+        return True, ""
+    return False, str(j.get("msg") or j.get("StatusMessage") or raw[:80] or "未知错误")
+
+
+def notify_bark_send(ch, subject, body):
+    """Bark：POST 标题 + 正文到用户的 Bark 推送地址，支持 icon/sound/group/url。返回 (成功, 错误描述)。"""
+    c = ch.get("config") or {}
+    url = (c.get("url") or "").strip()
+    if not url:
+        return False, "未配置 Bark 地址"
+    url = url.rstrip("/")
+    # 自定义模板：覆盖默认正文
+    tpl = (c.get("template") or "").strip()
+    send_body = _notify_render_body(tpl, subject, body) if tpl else body
+    payload = {"title": subject, "body": send_body}
+    for k in ("icon", "sound", "group", "jump_url"):
+        v = (c.get(k) or "").strip()
+        if v:
+            payload[k if k != "jump_url" else "url"] = v
+    raw, err = _notify_post_json(url, payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    if j.get("code") == 200:
+        return True, ""
+    return False, str(j.get("message") or raw[:80] or "未知错误")
+
+
+def notify_pushplus_send(ch, subject, body):
+    """PushPlus：POST 到 pushplus.plus/send，支持多渠道（wechat/app/extension/webhook/...）。返回 (成功, 错误描述)。"""
+    c = ch.get("config") or {}
+    token = (c.get("token") or "").strip()
+    if not token:
+        return False, "未配置 PushPlus Token"
+    # 自定义内容模板：覆盖默认正文（subject 仍作消息标题）
+    msg_tpl = (c.get("msg_template") or "").strip()
+    content = _notify_render_body(msg_tpl, subject, body) if msg_tpl else body
+    payload = {"token": token, "title": subject, "content": content}
+    channel = (c.get("channel") or "wechat").strip()
+    if channel in ("wechat", "app", "extension", "webhook", "clawbot",
+                   "cmcc", "qq", "cp", "mail"):
+        payload["channel"] = channel
+    # PushPlus 的 template 是消息格式（txt/html/markdown/json），不是内容模板
+    fmt = (c.get("template") or "txt").strip()
+    if fmt in ("txt", "html", "markdown", "json"):
+        payload["template"] = fmt
+    else:
+        payload["template"] = "txt"
+    topic = (c.get("topic") or "").strip()
+    if topic:
+        payload["topic"] = topic
+    option = (c.get("option") or "").strip()
+    if option:
+        payload["option"] = option
+    raw, err = _notify_post_json("https://www.pushplus.plus/send", payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    if j.get("code") == 200:
+        return True, ""
+    return False, str(j.get("msg") or raw[:80] or "未知错误")
+
+
+def _notify_parse_headers(raw):
+    """解析自定义请求头：支持 JSON 对象或每行 'K: V' 文本。返回 dict。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    # 尝试 JSON
+    if raw.startswith("{"):
+        try:
+            d = json.loads(raw)
+            if isinstance(d, dict):
+                return {str(k): str(v) for k, v in d.items()}
+        except Exception:
+            pass
+    # 按行解析 K: V
+    out = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k, v = k.strip(), v.strip()
+        if k:
+            out[k] = v
+    return out
+
+
+def _notify_render_body(tpl, subject, body):
+    """渲染自定义 body 模板：{title}/{content}/{text}/{time} 占位符替换。"""
+    tpl = tpl or ""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    return (tpl.replace("{title}", subject)
+               .replace("{content}", body)
+               .replace("{text}", body)
+               .replace("{time}", now))
+
+
+def notify_webhook_send(ch, subject, body):
+    """通用 Webhook：支持自定义 method/content_type/headers/body 模板。HTTP 2xx 即成功。"""
+    c = ch.get("config") or {}
+    url = (c.get("url") or "").strip()
+    if not url:
+        return False, "未配置通用 Webhook 地址"
+    method = (c.get("method") or "POST").upper()
+    if method not in ("GET", "POST", "PUT"):
+        method = "POST"
+    ct = (c.get("content_type") or "json").lower()
+    if ct not in ("json", "form", "text"):
+        ct = "json"
+    custom_body = (c.get("body") or "").strip()
+    headers = _notify_parse_headers(c.get("headers"))
+    # 构造请求体
+    if custom_body:
+        rendered = _notify_render_body(custom_body, subject, body)
+        if ct == "json":
+            try:
+                payload_body = json.dumps(json.loads(rendered), ensure_ascii=False).encode("utf-8")
+            except Exception:
+                # 模板渲染后不是合法 JSON，按原样发送
+                payload_body = rendered.encode("utf-8")
+        elif ct == "form":
+            payload_body = urllib.parse.urlencode({"body": rendered}).encode()
+        else:
+            payload_body = rendered.encode("utf-8")
+    else:
+        # 默认行为：POST {title, content}
+        data = {"title": subject, "content": body}
+        if ct == "json":
+            payload_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        elif ct == "form":
+            payload_body = urllib.parse.urlencode(data).encode()
+        else:
+            payload_body = ("%s\n%s" % (subject, body)).encode("utf-8")
+    # 设置 Content-Type
+    if ct == "json":
+        headers.setdefault("Content-Type", "application/json; charset=utf-8")
+    elif ct == "form":
+        headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+    else:
+        headers.setdefault("Content-Type", "text/plain; charset=utf-8")
+    # GET 时把 body 当 query 参数
+    if method == "GET":
+        sep = "&" if "?" in url else "?"
+        url = "%s%s%s" % (url, sep, urllib.parse.urlencode(
+            {"title": subject, "content": body}))
+        payload_body = None
+    try:
+        req = urllib.request.Request(url, data=payload_body, method=method)
+        for k, v in headers.items():
+            req.add_header(k, v)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        return True, ""
+    except urllib.error.HTTPError as e:
+        return False, "HTTP %d：%s" % (e.code, (e.reason or "")[:80])
+    except Exception as e:
+        return False, str(e)
+
+
+# 企业微信应用 access_token 缓存（进程内共享，7200s 过期，提前 300s 刷新）
+_WECOM_TOKEN_CACHE = {}
+_WECOM_TOKEN_LOCK = threading.Lock()
+
+
+def _wecom_get_token(corp_id, corp_secret):
+    """获取企业微信应用 access_token，带进程内缓存。返回 (token, 错误)。"""
+    key = (corp_id, corp_secret)
+    now = time.time()
+    with _WECOM_TOKEN_LOCK:
+        cached = _WECOM_TOKEN_CACHE.get(key)
+        if cached and cached[1] > now:
+            return cached[0], ""
+    url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s" % (
+        urllib.parse.quote(corp_id, safe=""), urllib.parse.quote(corp_secret, safe=""))
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        j = json.loads(raw)
+    except Exception as e:
+        return "", str(e)
+    if j.get("errcode") != 0:
+        return "", str(j.get("errmsg") or "获取 access_token 失败")
+    token = j.get("access_token") or ""
+    expires = int(j.get("expires_in") or 7200)
+    if token:
+        with _WECOM_TOKEN_LOCK:
+            _WECOM_TOKEN_CACHE[key] = (token, now + expires - 300)
+    return token, ""
+
+
+def notify_wecom_app_send(ch, subject, body):
+    """企业微信应用消息：先取 access_token，再调 message/send。可推送给指定成员。返回 (成功, 错误描述)。"""
+    c = ch.get("config") or {}
+    corp_id = (c.get("corp_id") or "").strip()
+    corp_secret = (c.get("corp_secret") or "").strip()
+    agent_id = (c.get("agent_id") or "").strip()
+    if not corp_id or not corp_secret or not agent_id:
+        return False, "企业微信应用配置不完整（缺少 CorpID / Secret / AgentId）"
+    token, err = _wecom_get_token(corp_id, corp_secret)
+    if err:
+        return False, err
+    to_user = (c.get("to_user") or "@all").strip()
+    to_party = (c.get("to_party") or "").strip()
+    to_tag = (c.get("to_tag") or "").strip()
+    msg_type = (c.get("msg_type") or "text").strip().lower()
+    if msg_type not in ("text", "markdown"):
+        msg_type = "text"
+    # 自定义模板：覆盖默认的「标题 + 正文」组合
+    tpl = (c.get("template") or "").strip()
+    if tpl:
+        content = _notify_render_body(tpl, subject, body)
+    else:
+        content = "%s\n%s" % (subject, body)
+    # 企业微信文本消息上限 2048 字节，截断
+    raw_bytes = content.encode("utf-8")
+    if len(raw_bytes) > 2000:
+        content = raw_bytes[:1997].decode("utf-8", "ignore") + "..."
+    if msg_type == "markdown":
+        payload = {"touser": to_user, "msgtype": "markdown",
+                   "agentid": int(agent_id) if agent_id.isdigit() else agent_id,
+                   "markdown": {"content": content}}
+    else:
+        payload = {"touser": to_user, "msgtype": "text",
+                   "agentid": int(agent_id) if agent_id.isdigit() else agent_id,
+                   "text": {"content": content}}
+    if to_party:
+        payload["toparty"] = to_party
+    if to_tag:
+        payload["totag"] = to_tag
+    url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s" % token
+    raw, err = _notify_post_json(url, payload)
+    if err:
+        return False, err
+    try:
+        j = json.loads(raw)
+    except Exception:
+        j = {}
+    if j.get("errcode") == 0:
+        return True, ""
+    return False, str(j.get("errmsg") or raw[:80] or "未知错误")
 
 
 def notify_lan_ip():
@@ -3820,19 +4538,120 @@ def notify_state_load(data_dir):
         return {}
 
 
-def notify_send_all(cfg, subject, body):
-    """按已启用的通道发送，任一失败即视为失败（下一轮重试）。返回 (全部成功, 明细)。"""
-    res = {"mail": None, "sct": None}
+# 通知渠道注册表：(渠道类型 id, 中文标签, 发送函数名)
+# 发送函数名用字符串而非直接引用，这样 mock.patch.object(srv, "notify_xxx_send")
+# 才能在测试中生效——直接引用会在模块加载时把原函数对象固定进元组。
+# notify_send_all 遍历 cfg["channels"]，按 type 查这张表找发送函数。
+NOTIFY_CHANNELS = tuple(
+    (cid, NOTIFY_CHANNEL_TYPE_LABELS[cid], NOTIFY_CHANNEL_SEND_FUNCS[cid])
+    for cid in NOTIFY_CHANNEL_SEND_FUNCS
+)
+
+
+def _notify_send_func(name):
+    """按函数名从模块全局查找发送函数，便于测试时 mock。"""
+    return globals().get(name)
+
+
+# 勿扰模式缓冲区：[(subject, body, ts), ...] 进程内缓存
+_NOTIFY_DND_BUFFER = []
+_NOTIFY_DND_LOCK = threading.Lock()
+
+
+def _notify_in_dnd(cfg):
+    """判断当前是否处于勿扰时段。支持跨天（如 23:00 - 08:00）。"""
+    if not cfg.get("notify_dnd_enabled"):
+        return False
+    now = time.localtime()
+    cur_min = now.tm_hour * 60 + now.tm_min
+    try:
+        sh, sm = [int(x) for x in str(cfg.get("notify_dnd_start") or "23:00").split(":")]
+        eh, em = [int(x) for x in str(cfg.get("notify_dnd_end") or "08:00").split(":")]
+    except Exception:
+        return False
+    start_min = sh * 60 + sm
+    end_min = eh * 60 + em
+    if start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= cur_min < end_min
+    # 跨天：23:00 - 08:00
+    return cur_min >= start_min or cur_min < end_min
+
+
+def _notify_apply_global(cfg, subject, body, skip_minimal=False):
+    """应用全局设置：标题前缀 + 极简推送。返回 (subject, body)。
+
+    skip_minimal=True 时跳过极简推送截断（用于定时报告——报告自身已有「简略/详细」控制）。
+    """
+    prefix = (cfg.get("notify_title_prefix") or "").strip()
+    if prefix and not subject.startswith(prefix):
+        subject = "%s：%s" % (prefix, subject)
+    if cfg.get("notify_minimal") and not skip_minimal:
+        # 极简模式：只保留标题作为一行，正文取第一行
+        body = (body or "").split("\n", 1)[0].strip()
+    return subject, body
+
+
+def _notify_flush_dnd(cfg):
+    """勿扰结束后，把缓冲区里的消息汇总成一条发送。返回 (成功, 明细) 或 None。"""
+    with _NOTIFY_DND_LOCK:
+        if not _NOTIFY_DND_BUFFER:
+            return None
+        items = list(_NOTIFY_DND_BUFFER)
+        _NOTIFY_DND_BUFFER.clear()
+    # 汇总：取第一条的标题前缀 + 各条正文合并
+    lines = []
+    for sub, bod, ts in items:
+        t = time.strftime("%H:%M", time.localtime(ts))
+        lines.append("[%s] %s" % (t, bod or sub))
+    subject = "勿扰时段汇总（%d 条）" % len(items)
+    body = "\n".join(lines)
+    subject, body = _notify_apply_global(cfg, subject, body)
+    return _notify_send_all_raw(cfg, subject, body)
+
+
+def _notify_send_all_raw(cfg, subject, body):
+    """实际发送：遍历已启用渠道。返回 (全部成功, {渠道id: {ok, err}})。"""
+    send_fn_map = {cid: fn_name for cid, _l, fn_name in NOTIFY_CHANNELS}
+    res = {}
     ok_all = True
-    if cfg.get("enabled"):
-        ok, err = notify_mail_send(cfg, subject, body)
-        res["mail"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
-        ok_all = ok_all and ok
-    if cfg.get("sct_enabled"):
-        ok, err = notify_sct_send(cfg, subject, body)
-        res["sct"] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+    for ch in (cfg.get("channels") or []):
+        if not ch.get("enabled"):
+            continue
+        cid = ch.get("type")
+        fn_name = send_fn_map.get(cid)
+        if not fn_name:
+            continue
+        send_fn = _notify_send_func(fn_name)
+        if send_fn is None:
+            continue
+        ok, err = send_fn(ch, subject, body)
+        res[ch.get("id") or cid] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
         ok_all = ok_all and ok
     return ok_all, res
+
+
+def notify_send_all(cfg, subject, body, skip_minimal=False):
+    """按已启用的通道发送，支持标题前缀 / 极简推送 / 勿扰模式。返回 (全部成功, 明细)。
+
+    skip_minimal=True 时跳过极简推送截断（定时报告用，详略由报告自身控制）。
+    """
+    # 先检查是否需要把勿扰缓冲区的消息发出去
+    if not _notify_in_dnd(cfg):
+        flush_res = _notify_flush_dnd(cfg)
+        if flush_res is not None:
+            _ok, _detail = flush_res
+    subject, body = _notify_apply_global(cfg, subject, body, skip_minimal=skip_minimal)
+    # 勿扰时段：缓存不发
+    if _notify_in_dnd(cfg):
+        with _NOTIFY_DND_LOCK:
+            _NOTIFY_DND_BUFFER.append((subject, body, time.time()))
+        # 限制缓冲区大小，避免无限增长
+        if len(_NOTIFY_DND_BUFFER) > 100:
+            _NOTIFY_DND_BUFFER.pop(0)
+        return True, {"dnd": True}
+    return _notify_send_all_raw(cfg, subject, body)
 
 
 DISK_METRIC_KEYS = (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
@@ -3932,7 +4751,7 @@ def notify_after_scan(items, ts, db, config=None):
         if not data_dir:
             return None
         cfg = notify_load(data_dir)
-        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
             return None
         st = notify_state_load(data_dir)
         # 状态按序列号存：设备名跨重启会变，按名字存会导致同一块盘反复「新增」
@@ -4160,7 +4979,7 @@ def notify_hw_tick(data_dir, config=None):
         cfg = notify_load(data_dir)
         if not cfg.get("hw_enabled"):
             return None
-        if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
             return None
         icfg = idrac_load(data_dir)
         if not (icfg.get("enabled") and icfg.get("host")):
@@ -4251,7 +5070,7 @@ def _hw_due(data_dir, now=None):
     cfg = notify_load(data_dir)
     if not cfg.get("hw_enabled"):
         return False
-    if not (cfg.get("enabled") or cfg.get("sct_enabled")):
+    if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
         return False
     lt = time.localtime(now)
     hh, mm = notify_hw_time(cfg)
@@ -4282,45 +5101,726 @@ def notify_hw_schedule(data_dir, config=None):
         return False
 
 
-def notify_test(data_dir, channel="all"):
-    """设置页「发送测试」：发一条样例消息验证单个通道（mail / sct）。
+# ---------------------------------------------------------------------------
+# 定时推送报告：按用户设定的周期，把 fnmonitor 采集的各模块数据汇总推送
+# ---------------------------------------------------------------------------
+_REPORT_JOB = [None]
+_REPORT_CHECK_TS = [0.0]
 
-    默认 all 只在巡检推送路径与旧前端上使用；设置页每个通道一个按钮，传 channel
-    就只发那一条，避免「点一次邮件测试、微信也跟着响」。
+
+def _report_due(cfg, now=None):
+    """判断定时报告是否该发（不读盘、不联网，纯时间判断）。"""
+    now = now or time.time()
+    if now - _REPORT_CHECK_TS[0] < 30:
+        return False
+    _REPORT_CHECK_TS[0] = now
+    if not cfg.get("report_enabled"):
+        return False
+    if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
+        return False
+    sch = cfg.get("report_schedule") or {}
+    stype = sch.get("type") or "daily"
+    lt = time.localtime(now)
+    last = float(cfg.get("report_last_sent") or 0)
+    # 失败退避
+    if last > 0 and now - last < REPORT_RETRY_GAP and last == cfg.get("report_last_fail", 0):
+        return False
+    if stype == "hourly":
+        # 每小时整点过 1 分内可触发；同一小时只发一次
+        hour_key = time.strftime("%Y%m%d%H", lt)
+        last_hour = time.strftime("%Y%m%d%H", time.localtime(last)) if last else ""
+        return lt.tm_min <= 2 and hour_key != last_hour
+    if stype == "daily":
+        hh, mm = _parse_hhmm(sch.get("time", "08:00"))
+        if (lt.tm_hour, lt.tm_min) < (hh, mm):
+            return False
+        day_key = time.strftime("%Y%m%d", lt)
+        last_day = time.strftime("%Y%m%d", time.localtime(last)) if last else ""
+        return day_key != last_day
+    if stype == "weekly":
+        hh, mm = _parse_hhmm(sch.get("time", "08:00"))
+        wd = int(sch.get("weekday", 0))  # 0=Mon
+        if lt.tm_wday != wd or (lt.tm_hour, lt.tm_min) < (hh, mm):
+            return False
+        week_key = time.strftime("%Y%W", lt)
+        last_week = time.strftime("%Y%W", time.localtime(last)) if last else ""
+        return week_key != last_week
+    if stype == "monthly":
+        hh, mm = _parse_hhmm(sch.get("time", "08:00"))
+        day = int(sch.get("day", 1))
+        if lt.tm_mday != day or (lt.tm_hour, lt.tm_min) < (hh, mm):
+            return False
+        mon_key = time.strftime("%Y%m", lt)
+        last_mon = time.strftime("%Y%m", time.localtime(last)) if last else ""
+        return mon_key != last_mon
+    if stype == "interval":
+        iv = max(1, int(sch.get("interval_minutes", 60))) * 60
+        return now - last >= iv
+    return False
+
+
+def _parse_hhmm(s):
+    raw = str(s or "").strip()
+    m = re.match(r"^(\d{1,2})\s*:\s*(\d{1,2})$", raw)
+    if not m:
+        return 8, 0
+    return max(0, min(23, int(m.group(1)))), max(0, min(59, int(m.group(2))))
+
+
+def _fmt_uptime(sec):
+    if not sec or sec <= 0:
+        return "--"
+    sec = int(sec)
+    d, rem = divmod(sec, 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    if d:
+        return "%d 天 %d 小时 %d 分" % (d, h, m)
+    if h:
+        return "%d 小时 %d 分" % (h, m)
+    return "%d 分" % m
+
+
+def notify_report_collect(snapshot, data_dir, cfg, extra=None):
+    """从采集快照中按用户勾选的模块收集报告数据。
+
+    extra：补充数据（如 weather，不在 collector 快照里），可选。
+    """
+    mods = cfg.get("report_modules") or []
+    snap = snapshot or {}
+    extra = extra or {}
+    payload = {}
+    sysinfo = system_info() if "system" in mods else {}
+
+    if "system" in mods:
+        ips = sysinfo.get("ips") or []
+        ip_str = "、".join((i.get("ipv4") or ["--"])[0] for i in ips[:3]) or "--"
+        hw_cpu = (snap.get("hardware") or {}).get("cpu") or {}
+        payload["system"] = {
+            "hostname": sysinfo.get("hostname", "--"),
+            "fnos_version": sysinfo.get("fnos_version", "--"),
+            "kernel": sysinfo.get("kernel", "--"),
+            "uptime": _fmt_uptime(sysinfo.get("uptime")),
+            "ip": ip_str,
+            "cpu_model": sysinfo.get("cpu_model") or hw_cpu.get("model") or "--",
+            "cores": hw_cpu.get("cores") or 0,
+            "arch": sysinfo.get("arch", "--"),
+        }
+    if "cpu" in mods:
+        cpu = snap.get("cpu") or {}
+        hw_cpu = (snap.get("hardware") or {}).get("cpu") or {}
+        load = cpu.get("load") or []
+        payload["cpu"] = {
+            "percent": round(cpu.get("percent", 0) or 0, 1),
+            "model": sysinfo.get("cpu_model") or hw_cpu.get("model") or "--",
+            "cores": hw_cpu.get("cores") or 0,
+            "threads": hw_cpu.get("threads") or cpu.get("threads") or 0,
+            "load_1": load[0] if len(load) > 0 else 0,
+            "load_5": load[1] if len(load) > 1 else 0,
+            "load_15": load[2] if len(load) > 2 else 0,
+            "freq_mhz": cpu.get("frequency_mhz") or 0,
+        }
+    if "memory" in mods:
+        mem = snap.get("mem") or {}
+        payload["memory"] = {
+            "percent": round(mem.get("percent", 0) or 0, 1),
+            "total_gb": round((mem.get("total") or 0) / 1024 / 1024 / 1024, 1),
+            "used_gb": round((mem.get("used") or 0) / 1024 / 1024 / 1024, 1),
+            "cached_gb": round((mem.get("cached") or 0) / 1024 / 1024 / 1024, 1),
+            "buffers_gb": round((mem.get("buffers") or 0) / 1024 / 1024 / 1024, 1),
+            "swap_percent": round(mem.get("swap_percent", 0) or 0, 1),
+            "swap_used_gb": round((mem.get("swap_used") or 0) / 1024 / 1024 / 1024, 1),
+            "swap_total_gb": round((mem.get("swap_total") or 0) / 1024 / 1024 / 1024, 1),
+        }
+    if "load" in mods:
+        cpu = snap.get("cpu") or {}
+        load = cpu.get("load") or []
+        payload["load"] = {"1m": load[0] if len(load) > 0 else 0,
+                           "5m": load[1] if len(load) > 1 else 0,
+                           "15m": load[2] if len(load) > 2 else 0}
+    if "gpu" in mods:
+        gpus = snap.get("gpu") or []
+        gpu_list = []
+        for g in gpus:
+            if not isinstance(g, dict):
+                continue
+            gpu_list.append({
+                "name": g.get("name") or "--",
+                "vendor": g.get("vendor", "--"),
+                "util": g.get("util"),
+                "temp": g.get("temp"),
+                "mem_pct": g.get("mem_pct"),
+                "mem_used_gb": round((g.get("mem_used") or 0) / 1024 / 1024 / 1024, 2) if g.get("mem_used") else None,
+                "mem_total_gb": round((g.get("mem_total") or 0) / 1024 / 1024 / 1024, 2) if g.get("mem_total") else None,
+                "power_w": g.get("power_w"),
+            })
+        payload["gpu"] = {"count": len(gpu_list), "gpus": gpu_list}
+    if "temp" in mods:
+        t = snap.get("temp") or {}
+        payload["temp"] = {
+            "cpu": t.get("cpu"),
+            "system": t.get("system"),
+            "disks": t.get("disks") or [],
+        }
+    if "fan" in mods:
+        # 优先用 sensors（含 iDRAC 带外风扇），兜底用 hwmon 直读
+        sensors = snap.get("sensors") or {}
+        fans = sensors.get("fans") if isinstance(sensors, dict) else None
+        if not fans:
+            fans = snap.get("fans") or []
+        fan_list = []
+        for f in fans or []:
+            if not isinstance(f, dict):
+                continue
+            fan_list.append({"name": f.get("name") or "风扇", "rpm": f.get("rpm") or 0})
+        payload["fan"] = {"count": len(fan_list), "fans": fan_list}
+    if "disk" in mods or "smart" in mods:
+        disks = snap.get("disks_detail") or snap.get("disks") or []
+        disk_list = []
+        for d in disks:
+            if not isinstance(d, dict):
+                continue
+            size_bytes = d.get("size")
+            if size_bytes:
+                size_gb = round(size_bytes / 1024 / 1024 / 1024, 1)
+            else:
+                size_gb = d.get("size_gb") or 0
+            temp = d.get("temp")
+            if temp is None:
+                temp = d.get("temp_c")
+            temp_str = "--" if temp is None else temp
+            if d.get("state") == "standby" or d.get("standby"):
+                power = "休眠"
+            elif d.get("power_status"):
+                power = d.get("power_status")
+            else:
+                power = "运行"
+            disk_list.append({
+                "name": d.get("name") or d.get("dev") or d.get("slot") or "?",
+                "model": d.get("model") or "--",
+                "size_gb": size_gb,
+                "used_percent": d.get("percent") or 0,
+                "temp": temp_str,
+                "health": d.get("grade") or d.get("health") or d.get("status") or "--",
+                "power": power,
+                "serial": d.get("serial") or "--",
+                "power_on_hours": d.get("power_on_hours") or "--",
+            })
+        if "disk" in mods:
+            payload["disk"] = {"count": len(disk_list), "disks": disk_list,
+                               "total_percent": round(snap.get("disk_total", 0) or 0, 1),
+                               "used_tb": round((snap.get("disk_used") or 0) / 1024 / 1024 / 1024 / 1024, 2),
+                               "size_tb": round((snap.get("disk_size") or 0) / 1024 / 1024 / 1024 / 1024, 2)}
+        if "smart" in mods:
+            bad = [d for d in disk_list if str(d.get("health", "")).lower() in ("crit", "故障", "warn", "留意")]
+            payload["smart"] = {"total": len(disk_list), "bad": len(bad),
+                                "bad_list": [{"name": d["name"], "health": d.get("health", ""),
+                                              "serial": d.get("serial", "--")} for d in bad]}
+    if "storage" in mods:
+        raid = snap.get("raid")
+        if isinstance(raid, list):
+            raid_list = raid
+        elif isinstance(raid, dict):
+            raid_list = raid.get("controllers") or raid.get("arrays") or []
+        else:
+            raid_list = []
+        payload["storage"] = {
+            "pools": snap.get("disk_pools", 0) or 0,
+            "raid": raid_list if isinstance(raid_list, list) else [],
+        }
+    if "network" in mods:
+        # 过滤虚拟网卡（docker/veth/br-/virbr/vnet/tun/tap/vxlan/wg）
+        VIRT = ("docker", "veth", "virbr", "br-", "vnet", "tun", "tap", "vxlan", "wg")
+        hw_net = (snap.get("hardware") or {}).get("net") or []
+        ip_by_if = {}
+        speed_by_if = {}
+        for h in hw_net:
+            if not isinstance(h, dict):
+                continue
+            nm = h.get("name") or h.get("iface")
+            if not nm or nm.startswith(VIRT):
+                continue
+            ipv4 = h.get("ipv4") or []
+            ip_by_if[nm] = ipv4[0] if ipv4 else (h.get("ip") or "--")
+            speed_by_if[nm] = h.get("speed_mbps") or h.get("speed") or 0
+        nets = snap.get("net") or []
+        net_list = []
+        seen = set()
+        for n in nets:
+            if not isinstance(n, dict):
+                continue
+            nm = n.get("name") or n.get("iface") or "?"
+            if nm.startswith(VIRT):
+                continue
+            seen.add(nm)
+            net_list.append({
+                "name": nm,
+                "ip": ip_by_if.get(nm, "--"),
+                "speed": speed_by_if.get(nm, 0),
+                "rx_rate": n.get("rx_rate", 0) or 0,
+                "tx_rate": n.get("tx_rate", 0) or 0,
+            })
+        for h in hw_net:
+            if not isinstance(h, dict):
+                continue
+            nm = h.get("name") or h.get("iface")
+            if not nm or nm in seen or nm.startswith(VIRT):
+                continue
+            net_list.append({
+                "name": nm,
+                "ip": ip_by_if.get(nm, "--"),
+                "speed": speed_by_if.get(nm, 0),
+                "rx_rate": 0, "tx_rate": 0,
+            })
+        payload["network"] = {"count": len(net_list), "interfaces": net_list}
+    if "power" in mods:
+        pwr = snap.get("power") or {}
+        src_map = {"rapl": "RAPL 实测", "idrac": "iDRAC", "estimated": "模型估算", "unknown": "不可用"}
+        payload["power"] = {
+            "watts": round(pwr.get("total") or pwr.get("watts") or pwr.get("power") or 0, 1),
+            "source": src_map.get(pwr.get("source"), pwr.get("source") or "--"),
+            "ok": bool(pwr.get("ok")),
+            "today_kwh": round(pwr.get("today_kwh") or pwr.get("kwh_today") or 0, 3),
+            "today_yuan": round(pwr.get("today_yuan") or pwr.get("yuan_today") or 0, 2),
+        }
+    if "docker" in mods:
+        dk = snap.get("docker") or {}
+        ctrs = dk.get("containers") or dk.get("list") or []
+        running = sum(1 for c in ctrs if isinstance(c, dict) and (c.get("state") or "").lower() in ("running", "运行中"))
+        ctr_list = []
+        for c in ctrs:
+            if not isinstance(c, dict):
+                continue
+            st = (c.get("status_zh") or c.get("state") or "--").strip()
+            ctr_list.append({
+                "name": c.get("name") or "--",
+                "state": st,
+                "cpu": c.get("cpu") or "--",
+                "mem": c.get("mem_percent") or "--",
+            })
+        payload["docker"] = {"total": len(ctrs), "running": running,
+                             "stopped": len(ctrs) - running, "containers": ctr_list}
+    if "vms" in mods:
+        vms = snap.get("vms") or {}
+        vlist = vms.get("vms") or vms.get("list") or []
+        running = sum(1 for v in vlist if isinstance(v, dict) and (v.get("state") or "").lower() in ("running", "运行中", "on"))
+        vm_list = []
+        for v in vlist:
+            if not isinstance(v, dict):
+                continue
+            vm_list.append({"name": v.get("name") or v.get("uuid") or "--",
+                            "state": v.get("state") or "--"})
+        payload["vms"] = {"total": len(vlist), "running": running, "vms": vm_list}
+    if "idrac" in mods:
+        try:
+            icfg = idrac_load(data_dir)
+            if icfg.get("enabled") and icfg.get("host"):
+                payload["idrac"] = {"host": icfg.get("host", "--"), "configured": True}
+            else:
+                payload["idrac"] = {"configured": False}
+        except Exception:
+            payload["idrac"] = {"configured": False}
+    if "ups" in mods:
+        ups = snap.get("ups") or extra.get("ups") or {}
+        payload["ups"] = {"present": bool(ups), "status": ups.get("status") or ups.get("power_status") or "--"}
+    if "weather" in mods:
+        w = snap.get("weather") or extra.get("weather") or {}
+        payload["weather"] = {
+            "city": w.get("city") or w.get("location") or "--",
+            "temp": w.get("temp") if w.get("temp") is not None else (w.get("temperature") or "--"),
+            "text": w.get("text") or w.get("weather") or w.get("condition") or "--",
+            "humidity": w.get("humidity") or w.get("relative_humidity") or "--",
+            "wind": w.get("wind_speed") or w.get("wind") or "--",
+        }
+    return payload
+
+
+def notify_report_build(cfg, payload, now):
+    """把采集到的各模块数据组装成推送正文（Markdown + emoji，支持简略/详细）。"""
+    detail = cfg.get("report_detail") == "detail"
+    lines = []
+    ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
+    lines.append("📊 **飞牛监控定时报告**")
+    lines.append("🕐 %s" % ts)
+    lines.append("")
+
+    def _sec(emoji, title):
+        lines.append("")
+        lines.append("## %s %s" % (emoji, title))
+
+    def _kv(k, v):
+        """加粗键 + 值。"""
+        lines.append("**%s**: %s" % (k, v))
+
+    if "system" in payload:
+        s = payload["system"]
+        _sec("🖥", "系统信息")
+        _kv("主机名", s.get("hostname", "--"))
+        _kv("飞牛版本", s.get("fnos_version", "--"))
+        if detail:
+            _kv("内核", s.get("kernel", "--"))
+            _kv("架构", s.get("arch", "--"))
+        _kv("运行时长", s.get("uptime", "--"))
+        _kv("内网IP", s.get("ip", "--"))
+        if detail and s.get("cpu_model"):
+            _kv("CPU 型号", s.get("cpu_model", "--"))
+
+    if "cpu" in payload:
+        c = payload["cpu"]
+        _sec("⚡", "CPU")
+        _kv("使用率", "%s%%" % c.get("percent", "--"))
+        if c.get("model") and c["model"] != "--":
+            _kv("型号", c["model"])
+        _kv("核心/线程", "%s 核 / %s 线程" % (c.get("cores", "--"), c.get("threads", "--")))
+        if detail:
+            _kv("负载", "1m: %s  5m: %s  15m: %s" % (c.get("load_1", "--"), c.get("load_5", "--"), c.get("load_15", "--")))
+            if c.get("freq_mhz"):
+                _kv("主频", "%s MHz" % c["freq_mhz"])
+
+    if "memory" in payload:
+        m = payload["memory"]
+        _sec("💾", "内存")
+        _kv("使用率", "%s%%" % m.get("percent", "--"))
+        _kv("已用", "%s / %s GB" % (m.get("used_gb", "--"), m.get("total_gb", "--")))
+        if detail:
+            _kv("缓存", "%s GB" % m.get("cached_gb", "--"))
+            _kv("缓冲区", "%s GB" % m.get("buffers_gb", "--"))
+            if m.get("swap_total_gb"):
+                _kv("Swap", "%s / %s GB（%s%%）" % (
+                    m.get("swap_used_gb", "--"), m.get("swap_total_gb", "--"), m.get("swap_percent", "--")))
+
+    if "load" in payload:
+        l = payload["load"]
+        _sec("📈", "系统负载")
+        _kv("1 分钟", l.get("1m", "--"))
+        _kv("5 分钟", l.get("5m", "--"))
+        _kv("15 分钟", l.get("15m", "--"))
+
+    if "gpu" in payload:
+        g = payload["gpu"]
+        _sec("🎮", "显卡")
+        gpus = g.get("gpus") or []
+        if not gpus:
+            lines.append("> 未检测到独立显卡")
+        elif detail:
+            for gp in gpus[:6]:
+                util = gp.get("util")
+                util_str = ("%s%%" % util) if util is not None else "--"
+                temp = gp.get("temp")
+                temp_str = ("%s°C" % temp) if temp is not None else "--"
+                line = "  • **%s**: 利用率 %s · 温度 %s" % (gp.get("name", "?"), util_str, temp_str)
+                mp = gp.get("mem_pct")
+                mu = gp.get("mem_used_gb")
+                mt = gp.get("mem_total_gb")
+                if mp is not None:
+                    line += " · 显存 %s%%" % mp
+                elif mu is not None and mt is not None:
+                    line += " · 显存 %s / %s GB" % (mu, mt)
+                pw = gp.get("power_w")
+                if pw is not None:
+                    line += " · 功耗 %s W" % pw
+                lines.append(line)
+        else:
+            utils = [gp.get("util") for gp in gpus if isinstance(gp, dict) and gp.get("util") is not None]
+            temps = [gp.get("temp") for gp in gpus if isinstance(gp, dict) and gp.get("temp") is not None]
+            avg_util = round(sum(utils) / len(utils), 1) if utils else None
+            max_temp = max(temps) if temps else None
+            line = "> 共 **%d** 块显卡" % len(gpus)
+            if avg_util is not None:
+                line += " · 平均利用率 %s%%" % avg_util
+            if max_temp is not None:
+                line += " · 最高温度 %s°C" % max_temp
+            lines.append(line)
+
+    if "temp" in payload:
+        t = payload["temp"]
+        _sec("🌡", "温度")
+        cpu_t = t.get("cpu")
+        sys_t = t.get("system")
+        if cpu_t is not None:
+            _kv("CPU", "%s°C" % cpu_t)
+        if sys_t is not None:
+            _kv("主板", "%s°C" % sys_t)
+        if cpu_t is None and sys_t is None:
+            lines.append("> 未检测到温度传感器")
+        if detail:
+            disks_t = t.get("disks") or []
+            for dt in disks_t[:10]:
+                if isinstance(dt, dict) and dt.get("temp") is not None:
+                    lines.append("  • %s: %s°C" % (dt.get("name", "?"), dt.get("temp")))
+
+    if "fan" in payload:
+        f = payload["fan"]
+        _sec("🌀", "风扇")
+        fans = f.get("fans") or []
+        if not fans:
+            lines.append("> 未检测到风扇")
+        elif detail:
+            for fn in fans[:12]:
+                rpm = fn.get("rpm") or 0
+                flag = "🟢" if rpm > 0 else "⚪"
+                lines.append("  • %s `%s`: %s RPM" % (flag, fn.get("name", "?"), rpm))
+        else:
+            rpms = [fn.get("rpm") or 0 for fn in fans if isinstance(fn, dict)]
+            running = sum(1 for r in rpms if r > 0)
+            avg_rpm = round(sum(rpms) / len(rpms)) if rpms else 0
+            lines.append("> 共 **%d** 个风扇 · 运行 **%d** 个 · 平均 **%s** RPM" % (len(fans), running, avg_rpm))
+
+    if "disk" in payload:
+        d = payload["disk"]
+        _sec("💿", "硬盘")
+        lines.append("> 共 **%d** 块盘 · 总容量 **%s TB** · 已用 **%s TB**（**%s%%**）" % (
+            d.get("count", 0), d.get("size_tb", "--"), d.get("used_tb", "--"), d.get("total_percent", "--")))
+        if detail:
+            for dk in (d.get("disks") or [])[:15]:
+                line = "  • %s `%s` · %sG" % (dk.get("name", "?"), dk.get("model", "--"), dk.get("size_gb", "--"))
+                line += " · 已用 %s%%" % dk.get("used_percent", "--")
+                line += " · %s°C · %s · %s" % (dk.get("temp", "--"), dk.get("health", "--"), dk.get("power", "--"))
+                poh = dk.get("power_on_hours", "--")
+                if poh and poh != "--":
+                    line += " · 通电 %s h" % poh
+                lines.append(line)
+        else:
+            disks = d.get("disks") or []
+            bad = [dk for dk in disks if str(dk.get("health", "")).lower() in ("crit", "故障", "warn", "留意")]
+            standby = sum(1 for dk in disks if dk.get("power") == "休眠")
+            line = "> 运行 **%d** · 休眠 **%d**" % (len(disks) - standby, standby)
+            if bad:
+                line += " · ⚠️ 异常 **%d**" % len(bad)
+            lines.append(line)
+
+    if "smart" in payload:
+        s = payload["smart"]
+        _sec("🩺", "SMART 健康")
+        if s.get("bad"):
+            lines.append("> ⚠️ **%d 块异常**：" % s["bad"])
+            for b in (s.get("bad_list") or [])[:10]:
+                lines.append("  • %s — %s" % (b.get("name", "?"), b.get("health", "--")))
+        else:
+            lines.append("> ✅ 全部正常（共 %d 块）" % s.get("total", 0))
+
+    if "storage" in payload:
+        st = payload["storage"]
+        _sec("🗄", "存储池 / 阵列")
+        _kv("存储池", "%s 个" % st.get("pools", 0))
+        raids = st.get("raid") or []
+        if raids:
+            _kv("RAID 阵列", "%d 个" % len(raids))
+            if detail:
+                for r in raids[:8]:
+                    if isinstance(r, dict):
+                        lines.append("  • %s · 状态: %s" % (r.get("device") or r.get("name") or "?", r.get("status") or r.get("state") or "--"))
+        else:
+            _kv("RAID 阵列", "无")
+
+    if "network" in payload:
+        n = payload["network"]
+        _sec("🌐", "网络")
+        ifs = n.get("interfaces") or []
+        if detail:
+            for itf in ifs[:10]:
+                sp = itf.get("speed", 0)
+                sp_str = ("%s Mbps" % sp) if sp else "--"
+                rx = itf.get("rx_rate", 0) or 0
+                tx = itf.get("tx_rate", 0) or 0
+                rate_str = " · ↓%s ↑%s KB/s" % (round(rx, 1), round(tx, 1)) if (rx or tx) else ""
+                lines.append("  • **%s**: `%s` · %s%s" % (itf.get("name", "?"), itf.get("ip", "--"), sp_str, rate_str))
+        else:
+            total_rx = sum((itf.get("rx_rate") or 0) for itf in ifs if isinstance(itf, dict))
+            total_tx = sum((itf.get("tx_rate") or 0) for itf in ifs if isinstance(itf, dict))
+            line = "> 共 **%d** 个物理网卡" % len(ifs)
+            if total_rx or total_tx:
+                line += " · 总流量 ↓%s ↑%s KB/s" % (round(total_rx, 1), round(total_tx, 1))
+            lines.append(line)
+
+    if "power" in payload:
+        p = payload["power"]
+        _sec("🔌", "功耗与电费")
+        if p.get("ok"):
+            _kv("实时功耗", "%s W" % p.get("watts", "--"))
+            if detail:
+                _kv("数据来源", p.get("source", "--"))
+        else:
+            _kv("实时功耗", "无传感器（%s）" % p.get("source", "--"))
+        _kv("今日用电", "%s kWh · 电费 %s 元" % (p.get("today_kwh", "--"), p.get("today_yuan", "--")))
+
+    if "docker" in payload:
+        dk = payload["docker"]
+        _sec("🐳", "Docker 容器")
+        lines.append("> 共 **%d** 个 · 运行 **%d** · 停止 **%d**" % (
+            dk.get("total", 0), dk.get("running", 0), dk.get("stopped", 0)))
+        if detail:
+            for c in (dk.get("containers") or [])[:20]:
+                st = c.get("state", "--")
+                flag = "🟢" if st in ("running", "运行中") else "🔴"
+                line = "  • %s `%s` · %s" % (flag, c.get("name", "?"), st)
+                cpu_v = c.get("cpu")
+                mem_v = c.get("mem")
+                if cpu_v not in ("--", None, "") or mem_v not in ("--", None, ""):
+                    line += " · CPU %s%% · MEM %s%%" % (cpu_v or "--", mem_v or "--")
+                lines.append(line)
+
+    if "vms" in payload:
+        v = payload["vms"]
+        _sec("💻", "虚拟机")
+        lines.append("> 共 **%d** 台 · 运行 **%d**" % (v.get("total", 0), v.get("running", 0)))
+        if detail:
+            for vm in (v.get("vms") or [])[:15]:
+                st = vm.get("state", "--")
+                flag = "🟢" if st in ("running", "运行中", "on") else "🔴"
+                lines.append("  • %s `%s` · %s" % (flag, vm.get("name", "?"), st))
+
+    if "idrac" in payload:
+        i = payload["idrac"]
+        _sec("🔧", "iDRAC 硬件")
+        if i.get("configured"):
+            _kv("状态", "✅ 已连接")
+            _kv("地址", i.get("host", "--"))
+        else:
+            _kv("状态", "❌ 未配置")
+
+    if "ups" in payload:
+        u = payload["ups"]
+        _sec("🔋", "UPS 电源")
+        _kv("状态", u.get("status", "--"))
+
+    if "weather" in payload:
+        w = payload["weather"]
+        _sec("🌤", "天气")
+        _kv("城市", w.get("city", "--"))
+        _kv("天气", w.get("text", "--"))
+        _kv("温度", "%s°C" % w.get("temp", "--"))
+        if detail:
+            if w.get("humidity") not in ("--", None):
+                _kv("湿度", "%s%%" % w["humidity"])
+            if w.get("wind") not in ("--", None):
+                _kv("风速", w["wind"])
+
+    lines.append("")
+    lines.append("— fnmonitor 定时报告")
+    return "\n".join(lines)
+
+
+def notify_report_tick(data_dir, config, snapshot):
+    """后台线程：采集 → 组装 → 发送定时报告。"""
+    try:
+        cfg = notify_load(data_dir)
+        if not cfg.get("report_enabled"):
+            return None
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
+            return None
+        # 天气不在 collector 快照里，单独取
+        extra = {}
+        if "weather" in (cfg.get("report_modules") or []):
+            try:
+                extra["weather"] = fetch_weather(config.get("weather_city") or "")
+            except Exception:
+                extra["weather"] = {}
+        payload = notify_report_collect(snapshot, data_dir, cfg, extra=extra)
+        now = time.time()
+        body = notify_report_build(cfg, payload, now)
+        prefix = cfg.get("notify_title_prefix") or "飞牛监控"
+        subject = "[%s] 定时报告 · %s" % (prefix, time.strftime("%Y-%m-%d %H:%M", time.localtime(now)))
+        # 定时报告自身有「简略/详细」控制，绕过全局极简推送截断
+        ok, res = notify_send_all(cfg, subject, body, skip_minimal=True)
+        # 回写 last_sent / last_fail
+        try:
+            cur = notify_load(data_dir)
+            if ok:
+                cur["report_last_sent"] = now
+                cur.pop("report_last_fail", None)
+            else:
+                cur["report_last_fail"] = now
+            write_json_secure(os.path.join(data_dir, NOTIFY_FILE), cur)
+        except Exception:
+            pass
+        if ok:
+            print("[fnmonitor] 定时报告已发送：%s" % subject)
+            return {"ok": True, "subject": subject}
+        print("[fnmonitor] 定时报告发送失败：%s" % res)
+        return {"ok": False, "error": res}
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def notify_report_schedule(data_dir, config, snapshot):
+    """采集线程每轮调用：到点就起后台线程发报告，立刻返回。"""
+    try:
+        if _REPORT_JOB[0] is not None and _REPORT_JOB[0].is_alive():
+            return False
+        cfg = notify_load(data_dir)
+        if not _report_due(cfg):
+            return False
+        t = threading.Thread(target=notify_report_tick, args=(data_dir, config, snapshot),
+                             name="fnm-report", daemon=True)
+        _REPORT_JOB[0] = t
+        t.start()
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def notify_test(data_dir, channel="all"):
+    """设置页「发送测试」：发一条样例消息验证单个渠道。
+
+    channel 传渠道 id（channels 里的 id）就只发那一条；传 "all" 发全部已启用渠道。
     """
     cfg = notify_load(data_dir)
-    ch = str(channel or "all").strip().lower()
-    if ch not in ("mail", "sct"):
-        ch = "all"
-    label = {"mail": "邮件", "sct": "微信"}
-    if ch == "all":
-        want = [c for c, k in (("mail", "enabled"), ("sct", "sct_enabled")) if cfg.get(k)]
+    channels = cfg.get("channels") or []
+    ch_id = str(channel or "all").strip()
+    label_map = {cid: lab for cid, lab, _fn in NOTIFY_CHANNELS}
+    send_fn_map = {cid: fn_name for cid, _l, fn_name in NOTIFY_CHANNELS}
+
+    if ch_id == "all":
+        want = [c for c in channels if c.get("enabled")]
         if not want:
-            return {"ok": False, "error": "请先开启邮件或微信通知并保存", "channels": {}, "channel": ch}
+            return {"ok": False, "error": "请先开启任一通知渠道并保存",
+                    "channels": {}, "channel": ch_id}
     else:
-        if not cfg.get("enabled" if ch == "mail" else "sct_enabled"):
-            return {"ok": False, "channels": {}, "channel": ch,
-                    "error": "%s通知当前是关闭的：先打开开关并「保存」，再点发送测试" % label[ch]}
-        want = [ch]
+        target = next((c for c in channels if c.get("id") == ch_id), None)
+        if target is None:
+            # 渠道 id 不存在（可能已被删除），回退到全部已启用渠道
+            want = [c for c in channels if c.get("enabled")]
+            if not want:
+                return {"ok": False, "error": "未找到该渠道，且没有已启用的渠道",
+                        "channels": {}, "channel": ch_id}
+        elif not target.get("enabled"):
+            return {"ok": False, "channels": {}, "channel": ch_id,
+                    "error": "%s当前是关闭的：先打开开关并「保存」，再点发送测试"
+                             % (target.get("name") or label_map.get(target.get("type"), ""))}
+        else:
+            want = [target]
     sample = [{"dev": "sdz", "model": "ST300MP0026（示例）", "serial": "WAE0J50J", "grade": "warn",
                "detail": "增长缺陷 49 个；待处理扇区 0 个", "defects": 49, "pending_defects": 0,
                "uncorr": 0, "temp_c": 32, "power_on_hours": 52032}]
     subject, body = notify_build([{"act": "new", "dev": "sdz", "d": sample[0],
                                    "text": sample[0]["detail"]}], time.time())
     subject = "【测试】" + subject
-    body = "这是一条来自飞牛监控「设置 → 通知」的测试消息，收到即表示%s通道配置可用。\n\n" % (
-        "邮件" if ch == "mail" else "微信") + body
+    if len(want) == 1:
+        ch_label = want[0].get("name") or label_map.get(want[0].get("type"), "该")
+    else:
+        ch_label = "通知"
+    body = "这是一条来自飞牛监控「设置 → 通知」的测试消息，收到即表示%s通道配置可用。\n\n" % ch_label + body
+    # 测试消息也应用标题前缀 / 极简推送，但不经过勿扰（测试就是要立即收到）
+    subject, body = _notify_apply_global(cfg, subject, body)
     res = {}
     for c in want:
-        if c == "mail":
-            ok, err = notify_mail_send(cfg, subject, body)
-        else:
-            ok, err = notify_sct_send(cfg, subject, body)
-        res[c] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
+        fn_name = send_fn_map.get(c.get("type"))
+        send_fn = _notify_send_func(fn_name) if fn_name else None
+        if send_fn is None:
+            res[c.get("id")] = {"ok": False, "err": "渠道函数未找到"}
+            continue
+        ok, err = send_fn(c, subject, body)
+        res[c.get("id")] = {"ok": ok, "err": "" if ok else notify_short_err(err)}
     ok = all(v.get("ok") for v in res.values())
-    return {"ok": ok, "channels": res, "channel": ch,
+    name_by_id = {c.get("id"): c.get("name") or label_map.get(c.get("type"), c.get("id"))
+                  for c in channels}
+    return {"ok": ok, "channels": res, "channel": ch_id,
             "error": "" if ok else "；".join(
-                "%s：%s" % (label[k], v.get("err")) for k, v in res.items() if v and not v.get("ok"))}
+                "%s：%s" % (name_by_id.get(k, k), v.get("err"))
+                for k, v in res.items() if v and not v.get("ok"))}
 
 
 # ---------------------------------------------------------------------------
@@ -8690,6 +10190,12 @@ class Collector(threading.Thread):
         except Exception:
             traceback.print_exc()
 
+        # ---- 定时推送报告（按用户设定的周期汇总各模块数据推送）----
+        try:
+            notify_report_schedule(self.data_dir, self.config, snapshot)
+        except Exception:
+            traceback.print_exc()
+
         with self._lock:
             self.latest = snapshot
 
@@ -9172,7 +10678,7 @@ class MonitorApp:
                "img-src 'self' data:; connect-src 'self'; frame-ancestors *")
         POST_ONLY = {"/api/auth/password", "/api/auth/setup", "/api/auth/logout", "/api/docker/action",
                      "/api/vm/action", "/api/config/save", "/api/update/install",
-                     "/api/notify/save", "/api/notify/test", "/api/disk_scan/now",
+                     "/api/notify/save", "/api/notify/test", "/api/notify/report_test", "/api/disk_scan/now",
                      "/api/idrac/save", "/api/idrac/test", "/api/idrac/refresh",
                      "/api/scan_log/clear"}
 
@@ -9636,6 +11142,9 @@ class MonitorApp:
                 if path == "/api/notify/test":
                     self._json(app.api_notify_test(data))
                     return
+                if path == "/api/notify/report_test":
+                    self._json(app.api_notify_report_test(data))
+                    return
                 if path == "/api/idrac/save":
                     self._json(app.api_idrac_save(data))
                     return
@@ -9810,33 +11319,65 @@ class MonitorApp:
         }
 
     def api_notify_get(self):
-        """通知配置（不回传授权码 / SendKey，只给「是否已填」与上次发送结果）。"""
+        """通知配置（不回传授权码 / URL / Token，只给「是否已填」与上次发送结果）。"""
         cfg = notify_load(self.data_dir)
         out = notify_public(cfg)
         out["ok"] = True
         out["providers"] = [{"id": p[0], "label": p[1], "host": p[2], "port": p[3], "secure": p[4]}
                             for p in NOTIFY_PROVIDERS]
+        out["channel_types"] = [{"id": cid, "label": lab}
+                                for cid, lab, _fn in NOTIFY_CHANNELS]
         st = notify_state_load(self.data_dir)
         out["last"] = st.get("last") or {}
         out["notified"] = st.get("notified") or {}
         return out
 
     def api_notify_save(self, data):
-        """保存通知配置。空密码 / 空 SendKey 视为「不改」，需要清除时传 clear_* 开关。"""
+        """保存通知配置。空密码 / URL / Token 视为「不改」，需要清除时传 clear_*。"""
         cfg, err = notify_save(self.data_dir, data if isinstance(data, dict) else {})
         if err:
             return {"ok": False, "error": err, "notify": notify_public(cfg)}
-        print("[fnmonitor] 通知配置已更新：邮件=%s 微信=%s"
-              % ("开" if cfg.get("enabled") else "关", "开" if cfg.get("sct_enabled") else "关"))
+        cnt = len([c for c in (cfg.get("channels") or []) if c.get("enabled")])
+        print("[fnmonitor] 通知配置已更新：共 %d 个渠道，%d 个已启用"
+              % (len(cfg.get("channels") or []), cnt))
         return {"ok": True, "notify": notify_public(cfg)}
 
     def api_notify_test(self, data):
-        """立刻发一条测试消息。channel=mail / sct 只测一个通道，不传则两个都发。
-
-        设置页每个通道各有一个「发送测试」按钮，点哪个只发哪个。
-        """
+        """立刻发一条测试消息。channel 传渠道 id，只测该渠道；不传测全部已启用渠道。"""
         ch = data.get("channel") if isinstance(data, dict) else ""
         return notify_test(self.data_dir, ch)
+
+    def api_notify_report_test(self, data):
+        """立刻发一条定时推送报告（测试用），用当前采集快照组装。"""
+        snap = self.collector.get_snapshot() if self.collector else {}
+        cfg = notify_load(self.data_dir)
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
+            return {"ok": False, "error": "没有已启用的推送渠道"}
+        # 天气不在 collector 快照里，用 App 层缓存
+        extra = {}
+        if "weather" in (cfg.get("report_modules") or []):
+            try:
+                extra["weather"] = self.api_weather()
+            except Exception:
+                extra["weather"] = {}
+        try:
+            payload = notify_report_collect(snap, self.data_dir, cfg, extra=extra)
+            now = time.time()
+            body = notify_report_build(cfg, payload, now)
+        except Exception as e:
+            return {"ok": False, "error": "报告采集失败：%s" % e}
+        prefix = cfg.get("notify_title_prefix") or "飞牛监控"
+        subject = "[%s] 定时报告（测试）· %s" % (prefix, time.strftime("%Y-%m-%d %H:%M", time.localtime(now)))
+        # 测试报告同样绕过极简推送，让用户看到完整的报告样式
+        ok, res = notify_send_all(cfg, subject, body, skip_minimal=True)
+        if ok:
+            return {"ok": True, "message": "报告测试已发送"}
+        # res 是 {渠道id: {ok, err}}，拼成可读错误
+        if isinstance(res, dict):
+            errs = ["%s：%s" % (k, v.get("err") or "发送失败") for k, v in res.items() if isinstance(v, dict) and not v.get("ok")]
+            if errs:
+                return {"ok": False, "error": "；".join(errs)}
+        return {"ok": False, "error": "发送失败"}
 
     def api_idrac_get(self, query=None):
         """iDRAC 全量：实时组（机型/健康/风扇/温度/功耗/SEL）+ 固定信息台账
