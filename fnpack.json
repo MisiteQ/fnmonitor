@@ -28,7 +28,7 @@
    "service_port": "8777",
    "releases": {
    "2.30.3": {
-    "changelog": "v2.30.3<br>① 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>② 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
+    "changelog": "v2.30.3<br>① 修复定时推送报告完全不触发：VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常<br>② 修复定时推送报告中虚拟机数据为空：虚拟机是按需采集的，不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存），正常推送到报告中<br>③ 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>④ 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
     "updated_at": "2026-11-01T19:00:00+08:00",
     "os_min_version": "0.9.0",
     "packages": {
@@ -41,40 +41,6 @@
       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-arm.fpk",
       "sha256": "6bee9ee5d1efddf77f7ef2f17fe8b4266d3d4af14d34415bf7104d5c7d0daf32",
       "size": 623345
-     }
-    }
-   },
-   "2.30.2": {
-    "changelog": "v2.30.2<br>① 修复定时推送报告完全不触发（v2.30.1 回归）：v2.30.1 给定时报告加虚拟机现采时，VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常",
-    "updated_at": "2026-11-01T18:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/fnmonitor-2.30.2-x86.fpk",
-      "sha256": "26003b7aa4b8653d0464468e50074a2a8ae8f688004ab853229e7225eb4d2cae",
-      "size": 621794
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/fnmonitor-2.30.2-arm.fpk",
-      "sha256": "2ab363d5899f70f1df9be60b629df9ec1d7b88db27b45532beeb9a47b80b7ae8",
-      "size": 621795
-     }
-    }
-   },
-   "2.30.1": {
-    "changelog": "v2.30.1<br>① 修复定时推送报告中虚拟机数据为空：虚拟机（VMs）是按需采集的（只在打开虚拟机页时轮询），不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存，不影响性能），正常推送到报告中",
-    "updated_at": "2026-11-01T10:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/fnmonitor-2.30.1-x86.fpk",
-      "sha256": "b290e8a4a4eb0fdda0963961052210da0e7c961ae72445bd3380b7cdb5f5790c",
-      "size": 621488
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/fnmonitor-2.30.1-arm.fpk",
-      "sha256": "ece5ebaf634df2ebd0d59e8dc5bc94590c082b76b69b891a19af0e6f1cd0f2a1",
-      "size": 621488
      }
     }
    },
