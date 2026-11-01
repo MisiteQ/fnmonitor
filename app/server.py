@@ -62,7 +62,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.30.3"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.30.4"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -3838,7 +3838,8 @@ def notify_save(data_dir, data, cur=None):
     if "report_enabled" in data:
         cfg["report_enabled"] = onoff(data["report_enabled"])
     if "report_schedule" in data and isinstance(data["report_schedule"], dict):
-        sch = dict(cfg.get("report_schedule") or {})
+        old_sch = dict(cfg.get("report_schedule") or {})
+        sch = dict(old_sch)
         src = data["report_schedule"]
         t = str(src.get("type") or "daily").strip()
         if t in REPORT_SCHEDULE_TYPES:
@@ -3862,6 +3863,11 @@ def notify_save(data_dir, data, cur=None):
             except Exception:
                 pass
         cfg["report_schedule"] = sch
+        # 调度变了 → 清掉上次发送时间，让新时间点当天就能触发
+        # （否则 daily/weekly/monthly 会因「今天已发过」而等到下一个周期）
+        if sch != old_sch:
+            cfg.pop("report_last_sent", None)
+            cfg.pop("report_last_fail", None)
     if "report_modules" in data and isinstance(data["report_modules"], list):
         mods = [str(m).strip() for m in data["report_modules"] if str(m).strip() in REPORT_MODULES]
         cfg["report_modules"] = mods or list(NOTIFY_DEFAULT["report_modules"])

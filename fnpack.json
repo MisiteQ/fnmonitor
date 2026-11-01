@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.30.4": {
+    "changelog": "v2.30.4<br>① 修复定时报告改时间后当天不触发：daily/weekly/monthly 模式按「上次发送日期」判断是否该发，若当天已发过一次（如升级时补发），改了定时时间后当天不会再触发，用户误以为不工作；现保存通知设置时若定时调度（类型/时间/星期/日期/间隔）发生变更，自动清空 report_last_sent，让新时间点当天就能触发",
+    "updated_at": "2026-11-01T11:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-x86.fpk",
+      "sha256": "48aa6487b316d710d905776874b6af9bc8ed9dbbc815557ef79e202e78835df6",
+      "size": 623585
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-arm.fpk",
+      "sha256": "d1624ca27d55ab8a788f87d11161fc554654c1b331f2d4c86df1e243965d36bd",
+      "size": 623587
+     }
+    }
+   },
    "2.30.3": {
     "changelog": "v2.30.3<br>① 修复定时推送报告完全不触发：VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常<br>② 修复定时推送报告中虚拟机数据为空：虚拟机是按需采集的，不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存），正常推送到报告中<br>③ 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>④ 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
     "updated_at": "2026-11-01T19:00:00+08:00",
