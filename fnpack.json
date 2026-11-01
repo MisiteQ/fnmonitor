@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.30.3": {
+    "changelog": "v2.30.3<br>① 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>② 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
+    "updated_at": "2026-11-01T19:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-x86.fpk",
+      "sha256": "fb71c72882982910a990aae4f7379d48d78f09d3eb6977adb6c16020d3417992",
+      "size": 623349
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-arm.fpk",
+      "sha256": "6bee9ee5d1efddf77f7ef2f17fe8b4266d3d4af14d34415bf7104d5c7d0daf32",
+      "size": 623345
+     }
+    }
+   },
    "2.30.2": {
     "changelog": "v2.30.2<br>① 修复定时推送报告完全不触发（v2.30.1 回归）：v2.30.1 给定时报告加虚拟机现采时，VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常",
     "updated_at": "2026-11-01T18:00:00+08:00",

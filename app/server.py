@@ -62,7 +62,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.30.2"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.30.3"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -5181,6 +5181,26 @@ def _fmt_uptime(sec):
     return "%d 分" % m
 
 
+def _report_power_stats(db, app_config):
+    """定时报告用的今日/本月能耗与电费：直接对功率历史积分（与功耗统计的 history 兜底口径一致）。"""
+    if db is None:
+        return {}
+    try:
+        import datetime
+        now = time.time()
+        d0 = datetime.datetime.now()
+        today_sec = now - datetime.datetime(d0.year, d0.month, d0.day).timestamp()
+        month_sec = now - datetime.datetime(d0.year, d0.month, 1).timestamp()
+        hist_dt = int((app_config or {}).get("history_interval", 60) or 60)
+        rate = float((app_config or {}).get("power_rate_yuan", 0.6) or 0.6)
+        today_kwh = db.energy_kwh("power", today_sec, default_dt=hist_dt)
+        month_kwh = db.energy_kwh("power", month_sec, default_dt=hist_dt)
+        return {"today_kwh": round(today_kwh, 4), "month_kwh": round(month_kwh, 4),
+                "today_yuan": round(today_kwh * rate, 2), "month_yuan": round(month_kwh * rate, 2)}
+    except Exception:
+        return {}
+
+
 def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None):
     """从采集快照中按用户勾选的模块收集报告数据。
 
@@ -5376,12 +5396,16 @@ def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None)
     if "power" in mods:
         pwr = snap.get("power") or {}
         src_map = {"rapl": "RAPL 实测", "idrac": "iDRAC", "estimated": "模型估算", "unknown": "不可用"}
+        # kWh / 电费不在采集快照里（快照只有实时瓦数），由调用方经 extra["power_stats"] 注入
+        ps = extra.get("power_stats") or {}
         payload["power"] = {
             "watts": round(pwr.get("total") or pwr.get("watts") or pwr.get("power") or 0, 1),
             "source": src_map.get(pwr.get("source"), pwr.get("source") or "--"),
             "ok": bool(pwr.get("ok")),
-            "today_kwh": round(pwr.get("today_kwh") or pwr.get("kwh_today") or 0, 3),
-            "today_yuan": round(pwr.get("today_yuan") or pwr.get("yuan_today") or 0, 2),
+            "today_kwh": round(pwr.get("today_kwh") or pwr.get("kwh_today") or ps.get("today_kwh") or 0, 3),
+            "today_yuan": round(pwr.get("today_yuan") or pwr.get("yuan_today") or ps.get("today_yuan") or 0, 2),
+            "month_kwh": round(ps.get("month_kwh") or 0, 3),
+            "month_yuan": round(ps.get("month_yuan") or 0, 2),
         }
     if "docker" in mods:
         dk = snap.get("docker") or {}
@@ -5411,13 +5435,27 @@ def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None)
                     vlist = vdata.get("vms") or []
             except Exception:
                 traceback.print_exc()
-        running = sum(1 for v in vlist if isinstance(v, dict) and (v.get("state") or "").lower() in ("running", "运行中", "on"))
+        running = 0
         vm_list = []
         for v in vlist:
             if not isinstance(v, dict):
                 continue
-            vm_list.append({"name": v.get("name") or v.get("uuid") or "--",
-                            "state": v.get("state") or "--"})
+            is_run = bool(v.get("running")) or (v.get("state") or "").lower() in ("running", "运行中", "on")
+            if is_run:
+                running += 1
+            mem_b, mem_max_b = v.get("mem"), v.get("mem_max")
+            ips = v.get("ips") or []
+            vm_list.append({
+                "name": v.get("title") or v.get("name") or v.get("uuid") or "--",
+                "state": v.get("state_zh") or v.get("state") or "--",
+                "running": is_run,
+                "vcpus": v.get("vcpus"),
+                "cpu": v.get("cpu"),
+                "mem_gb": round(mem_b / 1024 / 1024 / 1024, 1) if mem_b else None,
+                "mem_max_gb": round(mem_max_b / 1024 / 1024 / 1024, 1) if mem_max_b else None,
+                "uptime": _fmt_uptime(v.get("uptime")) if v.get("uptime") else "",
+                "ip": ips[0] if ips else "",
+            })
         payload["vms"] = {"total": len(vlist), "running": running, "vms": vm_list}
     if "idrac" in mods:
         try:
@@ -5651,6 +5689,8 @@ def notify_report_build(cfg, payload, now):
         else:
             _kv("实时功耗", "无传感器（%s）" % p.get("source", "--"))
         _kv("今日用电", "%s kWh · 电费 %s 元" % (p.get("today_kwh", "--"), p.get("today_yuan", "--")))
+        if detail and (p.get("month_kwh") or p.get("month_yuan")):
+            _kv("本月用电", "%s kWh · 电费 %s 元" % (p.get("month_kwh", "--"), p.get("month_yuan", "--")))
 
     if "docker" in payload:
         dk = payload["docker"]
@@ -5674,9 +5714,22 @@ def notify_report_build(cfg, payload, now):
         lines.append("> 共 **%d** 台 · 运行 **%d**" % (v.get("total", 0), v.get("running", 0)))
         if detail:
             for vm in (v.get("vms") or [])[:15]:
-                st = vm.get("state", "--")
-                flag = "🟢" if st in ("running", "运行中", "on") else "🔴"
-                lines.append("  • %s `%s` · %s" % (flag, vm.get("name", "?"), st))
+                flag = "🟢" if vm.get("running") else "🔴"
+                line = "  • %s `%s` · %s" % (flag, vm.get("name", "?"), vm.get("state", "--"))
+                parts = []
+                if vm.get("vcpus"):
+                    parts.append("%s vCPU" % vm["vcpus"])
+                if vm.get("mem_gb") is not None:
+                    parts.append("内存 %s / %s GB" % (vm["mem_gb"], vm.get("mem_max_gb") or "--"))
+                if vm.get("cpu") is not None:
+                    parts.append("CPU %s%%" % vm["cpu"])
+                if vm.get("ip"):
+                    parts.append(vm["ip"])
+                if vm.get("uptime"):
+                    parts.append("运行 %s" % vm["uptime"])
+                if parts:
+                    line += " · " + " · ".join(parts)
+                lines.append(line)
 
     if "idrac" in payload:
         i = payload["idrac"]
@@ -5709,7 +5762,7 @@ def notify_report_build(cfg, payload, now):
     return "\n".join(lines)
 
 
-def notify_report_tick(data_dir, config, snapshot, vms_monitor=None):
+def notify_report_tick(data_dir, config, snapshot, vms_monitor=None, db=None):
     """后台线程：采集 → 组装 → 发送定时报告。"""
     try:
         cfg = notify_load(data_dir)
@@ -5724,6 +5777,11 @@ def notify_report_tick(data_dir, config, snapshot, vms_monitor=None):
                 extra["weather"] = fetch_weather(config.get("weather_city") or "")
             except Exception:
                 extra["weather"] = {}
+        # kWh / 电费同样不在快照里，用历史库现算
+        if "power" in (cfg.get("report_modules") or []):
+            ps = _report_power_stats(db, config)
+            if ps:
+                extra["power_stats"] = ps
         payload = notify_report_collect(snapshot, data_dir, cfg, extra=extra, vms_monitor=vms_monitor)
         now = time.time()
         body = notify_report_build(cfg, payload, now)
@@ -5752,7 +5810,7 @@ def notify_report_tick(data_dir, config, snapshot, vms_monitor=None):
         return None
 
 
-def notify_report_schedule(data_dir, config, snapshot, vms_monitor=None):
+def notify_report_schedule(data_dir, config, snapshot, vms_monitor=None, db=None):
     """采集线程每轮调用：到点就起后台线程发报告，立刻返回。"""
     try:
         if _REPORT_JOB[0] is not None and _REPORT_JOB[0].is_alive():
@@ -5760,7 +5818,7 @@ def notify_report_schedule(data_dir, config, snapshot, vms_monitor=None):
         cfg = notify_load(data_dir)
         if not _report_due(cfg):
             return False
-        t = threading.Thread(target=notify_report_tick, args=(data_dir, config, snapshot, vms_monitor),
+        t = threading.Thread(target=notify_report_tick, args=(data_dir, config, snapshot, vms_monitor, db),
                              name="fnm-report", daemon=True)
         _REPORT_JOB[0] = t
         t.start()
@@ -10201,7 +10259,7 @@ class Collector(threading.Thread):
 
         # ---- 定时推送报告（按用户设定的周期汇总各模块数据推送）----
         try:
-            notify_report_schedule(self.data_dir, self.config, snapshot, vms_monitor=self.vms)
+            notify_report_schedule(self.data_dir, self.config, snapshot, vms_monitor=self.vms, db=self.db)
         except Exception:
             traceback.print_exc()
 
@@ -11369,6 +11427,16 @@ class MonitorApp:
                 extra["weather"] = self.api_weather()
             except Exception:
                 extra["weather"] = {}
+        # kWh / 电费也不在此快照里，复用功耗统计（含每日汇总口径）
+        if "power" in (cfg.get("report_modules") or []):
+            try:
+                _ps = self.api_power_stats() or {}
+                _e, _c = _ps.get("energy") or {}, _ps.get("cost") or {}
+                if _e:
+                    extra["power_stats"] = {"today_kwh": _e.get("today_kwh"), "month_kwh": _e.get("month_kwh"),
+                                            "today_yuan": _c.get("today_yuan"), "month_yuan": _c.get("month_yuan")}
+            except Exception:
+                pass
         try:
             payload = notify_report_collect(snap, self.data_dir, cfg, extra=extra, vms_monitor=self.vms)
             now = time.time()
