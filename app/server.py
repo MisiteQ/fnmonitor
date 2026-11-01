@@ -62,7 +62,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.30.1"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.30.2"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -9637,12 +9637,13 @@ class History:
 # 采集线程
 # ---------------------------------------------------------------------------
 class Collector(threading.Thread):
-    def __init__(self, data_dir, config, cfg_dir=None, updater=None):
+    def __init__(self, data_dir, config, cfg_dir=None, updater=None, vms=None):
         super().__init__(daemon=True)
         self.data_dir = data_dir
         self._cfg_dir = cfg_dir or data_dir  # config.json 固定读默认配置目录
         self.config = config
         self.updater = updater  # UpdateManager：自动检查更新（可为 None）
+        self.vms = vms  # VmMonitor（由 App 共享注入）：定时报告勾选虚拟机时按需现采
         self.db = History(os.path.join(data_dir, "monitor.db"))
         self.latest = {}
         self._lock = threading.Lock()
@@ -10637,7 +10638,8 @@ class MonitorApp:
         self.host = host
         self.port = port
         self.updater = UpdateManager(data_dir)  # 在线更新（须先于 Collector 创建）
-        self.collector = Collector(data_dir, config, cfg_dir=self._cfg_dir, updater=self.updater)
+        self.vms = VmMonitor()   # 虚拟机：按需采集（只在打开虚拟机页时轮询）；共享给 Collector 供定时报告现采
+        self.collector = Collector(data_dir, config, cfg_dir=self._cfg_dir, updater=self.updater, vms=self.vms)
         self.www_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
         self.db_path = os.path.join(data_dir, "monitor.db")
         self._weather_cache = None
@@ -10664,7 +10666,6 @@ class MonitorApp:
         self._static_cache = {}
         self._export_sem = threading.BoundedSemaphore(2)   # 报告 / 导出并发上限
         self._apps_refresh_ts = 0.0
-        self.vms = VmMonitor()   # 虚拟机：按需采集（只在打开虚拟机页时轮询）
 
     def make_handler(self):
         app = self

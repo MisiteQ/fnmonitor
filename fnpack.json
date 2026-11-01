@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.1/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
+   "2.30.2": {
+    "changelog": "v2.30.2<br>① 修复定时推送报告完全不触发（v2.30.1 回归）：v2.30.1 给定时报告加虚拟机现采时，VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常",
+    "updated_at": "2026-11-01T18:00:00+08:00",
+    "os_min_version": "0.9.0",
+    "packages": {
+     "x86": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/fnmonitor-2.30.2-x86.fpk",
+      "sha256": "26003b7aa4b8653d0464468e50074a2a8ae8f688004ab853229e7225eb4d2cae",
+      "size": 621794
+     },
+     "arm": {
+      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.2/fnmonitor-2.30.2-arm.fpk",
+      "sha256": "2ab363d5899f70f1df9be60b629df9ec1d7b88db27b45532beeb9a47b80b7ae8",
+      "size": 621795
+     }
+    }
+   },
    "2.30.1": {
     "changelog": "v2.30.1<br>① 修复定时推送报告中虚拟机数据为空：虚拟机（VMs）是按需采集的（只在打开虚拟机页时轮询），不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存，不影响性能），正常推送到报告中",
     "updated_at": "2026-11-01T10:00:00+08:00",
