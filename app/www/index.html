@@ -359,7 +359,7 @@ to{opacity:1;transform:none}
 .sheet-head .grow{flex:1;min-width:0}
 .sheet-body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0 var(--s6) var(--s8)}
 .sheet-body>* + *{margin-top:var(--s4)}
-.sheet-sec{margin-top:var(--s7) !important;margin-bottom:calc(var(--s3) * -1);font-size:var(--fs-sm);font-weight:600;color:var(--ink-2);display:flex;justify-content:space-between;align-items:center}
+.sheet-sec{margin-top:var(--s6) !important;margin-bottom:calc(var(--s3) * -1);font-size:var(--fs-sm);font-weight:600;color:var(--ink-2);display:flex;justify-content:space-between;align-items:center}
 .sheet-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--s4);padding:var(--s2) 0 0}
 .sheet-hero .num{font-size:64px}
 .sheet-hero .num .unit{font-size:22px}
@@ -457,11 +457,11 @@ to{opacity:1;transform:none}
 .set-nav a.on .i{color:var(--accent)}
 .set-main{max-width:760px}
 .set-group{scroll-margin-top:96px}
-.set-group + .set-group{margin-top:var(--s9)}
+.set-group + .set-group{margin-top:var(--s7)}
 .set-group>h3{margin:0 0 4px;font-size:22px;font-weight:650;letter-spacing:-.02em}
 .set-group>p{margin:0 0 var(--s4);color:var(--ink-2);font-size:var(--fs-sm)}
 .set-card{padding:0 var(--s6)}
-.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--s5);min-height:62px;padding:12px 0;border-top:1px solid var(--line)}
+.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--s5);min-height:46px;padding:7px 0;border-top:1px solid var(--line)}
 .set-row:first-child{border-top:0}
 .set-row .lbl{font-weight:500;display:flex;align-items:center;gap:6px}
 .set-row .hint{font-size:var(--fs-xs);color:var(--ink-3);margin-top:1px}
@@ -691,7 +691,7 @@ to{background-position:-100% 0}
 .editing .module .mod-head.big .mod-title{font-size:16px;font-weight:650;letter-spacing:-.02em}
 .sheet{transition:transform var(--dur-3) var(--ease-sheet),visibility 0s linear var(--dur-3)}
 .sheet.on{transition:transform var(--dur-3) var(--ease-sheet),visibility 0s}
-.sheet-body>.card + .sheet-sec,.sheet-body>div + .sheet-sec{margin-top:var(--s7)}
+.sheet-body>.card + .sheet-sec,.sheet-body>div + .sheet-sec{margin-top:var(--s6)}
 .editing .hero{opacity:.35;pointer-events:none;filter:saturate(.4);transition:opacity var(--dur-3)}
 .editing .layout::before{content:"拖动左侧手柄调整顺序 · 右侧开关控制是否显示";display:block;font-size:var(--fs-sm);color:var(--ink-2);margin:var(--s5) 0 var(--s2)}
 @media (max-width: 960px){.g-compute{grid-template-columns:1fr 1fr}
@@ -734,7 +734,8 @@ a{color:var(--ink-1)}
 .host-chip{font:500 12px/1 var(--font-mono);letter-spacing:.04em;background:var(--card)}
 .clock-mini{font:500 12px/1 var(--font-mono);letter-spacing:.06em}
 .drive-meta,.io-line{font-family:var(--font-sans)}
-.sheet-sec{font:500 10.5px/1.2 var(--font-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.sheet-sec{font:700 12.5px/1.3 var(--font-sans);letter-spacing:.01em;color:var(--ink-2);align-items:center;gap:6px}
+.sheet-sec::before{content:"";flex:none;width:3px;height:13px;border-radius:2px;background:var(--d-p)}
 .brand-mark{background:var(--ink-1);color:var(--card);border-radius:10px}
 .brand-mark .dm{--dm-h:11px}
 .live{background:var(--ok)}
@@ -1287,7 +1288,8 @@ dd .diag-link{margin:0;height:24px}
 @media (max-width: 720px){.idrac-disks .hr,.idrac-disks .dr{grid-template-columns:32px minmax(0,1fr) 58px}
 .idrac-disks .hr>span:nth-child(3),.idrac-disks .hr>span:nth-child(4),.idrac-disks .dr>span:nth-child(3),.idrac-disks .dr>span:nth-child(4){display:none}
 }
-.set-sub{margin:14px 0 2px;color:var(--ink-3);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.set-sub{display:flex;align-items:center;gap:6px;margin:12px 0 4px;color:var(--ink-2);font-size:12.5px;font-weight:700;letter-spacing:.01em}
+.set-sub::before{content:"";flex:none;width:3px;height:13px;border-radius:2px;background:var(--d-p)}
 .set-card>.set-sub:first-child{margin-top:0}
 .blk-row .lbl{transition:opacity .15s ease}
 .blk-row.blk-off .lbl{opacity:.5}
@@ -1366,6 +1368,7 @@ dd .diag-link{margin:0;height:24px}
     <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3.5 19.5h17M5 15l4.5-5 4 3.5L20 6"/></symbol>
     <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8M4.5 7.5v4h4M4.2 10.5A8.5 8.5 0 0 0 12 20.5"/></symbol>
     <symbol id="i-key" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19v-8.5Z"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
@@ -2354,7 +2357,7 @@ get: key => (UI.ignored || []).find(x => x.key === key),
 add(it) {
 UI.ignored = Ignore.list().filter(x => x.key !== it.key).concat([{ key: it.key, fp: it.fp, label: it.base || it.text, level: it.level, at: Date.now() }]).slice(-100);
 saveUI(); renderNow(); syncSettings();
-toast(`已忽略 · ${it.base || it.text}`, { sub: '状态变化时会重新提醒，可在 设置 → 已忽略的提醒 中取消', undo: () => Ignore.remove(it.key, true) });
+toast(`已忽略 · ${it.base || it.text}`, { sub: '状态变化时会重新提醒，可在 设置 → 事件监控 → 已忽略的提醒 中取消', undo: () => Ignore.remove(it.key, true) });
 },
 remove(key, quiet) { UI.ignored = Ignore.list().filter(x => x.key !== key); saveUI(); renderNow(); syncSettings(); if (!quiet) toast('已恢复提醒', { key: 'save' }); },
 };
@@ -3737,6 +3740,420 @@ ${rows}
 <div class="card"><div style="font-size:12px;color:var(--ink-3);line-height:1.7">提示：每个渠道卡片都有「测试」按钮，保存后可立即验证配置是否正确。全局设置（标题前缀 / 极简推送 / 勿扰模式）对所有渠道生效。</div></div>`;
 },
 },
+monitor: {
+icon: () => 'eye', title: () => '事件监控', sub: () => 'fnOS 系统事件实时推送 · 数据源路径自动探测',
+build(body, arg, ctx) {
+body.innerHTML = `
+<style>
+.mm-cats { display:flex; flex-direction:column; gap:8px; max-height:min(52vh,480px); overflow-y:auto; }
+.mm-cat { flex:0 0 auto; border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+.mm-cat-head { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer; background:var(--fill-1); user-select:none; }
+.mm-cat-name { font-weight:550; font-size:12.5px; color:var(--ink-1); }
+.mm-cat-num { font-size:11px; color:var(--ink-3); }
+.mm-cat-all { margin-left:auto; font-size:11.5px; font-weight:550; color:var(--d-p); padding:2px 8px; border-radius:var(--r-pill); }
+.mm-cat-all:hover { background:var(--ok-soft); }
+.mm-cat-arrow { font-size:10px; color:var(--ink-3); transition:transform .15s; }
+.mm-cat.open .mm-cat-arrow { transform:rotate(180deg); }
+.mm-cat-body { display:none; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; padding:10px 12px; }
+.mm-cat.open .mm-cat-body { display:grid; }
+.mm-chip { display:flex; align-items:center; gap:6px; padding:6px 9px; border-radius:8px; font-size:12px; cursor:pointer; background:var(--fill-1); color:var(--ink-2); border:1px solid transparent; }
+.mm-chip:hover { background:var(--fill-2); }
+.mm-chip.on { background:var(--ok-soft); color:var(--ink-1); border-color:color-mix(in srgb,var(--d-p) 28%,transparent); }
+.mm-chip input { margin:0; flex-shrink:0; }
+.mm-chip .mt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mm-diag { padding:9px 12px; border-radius:var(--r-md); font-size:12.5px; margin-bottom:6px; }
+.mm-diag.ok { background:var(--ok-soft); color:var(--ok); }
+.mm-diag.fail { background:var(--crit-soft); color:var(--crit); }
+.mm-diag-hint { font-size:11px; margin-top:4px; white-space:pre-wrap; line-height:1.6; }
+</style>
+<div class="note info">${ic('eye')}<span><b>fnOS 系统事件实时推送</b>：统一经事件模板化后走「通知设置」里配置的推送渠道；改动后点底部「保存并启动」生效。</span></div>
+${sec('基础')}
+<div class="card pad" style="padding-top:6px;padding-bottom:6px">
+<div class="set-row inline"><div><div class="lbl">启用监控</div><div class="hint">关闭后所有轮询器停止，事件不再推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-enable" aria-checked="false" aria-label="启用监控"></button></div></div>
+<div class="set-row"><div><div class="lbl">轮询间隔</div><div class="hint">主日志库 / 备份库 / SSH journal 的读取周期，3–60 秒</div></div><div class="ctl"><input type="number" id="mm-poll" class="textfield mono" min="3" max="60" value="5" style="width:86px" aria-label="轮询间隔（秒）"><span class="faint">秒</span></div></div>
+</div>
+${sec('数据源路径', '<span class="faint">右侧开关控制是否启用该数据源，关闭后即使路径有值也不会启动对应轮询器；路径留空同样视为不启用</span>')}
+<div class="card pad" style="padding-top:6px;padding-bottom:6px">
+<div class="set-row"><div><div class="lbl">fnOS 主日志库</div><div class="hint">系统登录 / 文件操作等主事件</div></div><div class="ctl"><input type="text" id="mm-logger" class="textfield mono" placeholder="/usr/trim/var/eventlogger_service/logger_data.db3" style="width:min(280px,42vw)" spellcheck="false" aria-label="fnOS 主日志库路径"><button class="switch" type="button" role="switch" id="mm-src-logger" aria-checked="true" aria-label="启用 fnOS 主日志库"></button></div></div>
+<div class="set-row"><div><div class="lbl">备份任务库</div><div class="hint">备份任务开始 / 完成 / 失败</div></div><div class="ctl"><input type="text" id="mm-backup" class="textfield mono" placeholder="/usr/trim/var/backup_service/basic_backup.db3" style="width:min(280px,42vw)" spellcheck="false" aria-label="备份任务库路径"><button class="switch" type="button" role="switch" id="mm-src-backup" aria-checked="true" aria-label="启用备份任务库"></button></div></div>
+<div class="set-row"><div><div class="lbl">影视库（资源）</div><div class="hint">媒体入库与刮削事件</div></div><div class="ctl"><input type="text" id="mm-trim" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.media/database/trimmedia.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="影视资源库路径"><button class="switch" type="button" role="switch" id="mm-src-trim" aria-checked="true" aria-label="启用影视库（资源）"></button></div></div>
+<div class="set-row"><div><div class="lbl">影视库（活动）</div><div class="hint">播放 / 观看活动事件</div></div><div class="ctl"><input type="text" id="mm-trimact" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.media/database/trimactivity.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="影视活动库路径"><button class="switch" type="button" role="switch" id="mm-src-trimact" aria-checked="true" aria-label="启用影视库（活动）"></button></div></div>
+<div class="set-row"><div><div class="lbl">相册库</div><div class="hint">照片备份与相册变更</div></div><div class="ctl"><input type="text" id="mm-photo" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.photos/db/photo.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="相册库路径"><button class="switch" type="button" role="switch" id="mm-src-photo" aria-checked="true" aria-label="启用相册库"></button></div></div>
+<div class="set-row"><div><div class="lbl">音乐库</div><div class="hint">音乐库变更</div></div><div class="ctl"><input type="text" id="mm-music" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.music/db/music.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="音乐库路径"><button class="switch" type="button" role="switch" id="mm-src-music" aria-checked="true" aria-label="启用音乐库"></button></div></div>
+<div class="set-row"><div><div class="lbl">Docker Socket</div><div class="hint">容器启动 / 停止 / 健康检查事件</div></div><div class="ctl"><input type="text" id="mm-docker-sock" class="textfield mono" placeholder="/var/run/docker.sock" style="width:min(280px,42vw)" spellcheck="false" aria-label="Docker Socket 路径"><button class="switch" type="button" role="switch" id="mm-src-docker" aria-checked="true" aria-label="启用 Docker 事件监控"></button></div></div>
+</div>
+${sec('轮询器')}
+<div class="card pad" style="padding-top:6px;padding-bottom:6px">
+<div class="set-row inline"><div><div class="lbl">SSH journal 日志</div><div class="hint">从 systemd journal 读取 SSH 登录 / 断开</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-en-ssh-jrn" aria-checked="true" aria-label="SSH journal 日志"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">SSH 开启超时提醒</div><div class="hint">会话持续超过设定分钟数时推送</div></div><div class="ctl"><input type="number" id="mm-ssh-min" class="textfield mono" min="5" max="300" value="30" style="width:72px" aria-label="超过多少分钟提醒"><span class="faint">分钟</span><button class="switch" type="button" role="switch" id="mm-en-ssh-open" aria-checked="true" aria-label="SSH 开启超时提醒"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">WAN IP 变更</div><div class="hint">公网 IP 变化时推送</div></div><div class="ctl"><input type="number" id="mm-wan-int" class="textfield mono" min="60" max="86400" value="600" style="width:86px" aria-label="WAN IP 轮询间隔（秒）"><span class="faint">秒</span><button class="switch" type="button" role="switch" id="mm-en-wan" aria-checked="true" aria-label="WAN IP 变更"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">忽略 SSH 回环</div><div class="hint">本机 127.0.0.1 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-loop" aria-checked="true" aria-label="忽略 SSH 回环"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">忽略 SSH 局域网</div><div class="hint">内网 IP 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-lan" aria-checked="false" aria-label="忽略 SSH 局域网"></button></div></div>
+</div>
+${sec('事件类型', '<span class="faint" id="mm-selected-count"></span>')}
+<div class="card pad">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+<input type="search" id="mm-q" class="textfield" placeholder="搜索事件，如 SSH、删除文件、备份" style="flex:1;min-width:150px;width:auto" aria-label="搜索事件">
+<button class="btn sm ghost" id="mm-defaults" type="button">推荐默认</button>
+<button class="btn sm ghost" id="mm-select-all" type="button">全选</button>
+<button class="btn sm ghost" id="mm-clear-all" type="button">清空</button>
+</div>
+<div id="mm-cats-wrap" class="mm-cats"></div>
+<p class="sub" style="margin:8px 0 0">轮询周期：主日志库 / 备份库 / SSH journal 用上方「轮询间隔」；影视 / 相册 / 音乐为其 2 倍（最少 10 秒）；SSH 开启检测 120 秒；WAN IP 600 秒。</p>
+</div>
+<div id="mm-diag-wrap" style="display:none">
+${sec('诊断')}
+<div class="card pad" id="mm-diag-list" style="padding-top:10px;padding-bottom:4px"></div>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+<button class="btn primary" id="mm-save" type="button">${ic('play')}保存并启动</button>
+<button class="btn" id="mm-status" type="button">${ic('pulse')}运行状态</button>
+<button class="btn" id="mm-test" type="button">${ic('bell')}测试推送</button>
+<button class="btn danger" id="mm-disable" type="button">${ic('power')}全部关闭</button>
+</div>
+<div id="mm-msg" class="sub" style="margin-top:10px"></div>
+`;
+const $b = (sel) => body.querySelector(sel);
+const $$b = (sel) => body.querySelectorAll(sel);
+const setSw = (sel, on) => { const el = $b(sel); if (el) el.setAttribute('aria-checked', on ? 'true' : 'false'); };
+const swOn = (sel) => { const el = $b(sel); return !!el && el.getAttribute('aria-checked') === 'true'; };
+$$b('[role=switch]').forEach(el => el.addEventListener('click', () => {
+el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+}));
+async function doMonitorSave() {
+try {
+const events = Array.from($$b('#mm-cats-wrap input[type=checkbox]:checked')).map(cb => cb.value);
+const payload = {
+enable: swOn('#mm-enable'),
+monitor_events: events,
+poll_interval: parseInt($b('#mm-poll').value) || 5,
+logger_db_path: $b('#mm-logger').value.trim(),
+backup_db_path: $b('#mm-backup').value.trim(),
+trim_media_db_path: $b('#mm-trim').value.trim(),
+trim_activity_db_path: $b('#mm-trimact').value.trim(),
+photo_db_path: $b('#mm-photo').value.trim(),
+music_db_path: $b('#mm-music').value.trim(),
+docker_socket_path: $b('#mm-docker-sock').value.trim(),
+source_enabled: {
+logger_db_path: swOn('#mm-src-logger'),
+backup_db_path: swOn('#mm-src-backup'),
+trim_media_db_path: swOn('#mm-src-trim'),
+trim_activity_db_path: swOn('#mm-src-trimact'),
+photo_db_path: swOn('#mm-src-photo'),
+music_db_path: swOn('#mm-src-music'),
+},
+enable_docker: swOn('#mm-src-docker'),
+enable_ssh_journal: swOn('#mm-en-ssh-jrn'),
+enable_ssh_open_watch: swOn('#mm-en-ssh-open'),
+ssh_open_remind_minutes: parseInt($b('#mm-ssh-min').value) || 30,
+enable_wan_ip: swOn('#mm-en-wan'),
+wan_ip_poll_interval: parseInt($b('#mm-wan-int').value) || 600,
+ignore_ssh_loopback: swOn('#mm-ssh-loop'),
+ignore_ssh_lan: swOn('#mm-ssh-lan'),
+};
+setText($b('#mm-msg'), '保存中…');
+const r = await API.post('/api/monitor/save', payload);
+if (!r.ok) { setText($b('#mm-msg'), '保存失败：' + (r.error || '')); return; }
+let runTxt = '';
+let st = null;
+for (let i = 0; i < 6; i++) {
+try { st = await API.get('/api/monitor/status'); } catch (e2) { st = null; }
+if (!payload.enable) break;
+if (st && st.started) break;
+await new Promise(res => setTimeout(res, 400));
+}
+if (st) {
+const runN = Object.values(st.pollers || {}).filter(v => v).length;
+runTxt = `（started=${st.started}，运行中轮询器 ${runN}/${Object.keys(st.pollers || {}).length}）`;
+}
+setText($b('#mm-msg'), '✅ 已保存，监控运行时已' + (payload.enable ? '启动' : '关闭') + runTxt);
+if (r.diagnostics && r.diagnostics.length) {
+$b('#mm-diag-wrap').style.display = '';
+$b('#mm-diag-list').innerHTML = r.diagnostics.map(d => {
+const hint = d.ok ? '' : `<div class="mm-diag-hint">${d.error || ''}\n${d.hint || ''}</div>`;
+return `<div class="mm-diag ${d.ok ? 'ok' : 'fail'}">${d.ok ? '✓ ' : '✗ '}${d.label}${hint}</div>`;
+}).join('');
+}
+} catch (e) { console.error('[monitor] save error', e); setText($b('#mm-msg'), '保存请求异常：' + e.message); }
+}
+$b('#mm-save').addEventListener('click', () => { setSw('#mm-enable', true); doMonitorSave(); });
+$b('#mm-status').addEventListener('click', async () => {
+try {
+const r = await API.get('/api/monitor/status');
+let chLine = '';
+try {
+const n = await API.get('/api/notify');
+const chs = Array.isArray(n.channels) ? n.channels : [];
+const on = chs.filter(c => c.enabled).length;
+chLine = `<div style="padding:4px 0;font-size:12px;color:${on ? 'var(--ok)' : 'var(--crit)'};">通知渠道：已启用 ${on} / 共 ${chs.length}${on ? '' : '（没有已启用渠道时事件不会推送，请先到「通知设置」配置并启用一个渠道）'}</div>`;
+} catch (e) { chLine = ''; }
+const items = Object.entries(r.pollers || {});
+const html = items.map(([k, v]) => `<div class="row-i" style="grid-template-columns:1fr auto;padding:9px 0"><span style="font-size:12.5px">${esc(k)}</span><span class="pill ${v ? 'ok' : ''}" style="height:22px">${v ? '<span class="dot"></span>运行中' : '未启动'}</span></div>`).join('');
+$b('#mm-diag-wrap').style.display = '';
+$b('#mm-diag-list').innerHTML = `<div class="eyebrow" style="margin:4px 0 2px">运行状态 · started=${r.started}</div>${chLine}${html}`;
+} catch (e) { console.error('[monitor] status error', e); setText($b('#mm-msg'), '状态查询异常：' + e.message); }
+});
+$b('#mm-disable').addEventListener('click', async () => {
+setSw('#mm-enable', false);
+doMonitorSave();
+});
+$b('#mm-test').addEventListener('click', async () => {
+setText($b('#mm-msg'), '正在发送测试推送…');
+try {
+const r = await API.post('/api/notify/test', {});
+if (r.ok) {
+const res = r.channels || r.results || r.result || {};
+const ok = Object.values(res).filter(x => x && x.ok).length;
+const total = Object.keys(res).length;
+setText($b('#mm-msg'), `✅ 测试推送完成：成功 ${ok}/${total}${total ? '' : '（无已启用渠道）'}`);
+} else {
+setText($b('#mm-msg'), '❌ 测试推送失败：' + (r.error || r.message || '未知错误'));
+}
+} catch (e) { setText($b('#mm-msg'), '❌ 测试推送异常：' + e.message); }
+});
+(async () => {
+try {
+const resp = await API.get('/api/monitor');
+if (!resp.ok) throw new Error(resp.error || 'backend_not_ok');
+const cfg = resp.config || {};
+const cats = Array.isArray(resp.categories) ? resp.categories : [];
+const defaults = Array.isArray(resp.default_selected) ? resp.default_selected : [];
+setSw('#mm-enable', cfg.enable === true);
+if (cfg.poll_interval) $b('#mm-poll').value = cfg.poll_interval;
+if (cfg.logger_db_path) $b('#mm-logger').value = cfg.logger_db_path;
+if (cfg.backup_db_path) $b('#mm-backup').value = cfg.backup_db_path;
+if (cfg.trim_media_db_path) $b('#mm-trim').value = cfg.trim_media_db_path;
+if (cfg.trim_activity_db_path) $b('#mm-trimact').value = cfg.trim_activity_db_path;
+if (cfg.photo_db_path) $b('#mm-photo').value = cfg.photo_db_path;
+if (cfg.music_db_path) $b('#mm-music').value = cfg.music_db_path;
+if (cfg.docker_socket_path) $b('#mm-docker-sock').value = cfg.docker_socket_path;
+const srcOn = cfg.source_enabled || {};
+setSw('#mm-src-logger', srcOn.logger_db_path !== false);
+setSw('#mm-src-backup', srcOn.backup_db_path !== false);
+setSw('#mm-src-trim', srcOn.trim_media_db_path !== false);
+setSw('#mm-src-trimact', srcOn.trim_activity_db_path !== false);
+setSw('#mm-src-photo', srcOn.photo_db_path !== false);
+setSw('#mm-src-music', srcOn.music_db_path !== false);
+setSw('#mm-src-docker', cfg.enable_docker !== false);
+setSw('#mm-en-ssh-jrn', cfg.enable_ssh_journal !== false);
+setSw('#mm-en-ssh-open', cfg.enable_ssh_open_watch !== false);
+if (cfg.ssh_open_remind_minutes) $b('#mm-ssh-min').value = cfg.ssh_open_remind_minutes;
+setSw('#mm-en-wan', cfg.enable_wan_ip !== false);
+if (cfg.wan_ip_poll_interval) $b('#mm-wan-int').value = cfg.wan_ip_poll_interval;
+setSw('#mm-ssh-loop', cfg.ignore_ssh_loopback !== false);
+setSw('#mm-ssh-lan', !!cfg.ignore_ssh_lan);
+const selected = new Set(
+Array.isArray(cfg.monitor_events) ? cfg.monitor_events : defaults
+);
+const catsWrap = $b('#mm-cats-wrap');
+catsWrap.innerHTML = cats.map((c, ci) => {
+const evs = (Array.isArray(c.events) && c.events.length)
+? c.events
+: (Array.isArray(c.ids) ? c.ids : []).map(id => ({ id: id, title: id, recommended: false }));
+const label = c.label || ('分类 ' + (ci + 1));
+return `<div class="mm-cat open" data-ci="${ci}">
+<div class="mm-cat-head">
+<span class="mm-cat-name">${label}</span>
+<span class="mm-cat-num" data-num="${ci}"></span>
+<span class="mm-cat-all" data-all="${ci}">全选</span>
+<span class="mm-cat-arrow">▾</span>
+</div>
+<div class="mm-cat-body">
+${evs.map(e => `<label class="mm-chip${selected.has(e.id) ? ' on' : ''}" data-text="${(e.id + ' ' + (e.title || '')).toLowerCase()}">
+<input type="checkbox" value="${e.id}" ${selected.has(e.id) ? 'checked' : ''}>
+<span class="mt">${e.title || e.id}</span>
+</label>`).join('')}
+</div>
+</div>`;
+}).join('');
+const allCbs = () => Array.from($$b('#mm-cats-wrap input[type=checkbox]'));
+function syncUi() {
+allCbs().forEach(cb => {
+const chip = cb.parentElement;
+if (chip) chip.classList.toggle('on', cb.checked);
+});
+const total = allCbs().length;
+const sel = allCbs().filter(cb => cb.checked).length;
+setText($b('#mm-selected-count'), `已选 ${sel} / ${total}`);
+cats.forEach((c, ci) => {
+const cbs = Array.from($$b(`#mm-cats-wrap [data-ci="${ci}"] input[type=checkbox]`));
+const n = cbs.filter(cb => cb.checked).length;
+const numEl = $b(`#mm-cats-wrap [data-num="${ci}"]`);
+const allEl = $b(`#mm-cats-wrap [data-all="${ci}"]`);
+if (numEl) setText(numEl, `${n}/${cbs.length}`);
+if (allEl) setText(allEl, n === cbs.length ? '取消全选' : '全选');
+});
+}
+syncUi();
+catsWrap.addEventListener('change', syncUi);
+catsWrap.addEventListener('click', (ev) => {
+const allEl = ev.target.closest('[data-all]');
+if (allEl) {
+ev.stopPropagation();
+const ci = allEl.getAttribute('data-all');
+const cbs = Array.from($$b(`#mm-cats-wrap [data-ci="${ci}"] input[type=checkbox]`));
+const shouldCheck = cbs.filter(cb => cb.checked).length < cbs.length;
+cbs.forEach(cb => { cb.checked = shouldCheck; });
+syncUi();
+return;
+}
+const headEl = ev.target.closest('.mm-cat-head');
+if (headEl) headEl.parentElement.classList.toggle('open');
+});
+const qEl = $b('#mm-q');
+if (qEl) qEl.addEventListener('input', () => {
+const q = qEl.value.trim().toLowerCase();
+$$b('#mm-cats-wrap .mm-cat').forEach(card => {
+let shown = 0;
+card.querySelectorAll('.mm-chip').forEach(chip => {
+const hit = !q || (chip.getAttribute('data-text') || '').indexOf(q) >= 0;
+chip.style.display = hit ? '' : 'none';
+if (hit) shown++;
+});
+card.style.display = (q && shown === 0) ? 'none' : '';
+if (q && shown > 0) card.classList.add('open');
+});
+});
+$b('#mm-defaults').addEventListener('click', () => {
+allCbs().forEach(cb => { cb.checked = defaults.indexOf(cb.value) >= 0; });
+syncUi();
+});
+$b('#mm-select-all').addEventListener('click', () => { allCbs().forEach(cb => { cb.checked = true; }); syncUi(); });
+$b('#mm-clear-all').addEventListener('click', () => { allCbs().forEach(cb => { cb.checked = false; }); syncUi(); });
+} catch (e) {
+console.error('[monitor] data load error', e);
+setText($b('#mm-msg'), '⚠ 配置加载失败：' + e.message + '（按钮仍可用）');
+}
+})();
+return null;
+},
+},
+pushHistory: {
+icon: () => 'history', title: () => '推送历史与统计', sub: () => '近 1 万条推送记录，可按成功/失败筛选',
+build(body, arg, ctx) {
+body.innerHTML = `
+<style>
+.ph-stat { display:flex; gap:14px; }
+.ph-stat-item { flex:1; text-align:center; padding:12px 0; border-radius:8px; background:var(--bg-2); }
+.ph-stat-item .v { font-size:20px; font-weight:600; }
+.ph-stat-item .l { font-size:12px; color:var(--ink-2); margin-top:2px; }
+.ph-list { margin-top:14px; }
+.ph-row { display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--bg-3); font-size:12px; cursor:pointer; }
+.ph-row:hover { background:var(--bg-2); }
+.ph-row .ok { color:#07c160; width:24px; flex-shrink:0; }
+.ph-row .bad { color:#ff4d4f; width:24px; flex-shrink:0; }
+.ph-row .t { width:150px; color:var(--ink-2); flex-shrink:0; }
+.ph-row .e { width:130px; color:var(--ink-2); flex-shrink:0; }
+.ph-row .s { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ph-head { display:flex; gap:8px; padding:6px 10px; font-size:11px; color:var(--ink-2); font-weight:600; border-bottom:2px solid var(--bg-3); }
+.ph-head .ok { width:24px; }
+.ph-head .t { width:150px; }
+.ph-head .e { width:130px; }
+.ph-head .s { flex:1; }
+.ph-detail { padding:10px; background:var(--bg-2); border-radius:6px; font-size:12px; white-space:pre-wrap; margin-top:4px; display:none; }
+.ph-filter { display:flex; gap:10px; align-items:center; margin-bottom:10px; font-size:12px; }
+.ph-filter select { padding:4px 8px; border-radius:4px; background:var(--bg-2); color:var(--ink-1); border:1px solid var(--bg-3); }
+.ph-pager { display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px; color:var(--ink-2); }
+.ph-pager button { padding:4px 12px; border-radius:4px; border:1px solid var(--bg-3); background:var(--bg-2); color:var(--ink-1); cursor:pointer; }
+.ph-pager button:disabled { opacity:0.4; cursor:not-allowed; }
+</style>
+<div class="card">
+<div class="ph-stat" id="ph-stat"></div>
+</div>
+<div class="card">
+<div class="ph-filter">
+<label>筛选：</label>
+<select id="ph-filter">
+<option value="">全部</option>
+<option value="true">仅成功</option>
+<option value="false">仅失败</option>
+</select>
+<span id="ph-count" style="margin-left:auto"></span>
+<button class="btn btn-danger" id="ph-clear" type="button" style="padding:3px 10px; font-size:12px;">清空全部历史</button>
+</div>
+<div class="ph-list">
+<div class="ph-head">
+<div class="ok">状态</div><div class="t">时间</div><div class="e">事件类型</div><div class="s">摘要</div>
+</div>
+<div id="ph-rows"></div>
+</div>
+<div class="ph-pager">
+<button id="ph-prev">上一页</button>
+<span id="ph-page-info"></span>
+<button id="ph-next">下一页</button>
+</div>
+</div>
+`;
+let page = 0, limit = 50, filter = '';
+const statEl = $('#ph-stat'), rowsEl = $('#ph-rows'), countEl = $('#ph-count');
+const prevBtn = $('#ph-prev'), nextBtn = $('#ph-next'), pageInfo = $('#ph-page-info');
+async function loadStats() {
+try {
+const s = await API.get('/api/notify-stats');
+statEl.innerHTML = `
+<div class="ph-stat-item"><div class="v">${s.total && s.total.total || 0}</div><div class="l">总条数</div></div>
+<div class="ph-stat-item"><div class="v">${s.today && s.today.total || 0}</div><div class="l">今日</div></div>
+<div class="ph-stat-item"><div class="v" style="color:#07c160">${s.total && s.total.success || 0}</div><div class="l">成功</div></div>
+<div class="ph-stat-item"><div class="v" style="color:#ff4d4f">${s.total && s.total.fail || 0}</div><div class="l">失败</div></div>
+`;
+} catch (e) { statEl.innerHTML = '<div style="color:#ff4d4f">加载统计失败</div>'; }
+}
+async function loadRows() {
+const qs = new URLSearchParams({ limit, offset: page * limit });
+if (filter) qs.set('success', filter);
+try {
+const rows = await API.get('/api/notify-history?' + qs.toString());
+countEl.textContent = `当前返回 ${rows.length} 条`;
+if (!rows.length && page > 0) { page = 0; return loadRows(); }
+rowsEl.innerHTML = rows.map(r => `
+<div class="ph-row" data-id="${r.id}">
+<div class="${r.success ? 'ok' : 'bad'}">${r.success ? '✓' : '✗'}</div>
+<div class="t">${r.created_at || ''}</div>
+<div class="e">${r.event_type || ''}</div>
+<div class="s" title="${(r.summary || '').replace(/"/g, '&quot;')}">${r.summary || ''}</div>
+</div>
+`).join('') || '<div style="padding:20px;text-align:center;color:var(--ink-3);font-size:13px">暂无推送记录</div>';
+pageInfo.textContent = `第 ${page + 1} 页`;
+prevBtn.disabled = page === 0;
+nextBtn.disabled = rows.length < limit;
+rowsEl.querySelectorAll('.ph-row').forEach(row => {
+row.addEventListener('click', async () => {
+const id = row.dataset.id;
+let detail = row.nextElementSibling;
+if (detail && detail.classList.contains('ph-detail')) {
+detail.remove(); return;
+}
+rowsEl.querySelectorAll('.ph-detail').forEach(el => el.remove());
+detail = document.createElement('div');
+detail.className = 'ph-detail';
+detail.style.display = '';
+try {
+const rec = await API.get('/api/notify-history/' + id);
+if (rec && rec.detail) {
+try { const d = JSON.parse(rec.detail); detail.textContent = JSON.stringify(d, null, 2); } catch (e2) { detail.textContent = rec.detail; }
+} else { detail.textContent = rec ? JSON.stringify({ created_at: rec.created_at, event_type: rec.event_type, summary: rec.summary }, null, 2) : ''; }
+} catch (e) { detail.textContent = '加载详情失败'; }
+row.parentElement.insertBefore(detail, row.nextSibling);
+});
+});
+} catch (e) { rowsEl.innerHTML = '<div style="color:#ff4d4f">加载失败</div>'; }
+}
+$('#ph-filter').addEventListener('change', e => { filter = e.target.value; page = 0; loadRows(); });
+prevBtn.addEventListener('click', () => { if (page > 0) { page--; loadRows(); } });
+nextBtn.addEventListener('click', () => { page++; loadRows(); });
+$('#ph-clear').addEventListener('click', async () => {
+if (!confirm('确定清空所有推送历史？此操作不可恢复')) return;
+try { await API.post('/api/history/clear', {}); page = 0; loadRows(); loadStats(); } catch (e) { alert('清空失败'); }
+});
+(async () => {
+await loadStats();
+await loadRows();
+})();
+const timer = setInterval(loadStats, 10000);
+ctx.clearTimer = () => clearInterval(timer);
+return null;
+},
+},
 };
 const ICO_OF = (type, arg) => { const d = SHEETS[type]; return typeof d.icon === 'function' ? d.icon(arg) : d.icon; };
 const SHEET_DC = { cpu: 'util', mem: 'util', storage: 'util', disk: 'util', net: 'io', temp: 'temp', power: 'pwr' };
@@ -3763,7 +4180,7 @@ if (!fromRoute) { if (!wasOpen) S.pushed = true; setHash(!wasOpen); }
 if (type === 'cpu' || type === 'mem') Poll.run('procs');
 setTimeout(() => $('#sheet').focus({ preventScroll: true }), 60);
 }
-function teardownSheet() { if (sheetCtx) { sheetCtx.charts.forEach(c => c.destroy()); sheetCtx = null; } }
+function teardownSheet() { if (sheetCtx) { try { sheetCtx.clearTimer && sheetCtx.clearTimer(); } catch (e) { /* noop */ } sheetCtx.charts.forEach(c => c.destroy()); sheetCtx = null; } }
 function closeSheet(fromRoute) {
 if (!S.sheet) return;
 teardownSheet(); S.sheet = null;
@@ -4313,19 +4730,20 @@ const cfgItem = (k, label, type, extra) => Object.assign({ k, label, type, get: 
 const cfgToggle = (k, label, extra) => Object.assign(cfgItem(k, label, 'toggle', extra), { get: () => S.cfg ? !!+S.cfg[k] : false });
 const uiItem = (k, label, type, extra) => Object.assign({ k, label, type, get: () => UI[k], set: v => { UI[k] = v; applyUI(k); saveUI(); toast(`已保存 · ${label}`, { key: 'save' }); } }, extra);
 const SET_SCHEMA = [
-{ id: 'service', title: '服务', icon: 'server', desc: '飞牛监控自身的运行方式。', items: [
+{ id: 'service', title: '服务·采集', icon: 'server', desc: '飞牛监控自身的运行方式、采集频率与采集例外项；更短的间隔更实时，也会写入更多数据、占用更多 NAS 资源。', items: [
 Object.assign(cfgItem('port', '服务端口', 'number', { min: 1024, max: 65535, strict: true, hint: () => '1024 – 65535；修改后需在 应用中心 → 飞牛监控 中重启应用生效，并在飞牛防火墙放行新端口' + (S.cfg && +S.cfg.port && S.cfg.listen_port && +S.cfg.listen_port !== +S.cfg.port ? `；当前实际监听 ${esc(S.cfg.listen_port)}（重启后切换）` : '') }), { get: () => S.cfg ? (+S.cfg.port || +S.cfg.listen_port || +location.port || 8777) : undefined }),
 cfgItem('open_mode', '飞牛桌面打开方式', 'seg', { options: [['url', '独立网页'], ['iframe', '飞牛窗口']], help: '点击飞牛桌面「飞牛监控」图标时的打开方式。独立网页：直接在浏览器新标签页打开（完整浏览器能力：全屏 / 下载 / 插件）。飞牛窗口：在 fnOS 桌面内嵌窗口中打开。保存时自动写入桌面入口——刷新飞牛桌面页面（F5）或重新登录后生效；若桌面尚未刷新仍弹出内嵌窗口，窗口内会显示引导页可一键转到浏览器。', hint: () => inIframe ? '当前在飞牛窗口内 · <a href="/" target="_blank" rel="noopener">立即在新标签页打开 ↗</a>' : '' }),
-{ k: 'weatherAuto', label: '天气自动定位', type: 'toggle', hint: '按 NAS 公网 IP 估算城市；需要外网', get: () => !(S.cfg && S.cfg.weather_city) && !S.weatherManual, set: (v, row) => { if (v) { S.weatherManual = false; saveCfg({ weather_city: '' }, '已切换为自动定位天气', row).then(() => { syncSettings(); setTimeout(() => Poll.run('weather'), 800); }); } else { S.weatherManual = true; syncSettings(); setTimeout(() => { const i = $('.set-row[data-k="weather_city"] input'); i && i.focus(); }, 60); } } },
-cfgItem('weather_city', '天气位置', 'text', { placeholder: '城市名（如 徐州）或 纬度,经度', showIf: () => !!(S.cfg && S.cfg.weather_city) || !!S.weatherManual, hint: '填城市名，或 纬度,经度（如 34.26,117.18）',
-validate: v => !v ? '请输入城市名或坐标；如需自动定位，请打开上方开关' : v.includes(',') && !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(v) ? '坐标格式应为 纬度,经度（如 34.26,117.18）' : v.length > 100 ? '位置太长了' : '',
-set: (v, row) => saveCfg({ weather_city: v }, '天气位置', row).then(() => setTimeout(() => Poll.run('weather'), 800)) }),
-] },
-{ id: 'collect', title: '采集与历史', icon: 'pulse', desc: '更短的间隔更实时，也会写入更多数据、占用更多 NAS 资源。', items: [
 cfgItem('interval', '实时采集间隔', 'number', { min: 5, max: 3600, unit: '秒', hint: '监控刷新周期，值越小越实时但负载略高' }),
 cfgItem('history_interval', '历史采样间隔', 'number', { min: 60, max: 86400, unit: '秒', hint: '历史趋势每隔多久记录一条，默认 60 秒' }),
 cfgItem('retention_days', '历史保留', 'number', { min: 1, max: 365, unit: '天', hint: '超过保留期的历史数据会自动清理' }),
 cfgToggle('monthly_summary_enabled', '上月汇总', { hint: () => `在总览底部显示上个月的运行回顾${S.cfg && +S.cfg.retention_days < 31 ? `；历史保留 ${esc(S.cfg.retention_days)} 天不足整月，会自动叠加保存汇总` : ''}`, help: '每月自动生成。即使历史保留不足一个月，也会单独保存月度聚合数据，确保汇总完整。', set: (v, row) => saveCfg({ monthly_summary_enabled: v ? 1 : 0 }, '上月汇总', row).then(() => { Poll.run('monthly'); }) }),
+cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { hint: '不计入虚拟网卡的累计流量', help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
+cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
+cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
+{ k: 'weatherAuto', label: '天气自动定位', type: 'toggle', hint: '按 NAS 公网 IP 估算城市；需要外网', get: () => !(S.cfg && S.cfg.weather_city) && !S.weatherManual, set: (v, row) => { if (v) { S.weatherManual = false; saveCfg({ weather_city: '' }, '已切换为自动定位天气', row).then(() => { syncSettings(); setTimeout(() => Poll.run('weather'), 800); }); } else { S.weatherManual = true; syncSettings(); setTimeout(() => { const i = $('.set-row[data-k="weather_city"] input'); i && i.focus(); }, 60); } } },
+cfgItem('weather_city', '天气位置', 'text', { placeholder: '城市名（如 徐州）或 纬度,经度', showIf: () => !!(S.cfg && S.cfg.weather_city) || !!S.weatherManual, hint: '填城市名，或 纬度,经度（如 34.26,117.18）',
+validate: v => !v ? '请输入城市名或坐标；如需自动定位，请打开上方开关' : v.includes(',') && !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(v) ? '坐标格式应为 纬度,经度（如 34.26,117.18）' : v.length > 100 ? '位置太长了' : '',
+set: (v, row) => saveCfg({ weather_city: v }, '天气位置', row).then(() => setTimeout(() => Poll.run('weather'), 800)) }),
 ] },
 { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
 { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
@@ -4335,30 +4753,9 @@ cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 5
 cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
 cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0.5, unit: 'W', hint: 'RAPL 只测 CPU 封装，整机估算叠加此底座，可按插座实测补差' }),
 ] },
-{ id: 'disk', title: '网络与硬盘', icon: 'net', items: [
-cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
-cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
-cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
-cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
-{ k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
-hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
-run: async b => {
-b.disabled = true;
-try {
-const j = await API.post('/api/disk_scan/now', {});
-if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
-else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
-} catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
-b.disabled = false;
-} },
-{ k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
-hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
-run: () => openSheet('scanlog') },
-cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
-] },
-{ id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
+{ id: 'monitor', title: '事件监控', icon: 'eye', desc: 'fnOS 80+ 种系统事件实时推送（主日志库 / 备份 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP），经事件模板化后走既有推送出口；硬盘巡检的开关、间隔、结果推送与已忽略的提醒也在这里。', custom: renderMonitor },
+{ id: 'notify', title: '通知设置', icon: 'bell', desc: '事件推送、硬盘巡检告警、阈值警告与定时报告都走这里配置的渠道；支持多渠道同时推送，测试也各测各的。', custom: renderNotify },
 { id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
-{ id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
 { id: 'look', title: '外观', icon: 'palette', items: [
 uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
 { k: 'colorspec', label: '色彩规范', type: 'colorspec', wide: true, hint: '概览安静、分析丰富：颜色按层级分工，紧急程度覆盖一切' },
@@ -4374,7 +4771,7 @@ uiItem('motion', '动效', 'toggle', { hint: '系统开启“减少动态效果�
 desc: '按页面列出所有版块，关掉的版块不显示，后端也会尽量停掉对应采集（省 CPU 与磁盘 IO）。顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列与容器列表——这几类数据无论怎么关都会继续采集，否则结论会失真。',
 custom: renderBlocks },
 { id: 'auth', title: '登录口令', icon: 'lock', desc: '开启后，访问飞牛监控需要先输入口令。', custom: renderAuth },
-{ id: 'data', title: '数据', icon: 'folder', custom: renderData },
+{ id: 'pushHistory', title: '日志·数据', icon: 'history', desc: '每条推送日志自动落库，可按成功/失败筛选、分页浏览、一键清空；数据保存目录与历史 / 流量 / 功耗 CSV、健康报告导出也在这里。', custom: renderHistoryData },
 { id: 'update', title: '软件更新', icon: 'download', custom: renderUpdate },
 { id: 'about', title: '关于', icon: 'info', custom: renderAbout },
 ];
@@ -4443,6 +4840,7 @@ card._sync();
 function renderThresholds(card) {
 const ROWS = [['cpu', 'CPU 占用', '%'], ['mem', '内存占用', '%'], ['cap', '存储容量', '%'], ['temp', 'CPU 温度', '℃'], ['diskTemp', '硬盘温度', '℃']];
 card.innerHTML = ROWS.map(([k, l]) => `<div class="set-row th-row" data-k="${k}Warn"><div><div class="lbl">${l}</div><div class="hint" data-h="${k}"></div></div><div class="ctl th-pair" data-p="${k}"></div></div>`).join('') +
+`<div data-ref="tnotify"></div>` +
 `<div class="set-row inline"><div><div class="lbl">恢复默认阈值</div><div class="hint">CPU / 内存 / 容量 85% · 95%，CPU 温度 80 · 90℃，硬盘温度 50 · 58℃</div></div><div class="ctl"><button class="btn" type="button" data-ref="reset">恢复默认</button></div></div>`;
 const save = (k, v, row) => {
 const t = Object.assign({}, TH, { [k]: v }), pair = TH_PAIRS.find(p => p.includes(k));
@@ -4459,6 +4857,7 @@ host.append(w);
 });
 });
 card._r = collect(card);
+card._r.tnotify.appendChild(setRow(cfgToggle('threshold_notify', '阈值警告推送', { hint: '超过以上阈值时（CPU / 内存 / 容量 / 温度 / SMART / 阵列）通过「通知设置」里的渠道推送，恢复时也会通知；在健康检查里忽略的问题不会推送' })));
 card._r.reset.onclick = () => { setThresholds({}); saveUI(); applyThresholds(); syncSettings(); toast('已恢复默认阈值'); };
 card._sync = () => { $$('.numfield', card).forEach(n => n.sync && n.sync()); ROWS.forEach(([k, , u]) => setText(card.querySelector(`[data-h="${k}"]`), `≥ ${TH[k + 'Warn']}${u} 警告 · ≥ ${TH[k + 'Crit']}${u} 严重`)); };
 card._sync();
@@ -4597,22 +4996,19 @@ idrac: ['iDRAC 硬件', '硬件'], ups: ['UPS', '硬件'], weather: ['天气', '
 const REPORT_MOD_ORDER = ['system', 'cpu', 'memory', 'load', 'gpu', 'disk', 'smart', 'storage', 'network', 'temp', 'fan', 'power', 'docker', 'vms', 'idrac', 'ups', 'weather'];
 let chSeq = 0; // 新建渠道 id 自增
 const newId = () => 'ch_' + Date.now().toString(36) + (chSeq++);
-card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
-· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
-· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
+card.innerHTML = `<div class="set-sub">推送渠道</div>
+<div class="note info notify-note">${ic('bell')}<span><b>事件推送、硬盘巡检告警、阈值警告、iDRAC 硬件告警与定时报告都走这里配置的渠道</b>，渠道可添加多个同时发送；每类推送有自己的开关：巡检的故障变化始终推送、每轮结果摘要在 事件监控 里开关，硬件告警到点只发仍未恢复的。</span></div>
 <div class="notify-channels" data-ref="chList"></div>
-<div style="display:flex;gap:8px;margin:8px 0 16px">
+<div style="display:flex;gap:8px;margin:8px 0 4px">
 <button class="btn" type="button" data-ref="addCh" style="flex:1">+ 添加推送渠道</button>
 <button class="btn" type="button" data-ref="guideBtn" style="flex:0 0 auto">? 使用说明</button>
 </div>
-<div class="set-row"><div><div class="lbl" style="margin-top:6px">全局通知设置</div><div class="hint">标题前缀、勿扰模式、极简推送，对所有渠道生效</div></div></div>
+<div class="set-sub" style="margin-top:14px">全局行为 · 对所有渠道生效</div>
 <div class="set-row"><div><div class="lbl">标题前缀</div><div class="hint">每条通知标题前加的前缀，默认「飞牛监控」</div></div><div class="ctl"><input class="textfield" data-ref="titlePrefix" placeholder="飞牛监控" maxlength="32" aria-label="通知标题前缀"></div></div>
 <div class="set-row inline"><div><div class="lbl">极简推送</div><div class="hint" data-ref="hMin"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMin" aria-label="极简推送"></button></div></div>
-<div class="set-row inline"><div><div class="lbl">勿扰模式</div><div class="hint" data-ref="hDnd"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swDnd" aria-label="勿扰模式"></button></div></div>
-<div class="set-row"><div><div class="lbl">勿扰时段</div><div class="hint">该时段内的通知会缓存，结束后汇总成一条发送</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:90px" type="time" data-ref="dndStart" aria-label="勿扰开始时间"><span>至</span><input class="textfield mono" style="width:90px" type="time" data-ref="dndEnd" aria-label="勿扰结束时间"></div></div>
-<div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
-<div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
-<div class="set-row"><div><div class="lbl" style="margin-top:6px">定时推送报告</div><div class="hint">按设定周期把系统各模块数据汇总推送一条报告；与告警推送互不干扰</div></div></div>
+<div class="set-row inline"><div><div class="lbl">勿扰模式</div><div class="hint" data-ref="hDnd"></div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="dndStart" aria-label="勿扰开始时间"><span class="faint" data-ref="dndTo" style="display:none">至</span><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="dndEnd" aria-label="勿扰结束时间"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swDnd" aria-label="勿扰模式"></button></div></div>
+<div class="set-row inline"><div><div class="lbl">硬件告警汇总</div><div class="hint" data-ref="hHw"></div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警汇总"></button></div></div>
+<div class="set-sub" style="margin-top:14px">定时推送报告 · 与告警互不干扰</div>
 <div class="set-row inline"><div><div class="lbl">开启定时报告</div><div class="hint" data-ref="hRep"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swRep" aria-label="开启定时报告"></button></div></div>
 <div class="set-row" data-ref="repSchRow"><div><div class="lbl">推送周期</div><div class="hint">到点自动发一条汇总报告</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
 <select class="textfield" data-ref="repType" aria-label="推送周期类型" style="width:auto">
@@ -4631,7 +5027,7 @@ card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两�
 </div></div>
 <div class="set-row wide" data-ref="repModRow"><div><div class="lbl">推送内容</div><div class="hint">勾选要在报告里推送的模块，并选择详细程度</div></div><div class="ctl" style="flex-direction:column;align-items:stretch;gap:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-<span class="set-sub" style="margin:0">详细程度</span>
+<span style="font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.02em">详细程度</span>
 <div data-ref="repDetailSeg"></div>
 </div>
 <div class="rep-mods" data-ref="repMods"></div>
@@ -4862,6 +5258,9 @@ const n = NB || {};
 x.swMin.setAttribute('aria-checked', String(!!+f.notify_minimal));
 x.swDnd.setAttribute('aria-checked', String(!!+f.notify_dnd_enabled));
 x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
+const dndOn = !!+f.notify_dnd_enabled, hwOn = !!+f.hw_enabled;
+x.dndStart.style.display = x.dndEnd.style.display = x.dndTo.style.display = dndOn ? '' : 'none';
+x.hwTime.style.display = hwOn ? '' : 'none';
 if (document.activeElement !== x.titlePrefix) x.titlePrefix.value = f.notify_title_prefix || '飞牛监控';
 if (document.activeElement !== x.dndStart) x.dndStart.value = f.notify_dnd_start || '23:00';
 if (document.activeElement !== x.dndEnd) x.dndEnd.value = f.notify_dnd_end || '08:00';
@@ -4952,6 +5351,98 @@ if (IB && !opts.refresh && !opts.reload) return IB;
 try { IB = await API.get('/api/idrac?sel=1' + (opts.refresh ? '&refresh=1' : '')); }
 catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
 return IB;
+}
+async function renderMonitor(card) {
+card.innerHTML = `<div class="note info notify-note">${ic('eye')}<span><b>事件监控</b>：fnOS 80+ 种系统事件实时推送（主日志库 / 备份任务库 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP 等），统一经事件模板化后走「通知」里的推送出口。数据源路径、轮询器开关与事件白名单在完整配置中调整。</span></div>
+<div class="set-row inline"><div><div class="lbl">运行状态</div><div class="hint" data-ref="hMon">正在读取…</div></div><div class="ctl" data-ref="stPill"></div></div>
+<div class="set-row inline"><div><div class="lbl">完整配置</div><div class="hint">数据源路径、轮询间隔、事件分类勾选、权限诊断与修复命令</div></div><div class="ctl"><button class="btn" type="button" data-mon-open>${ic('chev')}打开配置</button></div></div>
+<div class="set-sub">硬盘巡检</div>`;
+card.querySelector('[data-mon-open]').addEventListener('click', () => openSheet('monitor'));
+[
+cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
+cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
+{ k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
+hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
+run: async b => {
+b.disabled = true;
+try {
+const j = await API.post('/api/disk_scan/now', {});
+if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
+else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
+} catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+b.disabled = false;
+} },
+{ k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+run: () => openSheet('scanlog') },
+cfgToggle('disk_scan_notify', '巡检结果推送', { hint: '开启后每轮巡检完成都会把结果摘要（正常 / 留意 / 故障数量与变动）推送到「通知设置」里的渠道；故障变化的告警不受此开关影响，始终推送' }),
+].forEach(it => card.appendChild(setRow(it)));
+const igSub = document.createElement('div');
+igSub.className = 'set-sub';
+igSub.textContent = '已忽略的提醒';
+card.appendChild(igSub);
+const igBox = document.createElement('div');
+card.appendChild(igBox);
+renderIgnored(igBox);
+const x = collect(card);
+card._sync = () => igBox._sync && igBox._sync();
+try {
+const [cfgResp, stResp] = await Promise.all([API.get('/api/monitor'), API.get('/api/monitor/status')]);
+const cfg = cfgResp && cfgResp.config ? cfgResp.config : {};
+const enabled = cfg.enable === true;
+const started = stResp && stResp.started;
+const pollers = stResp && stResp.pollers ? Object.values(stResp.pollers) : [];
+const runCount = pollers.filter(v => v).length;
+setText(x.hMon, enabled
+? `已启用${started ? '' : '（未运行）'} · 轮询器 ${runCount}/${pollers.length} · 间隔 ${cfg.poll_interval || 5} 秒`
+: '未启用 · 事件不推送，在完整配置中可开启');
+setHTML(x.stPill, `<span class="pill ${enabled ? (started ? 'ok' : 'warn') : 'sleep'}">${enabled ? (started ? '<span class="dot"></span>运行中' : ic('alert') + '未运行') : '已关闭'}</span>`);
+} catch (e) {
+setText(x.hMon, '状态获取失败：' + e.message);
+}
+}
+async function renderPushHistory(card) {
+card.innerHTML = `<div class="note info notify-note">${ic('history')}<span><b>推送历史与统计</b>：每条推送记录（成功/失败、事件类型、摘要、完整 JSON 详情）自动落 SQLite，可按成功/失败筛选、分页浏览、点击展开查看详情。</span></div>
+<div id="phStats" style="display:flex;gap:10px;margin:10px 0;flex-wrap:wrap"></div>
+<div class="set-row inline"><div><div class="lbl">打开推送历史面板</div><div class="hint">筛选、分页浏览所有推送记录，支持一键清空</div></div><div class="ctl"><button class="btn btn-primary" type="button" data-ph-open>${ic('history')}打开历史</button></div></div>`;
+card.querySelector('[data-ph-open]').addEventListener('click', () => openSheet('pushHistory'));
+const statEl = card.querySelector('#phStats');
+try {
+const s = await API.get('/api/notify-stats');
+const total = s && s.total ? s.total.total : 0;
+const success = s && s.total ? s.total.success : 0;
+const fail = s && s.total ? s.total.fail : 0;
+const today = s && s.today ? s.today.total : 0;
+statEl.innerHTML = `
+<div style="padding:8px 12px;border-radius:6px;background:var(--bg-2);flex:1;min-width:120px">
+<div style="font-size:11px;color:var(--ink-3)">总条数</div><div style="font-weight:600">${total}</div>
+</div>
+<div style="padding:8px 12px;border-radius:6px;background:rgba(79,140,255,0.12);flex:1;min-width:120px">
+<div style="font-size:11px;color:var(--ink-3)">今日</div><div style="font-weight:600">${today}</div>
+</div>
+<div style="padding:8px 12px;border-radius:6px;background:rgba(7,193,96,0.12);flex:1;min-width:120px">
+<div style="font-size:11px;color:var(--ink-3)">成功</div><div style="font-weight:600;color:#07c160">${success}</div>
+</div>
+<div style="padding:8px 12px;border-radius:6px;background:rgba(255,77,79,0.12);flex:1;min-width:120px">
+<div style="font-size:11px;color:var(--ink-3)">失败</div><div style="font-weight:600;color:#ff4d4f">${fail}</div>
+</div>
+`;
+} catch (e) {
+statEl.innerHTML = `<div style="color:#ff4d4f;font-size:12px">统计获取失败：${esc(e.message)}</div>`;
+}
+}
+function renderHistoryData(card) {
+const ph = document.createElement('div');
+card.appendChild(ph);
+renderPushHistory(ph);
+const sub = document.createElement('div');
+sub.className = 'set-sub';
+sub.textContent = '数据目录与导出';
+card.appendChild(sub);
+const dt = document.createElement('div');
+card.appendChild(dt);
+renderData(dt);
+card._sync = () => dt._sync && dt._sync();
 }
 function renderIdrac(card) {
 card.innerHTML = `<div class="note info notify-note">${ic('server')}<span><b>只读</b>：通过 Redfish 直连 iDRAC 读取风扇转速、温度、功耗与硬件日志，不会改动服务器任何设置。密码单独存 <span class="mono">idrac.json</span>（0600），接口只回「是否已填」。自签证书需要关闭校验，仅建议在内网使用。</span></div>

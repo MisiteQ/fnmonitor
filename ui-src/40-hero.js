@@ -11,7 +11,7 @@ const Ignore = {
   add(it) {
     UI.ignored = Ignore.list().filter(x => x.key !== it.key).concat([{ key: it.key, fp: it.fp, label: it.base || it.text, level: it.level, at: Date.now() }]).slice(-100);
     saveUI(); renderNow(); syncSettings();
-    toast(`已忽略 · ${it.base || it.text}`, { sub: '状态变化时会重新提醒，可在 设置 → 已忽略的提醒 中取消', undo: () => Ignore.remove(it.key, true) });
+    toast(`已忽略 · ${it.base || it.text}`, { sub: '状态变化时会重新提醒，可在 设置 → 事件监控 → 已忽略的提醒 中取消', undo: () => Ignore.remove(it.key, true) });
   },
   remove(key, quiet) { UI.ignored = Ignore.list().filter(x => x.key !== key); saveUI(); renderNow(); syncSettings(); if (!quiet) toast('已恢复提醒', { key: 'save' }); },
 };

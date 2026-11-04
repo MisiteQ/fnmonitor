@@ -17,7 +17,7 @@
    "categories": [
     "系统工具"
    ],
-   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/ICON_256.PNG",
+   "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.40.0/ICON_256.PNG",
    "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
    "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
    "maintainer": "Misite齊",
@@ -27,279 +27,296 @@
    "is_docker": false,
    "service_port": "8777",
    "releases": {
-   "2.30.4": {
-    "changelog": "v2.30.4<br>① 修复定时报告改时间后当天不触发：daily/weekly/monthly 模式按「上次发送日期」判断是否该发，若当天已发过一次（如升级时补发），改了定时时间后当天不会再触发，用户误以为不工作；现保存通知设置时若定时调度（类型/时间/星期/日期/间隔）发生变更，自动清空 report_last_sent，让新时间点当天就能触发",
-    "updated_at": "2026-11-01T11:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-x86.fpk",
-      "sha256": "48aa6487b316d710d905776874b6af9bc8ed9dbbc815557ef79e202e78835df6",
-      "size": 623585
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-arm.fpk",
-      "sha256": "d1624ca27d55ab8a788f87d11161fc554654c1b331f2d4c86df1e243965d36bd",
-      "size": 623587
+    "2.40.0": {
+     "changelog": "v2.40.0 大版本合并：通知推送 · 事件监控巡检 · 阈值预警全面增强<br><br>① 通知推送系统全面升级：新增企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / 通用 Webhook 共 7 个推送渠道；统一动态列表 + 自定义消息模板；全局通知设置含标题前缀、勿扰模式、极简推送；定时推送报告支持时 / 天 / 周 / 月 / 自定义间隔，17+ 模块自由勾选，Markdown + emoji 排版<br>② 推送历史面板：所有推送记录独立存储在 SQLite，支持分页查询、成功 / 失败筛选、单条 JSON 详情查看<br>③ 事件监控巡检完整上线：参考 FNMessageBots 架构，新增 MonitorRuntime 轮询器——fnOS 主日志库 / 备份任务库 / 影视库 / 相册库 / 音乐库 / Docker Socket / SSH journal / WAN IP 变更 8 类数据源；事件分类卡片 + 搜索 + 推荐默认；推送异步发送，采集不再被推送阻塞<br>④ 阈值警告推送（threshold_notify）：CPU / 内存 / 容量 / 温度 / SMART / 单盘 / 阵列 8 类指标按用户阈值评估，60 秒限频、连续越限才触发；越限 → 升级 → 恢复全链路推送<br>⑤ 硬盘巡检结果摘要推送（disk_scan_notify）：每轮巡检完成后汇总正常 / 留意 / 故障硬盘数量、休眠跳过、状态变动，与故障告警互补<br>⑥ fnOS 应用生命周期事件模板补全：新增 APP_STARTED / APP_STOPPED / APP_UPDATED / APP_INSTALLED / APP_CRASH 等 11 个模板；40+ 字段自动翻译中文、时间戳自动格式化（YYYY-MM-DD HH:MM:SS）、VM 动态事件自动生成中文标题<br>⑦ 通知报告 Markdown → 纯文本：兼容邮件 / 企微 text / Server酱 / Bark 等纯文本渠道<br>⑧ 设置页全面重组与视觉统一：service+collect+disk 合并为服务·采集；已忽略提醒并入事件监控；数据改为日志·数据；勿扰时段改为内联开关 + 时间；.sheet-sec / .set-sub 统一中文 700 粗体 + 3px 竖条装饰<br>⑨ 多项底层稳定修复：Docker 事件 socket 阻塞修复、SSH journal 子进程终止修复、172.16-31 私有段 IP 精确匹配、MonitorRuntime 显式 start + 日志、事件去重指纹简化、保存设置落盘即返回<br>⑩ 致谢：通知推送与事件监控架构参考 Sunanang/FNMessageBots 项目，向作者致敬",
+     "updated_at": "2026-11-04T12:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.40.0/fnmonitor-2.40.0-x86.fpk",
+       "sha256": "5be23241a927c662fb6ee0b5a49b23086ea8da0d7c7430a0d0e34a5402044a24",
+       "size": 688736
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.40.0/fnmonitor-2.40.0-arm.fpk",
+       "sha256": "7c2f2bb43c5bb66ea2c441e2ebfad507c71d3b4b10fec31df1fc8bdc5c2695b0",
+       "size": 688739
+      }
      }
-    }
-   },
-   "2.30.3": {
-    "changelog": "v2.30.3<br>① 修复定时推送报告完全不触发：VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常<br>② 修复定时推送报告中虚拟机数据为空：虚拟机是按需采集的，不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存），正常推送到报告中<br>③ 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>④ 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
-    "updated_at": "2026-11-01T19:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-x86.fpk",
-      "sha256": "fb71c72882982910a990aae4f7379d48d78f09d3eb6977adb6c16020d3417992",
-      "size": 623349
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-arm.fpk",
-      "sha256": "6bee9ee5d1efddf77f7ef2f17fe8b4266d3d4af14d34415bf7104d5c7d0daf32",
-      "size": 623345
+    },
+    "2.30.4": {
+     "changelog": "v2.30.4<br>① 修复定时报告改时间后当天不触发：daily/weekly/monthly 模式按「上次发送日期」判断是否该发，若当天已发过一次（如升级时补发），改了定时时间后当天不会再触发，用户误以为不工作；现保存通知设置时若定时调度（类型/时间/星期/日期/间隔）发生变更，自动清空 report_last_sent，让新时间点当天就能触发",
+     "updated_at": "2026-11-01T11:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-x86.fpk",
+       "sha256": "48aa6487b316d710d905776874b6af9bc8ed9dbbc815557ef79e202e78835df6",
+       "size": 623585
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.4/fnmonitor-2.30.4-arm.fpk",
+       "sha256": "d1624ca27d55ab8a788f87d11161fc554654c1b331f2d4c86df1e243965d36bd",
+       "size": 623587
+      }
      }
-    }
-   },
-   "2.30.0": {
-    "changelog": "v2.30.0<br>① 通知推送系统全面升级：新增企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / 通用 Webhook 共 7 个推送渠道；9 个渠道统一为动态列表，每渠道可自定义消息模板（{title}/{content}/{text}/{time}）；全局通知设置含标题前缀、勿扰模式、极简推送；设置页新增使用说明抽屉<br>② 新增「定时推送报告」：可按时/天/周/月/自定义间隔，把 17 个模块数据汇总推送 Markdown 报告；模块自由勾选，支持简略 / 详细两档，Markdown + emoji 排版，网络自动过滤虚拟网卡，支持测试发送；定时报告不受全局极简推送截断<br>③ 致谢：通知推送与定时报告的多平台通知架构思路参考了 Sunanang/FNMessageBots 的日志推送实现，向作者 Sunanang 致谢",
-    "updated_at": "2026-10-31T20:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-x86.fpk",
-      "sha256": "a75855fe49aa078e581972cb73f3953774435ca7f319394638c87f5434eed71d",
-      "size": 621181
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-arm.fpk",
-      "sha256": "fd2584b3534aeac2644def3632387ae14b8af20f4bfb47c56b55d42ef625852e",
-      "size": 621178
+    },
+    "2.30.3": {
+     "changelog": "v2.30.3<br>① 修复定时推送报告完全不触发：VmMonitor 未注入采集线程（Collector 无 self.vms），每个采集周期抛 AttributeError 被静默吞掉，到点判定永远执行不到，定时推送全部失效（手动测试推送正常）；现 VmMonitor 先于采集线程创建并注入，定时推送恢复正常<br>② 修复定时推送报告中虚拟机数据为空：虚拟机是按需采集的，不在 collector 快照里，导致定时报告的虚拟机模块始终为空；现报告发送时若虚拟机模块被勾选，会调用 VmMonitor 实时采集一次（带缓存），正常推送到报告中<br>③ 修复定时报告「功耗与电费」数据不全：报告中今日用电 kWh 与电费此前恒为 0（快照只有实时瓦数，kWh 需历史库积分），现定时与测试报告都会用历史库现算真实能耗与电费，详细模式新增本月用电<br>④ 定时报告虚拟机模块内容补全：此前每台虚拟机只有名称与状态，现详细模式补充 vCPU / 内存用量 / CPU 使用率 / IP / 运行时长，状态显示中文",
+     "updated_at": "2026-11-01T19:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-x86.fpk",
+       "sha256": "fb71c72882982910a990aae4f7379d48d78f09d3eb6977adb6c16020d3417992",
+       "size": 623349
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.3/fnmonitor-2.30.3-arm.fpk",
+       "sha256": "6bee9ee5d1efddf77f7ef2f17fe8b4266d3d4af14d34415bf7104d5c7d0daf32",
+       "size": 623345
+      }
      }
-    }
-   },
-   "2.20.0": {
-    "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（社区贡献者 ttkl9559-cell，PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（社区贡献者 ttkl9559-cell，PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
-    "updated_at": "2026-10-28T10:30:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-x86.fpk",
-      "sha256": "6897634ee346f3bbb514d72f99ab1807651ebb45ce4d5190564041e826d5da6a",
-      "size": 926997
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-arm.fpk",
-      "sha256": "9400f16740407a7e9ba7cf32e7f641f324b08d9ad278503d81e880eaaaf621c4",
-      "size": 926993
+    },
+    "2.30.0": {
+     "changelog": "v2.30.0<br>① 通知推送系统全面升级：新增企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / 通用 Webhook 共 7 个推送渠道；9 个渠道统一为动态列表，每渠道可自定义消息模板（{title}/{content}/{text}/{time}）；全局通知设置含标题前缀、勿扰模式、极简推送；设置页新增使用说明抽屉<br>② 新增「定时推送报告」：可按时/天/周/月/自定义间隔，把 17 个模块数据汇总推送 Markdown 报告；模块自由勾选，支持简略 / 详细两档，Markdown + emoji 排版，网络自动过滤虚拟网卡，支持测试发送；定时报告不受全局极简推送截断<br>③ 致谢：通知推送与定时报告的多平台通知架构思路参考了 Sunanang/FNMessageBots 的日志推送实现，向作者 Sunanang 致谢",
+     "updated_at": "2026-10-31T20:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-x86.fpk",
+       "sha256": "a75855fe49aa078e581972cb73f3953774435ca7f319394638c87f5434eed71d",
+       "size": 621181
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.30.0/fnmonitor-2.30.0-arm.fpk",
+       "sha256": "fd2584b3534aeac2644def3632387ae14b8af20f4bfb47c56b55d42ef625852e",
+       "size": 621178
+      }
      }
-    }
-   },
-   "2.19.0": {
-    "changelog": "v2.19.0<br>① SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 ttkl9559-cell，PR #17）：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② 硬盘后台巡检与健康告警（PR #18）：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ iDRAC Redfish 带外监控（PR #19）：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ 审查修复：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复",
-    "updated_at": "2026-10-23T10:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-x86.fpk",
-      "sha256": "fdfab1fec923d29d565b1fc1c41040887c960dd70167724f8fd20e251d3d1401",
-      "size": 902292
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-arm.fpk",
-      "sha256": "518050890b80b2b2385d6ed052e7ed72a6781ce518f5fd91cc2da96a8ba6fe91",
-      "size": 902287
+    },
+    "2.20.0": {
+     "changelog": "v2.20.0<br>① 设置页「版块显示」面板 + 隐藏即停采（社区贡献者 ttkl9559-cell，PR #22）：按页面列出全部版块一行一开关，与 E 键编辑布局双向同步，标注「停止采集 / 仍会采集」；后端按依赖表联动停采（/proc 全量扫描 / 传感器风扇枚举 / 磁盘 IO / 端口扫描 / 内置应用遍历 / 网络 / 功耗），保顶部结论的 CPU / 内存 / 容量 / 温度 / 阵列 / 容器照常采<br>② 硬盘统一显示机箱槽位（社区贡献者 ttkl9559-cell，PR #22）：iDRAC 槽位映射下硬盘信息 / 巡检流水 / 告警通知统一显示「插槽 N（sdX）」；硬盘身份改用序列号，重启换名不再误报新增故障<br>③ 进程采样直读 /proc + 冷启动首屏加速（社区贡献者 ttkl9559-cell，PR #21）：进程 Top CPU 改 /proc 区间差分、口径「占整机」；预载上次巡检结果再开采集，更新后首屏不再空等磁盘 SMART<br>④ 审查修复：槽位标注正则改名，不再覆盖 /api/smart 设备名白名单校验",
+     "updated_at": "2026-10-28T10:30:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-x86.fpk",
+       "sha256": "6897634ee346f3bbb514d72f99ab1807651ebb45ce4d5190564041e826d5da6a",
+       "size": 926997
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.20.0/fnmonitor-2.20.0-arm.fpk",
+       "sha256": "9400f16740407a7e9ba7cf32e7f641f324b08d9ad278503d81e880eaaaf621c4",
+       "size": 926993
+      }
      }
-    }
-   },
-   "2.18.4": {
-    "changelog": "v2.18.4<br>① 安全加固：CSRF 检查简化为两道闸（社区贡献者 iqiuzixuan，PR #14）——移除 Origin 比对与本机回环信任，只保留 Content-Type: application/json 和 X-FNM-Request: 1 两道闸，浏览器跨站必须先走 CORS 预检而本服务从不放行；修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf_rejected<br>② 修复存储详情「阵列」标题被卡片压住（社区贡献者 iqiuzixuan，PR #15）——新增 .sheet-stack 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ 系统版本显示飞牛 fnOS 版本（社区贡献者 iqiuzixuan，PR #16）——首页概况、主机模块副标题和信息表改为显示 fnOS 版本号，不再显示底层 Debian",
-    "updated_at": "2026-10-14T16:30:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-x86.fpk",
-      "sha256": "36fb95000042b31a86aeb0087f20e938faad5e3fe3b7d3a3e771c424d0e9ac86",
-      "size": 524207
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-arm.fpk",
-      "sha256": "fc82ba7efe21dcfaea72b0fe3641b76d9c6fad7be8b37c4cfccf7b2d083845c5",
-      "size": 524210
+    },
+    "2.19.0": {
+     "changelog": "v2.19.0<br>① SAS/SCSI 企业级硬盘 SMART 全面支持（社区贡献者 ttkl9559-cell，PR #17）：SAS 盘 smartctl 字段名与 SATA 完全不同（Serial number、Current Drive Temperature、Accumulated power on time、Elements in grown defect list、Error counter log 三向表），此前一律读不到；现完整解析并映射既有 SMART 键，前端零改动判色，含 -n standby 休眠保护<br>② 硬盘后台巡检与健康告警（PR #18）：DiskScanner 后台线程按可配置周期巡检全部硬盘，健康分级与缺陷计数变化落 sqlite 持久化；SMTP 邮件 + Server酱 双通道告警，状态机去重——首次只记基线、变化才通知、恢复也告知<br>③ iDRAC Redfish 带外监控（PR #19）：Dell 服务器 iDRAC 只读接入——温度 / 风扇 / 电源冗余 / SEL 硬件日志（发生与恢复配对），快慢组采集线程 + 请求单飞；设置页一键测试连接并逐步报出失败原因<br>④ 审查修复：standby 结果不缓存（避免盘唤醒后假休眠）、同盘详情请求单飞、巡检「最后变化时间」NULL 安全比较、iDRAC 失败原因透传、盘位表 0 号插槽显示修复",
+     "updated_at": "2026-10-23T10:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-x86.fpk",
+       "sha256": "fdfab1fec923d29d565b1fc1c41040887c960dd70167724f8fd20e251d3d1401",
+       "size": 902292
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.19.0/fnmonitor-2.19.0-arm.fpk",
+       "sha256": "518050890b80b2b2385d6ed052e7ed72a6781ce518f5fd91cc2da96a8ba6fe91",
+       "size": 902287
+      }
      }
-    }
-   },
-   "2.18.3": {
-    "changelog": "v2.18.3<br>① 修复飞牛官方手机 app 打开面板仍报 csrf_rejected 的问题（v2.18.1 / 2.18.2 修复不彻底）：手机 app 的面板经飞牛官方远程域名 + fnOS 本机代理组件转发到本服务，请求来源是本机回环（::1），其 Origin 是官方域名、与被代理改写后的 Host 不一致，撞上公网跨站拒绝规则；现对本机回环来源（127.x / ::1）直接信任 CSRF 检查——该来源由内核网络栈决定，外部浏览器跨站请求不可能伪造，公网防护不受影响",
-    "updated_at": "2026-10-14T23:30:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.3/fnmonitor-2.18.3-x86.fpk",
-      "sha256": "44c125774ab6e41924b6133ec644fe13327723069572f024e6be10ce8148565b",
-      "size": 524013
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.3/fnmonitor-2.18.3-arm.fpk",
-      "sha256": "630465148039190c18467730ce87ad03c0e0ddebb2342f9a960568279348b302",
-      "size": 524016
+    },
+    "2.18.4": {
+     "changelog": "v2.18.4<br>① 安全加固：CSRF 检查简化为两道闸（社区贡献者 iqiuzixuan，PR #14）——移除 Origin 比对与本机回环信任，只保留 Content-Type: application/json 和 X-FNM-Request: 1 两道闸，浏览器跨站必须先走 CORS 预检而本服务从不放行；修正 v2.18.3 中反向代理流量会跳过全部 CSRF 检查的安全缺陷；FN Connect 局域网模式保存设置不再报 csrf_rejected<br>② 修复存储详情「阵列」标题被卡片压住（社区贡献者 iqiuzixuan，PR #15）——新增 .sheet-stack 间距规则，修正健康检查、CPU 多显卡、硬盘提示等详情面板中卡片间距缺失<br>③ 系统版本显示飞牛 fnOS 版本（社区贡献者 iqiuzixuan，PR #16）——首页概况、主机模块副标题和信息表改为显示 fnOS 版本号，不再显示底层 Debian",
+     "updated_at": "2026-10-14T16:30:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-x86.fpk",
+       "sha256": "36fb95000042b31a86aeb0087f20e938faad5e3fe3b7d3a3e771c424d0e9ac86",
+       "size": 524207
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.4/fnmonitor-2.18.4-arm.fpk",
+       "sha256": "fc82ba7efe21dcfaea72b0fe3641b76d9c6fad7be8b37c4cfccf7b2d083845c5",
+       "size": 524210
+      }
      }
-    }
-   },
-   "2.18.2": {
-    "changelog": "v2.18.2<br>① 修复飞牛官方手机 app 内嵌打开面板仍报 csrf_rejected 的问题：放行 Origin: null 与 app 内部 scheme 等 WebView 特征来源（此前仅放行局域网 Origin 不够），跨站防护不降级<br>② 新增 CSRF 拒绝日志：POST 请求被拒时在 server.log 记录具体闸门与来源，便于定位 app 内嵌等特殊访问场景",
-    "updated_at": "2026-10-14T22:40:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-x86.fpk",
-      "sha256": "e4dc18e2827073f278a6e18b121540c4727c3d2cc74287a43124a010008f9ed6",
-      "size": 523329
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-arm.fpk",
-      "sha256": "d37de5b2425e3013db726e507532ab78e70ca43e40a1cbafe73c85c67236aa21",
-      "size": 523331
+    },
+    "2.18.3": {
+     "changelog": "v2.18.3<br>① 修复飞牛官方手机 app 打开面板仍报 csrf_rejected 的问题（v2.18.1 / 2.18.2 修复不彻底）：手机 app 的面板经飞牛官方远程域名 + fnOS 本机代理组件转发到本服务，请求来源是本机回环（::1），其 Origin 是官方域名、与被代理改写后的 Host 不一致，撞上公网跨站拒绝规则；现对本机回环来源（127.x / ::1）直接信任 CSRF 检查——该来源由内核网络栈决定，外部浏览器跨站请求不可能伪造，公网防护不受影响",
+     "updated_at": "2026-10-14T23:30:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.3/fnmonitor-2.18.3-x86.fpk",
+       "sha256": "44c125774ab6e41924b6133ec644fe13327723069572f024e6be10ce8148565b",
+       "size": 524013
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.3/fnmonitor-2.18.3-arm.fpk",
+       "sha256": "630465148039190c18467730ce87ad03c0e0ddebb2342f9a960568279348b302",
+       "size": 524016
+      }
      }
-    }
-   },
-   "2.18.1": {
-    "changelog": "v2.18.1<br>① 盘位与内存插槽卡片自适应：硬盘 / 内存数量少时卡片拉伸铺满模块宽度，多时自动换行；修复盘位卡片文字溢出（型号最多两行截断、精简前缀）<br>② 修复设置页侧边栏高亮错位：点击立即高亮并跟随滚动位置，底部矮分组也能正确高亮<br>③ 修复飞牛官方手机 app 内嵌打开面板报 csrf_rejected 无法登录的问题（放行同主机名任意端口与局域网来源，跨站防护不降级）",
-    "updated_at": "2026-10-14T21:30:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-x86.fpk",
-      "sha256": "6ec6da5c4c187cd644cac324b463d85f88f9f0e1a668eed1092603060123c456",
-      "size": 522966
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-arm.fpk",
-      "sha256": "14690c042e11d39ee3879783258e3fcca2e14d4723ceb69cd58a9d108d4c63c4",
-      "size": 522977
+    },
+    "2.18.2": {
+     "changelog": "v2.18.2<br>① 修复飞牛官方手机 app 内嵌打开面板仍报 csrf_rejected 的问题：放行 Origin: null 与 app 内部 scheme 等 WebView 特征来源（此前仅放行局域网 Origin 不够），跨站防护不降级<br>② 新增 CSRF 拒绝日志：POST 请求被拒时在 server.log 记录具体闸门与来源，便于定位 app 内嵌等特殊访问场景",
+     "updated_at": "2026-10-14T22:40:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-x86.fpk",
+       "sha256": "e4dc18e2827073f278a6e18b121540c4727c3d2cc74287a43124a010008f9ed6",
+       "size": 523329
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.2/fnmonitor-2.18.2-arm.fpk",
+       "sha256": "d37de5b2425e3013db726e507532ab78e70ca43e40a1cbafe73c85c67236aa21",
+       "size": 523331
+      }
      }
-    }
-   },
-   "2.18.0": {
-    "changelog": "v2.18.0<br>① 全新界面与后端升级（社区贡献者 @iqiuzixuan）：界面与设计体系全面重设计，新增虚拟机（QEMU/KVM）监控页（列表 / 实时读数 / 开关机等操作），后端安全加固（登录令牌 / CSRF / Host 校验 / 请求体限制 / 敏感信息脱敏），补全回归测试套件与 GitHub Actions CI（多 Python 版本单元 / HTTP 集成测试 + 前端构建一致性校验）；合并上游 PR #8 / #9 / #10 / #12<br>② 更换全新应用图标（桌面 / 应用中心 / 包内 / 网页 favicon 统一）<br>③ 补充 MIT 许可证（双版权：Misite齊 / iqiuzixuan），README 与应用内「关于」页加入贡献者署名与 GitHub 链接",
-    "updated_at": "2026-10-14T20:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.0/fnmonitor-2.18.0-x86.fpk",
-      "sha256": "52ec38ddf72f7011b54b17fc349a93fcb9bf3125584d6a81519703fa1fd42dba",
-      "size": 521683
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.0/fnmonitor-2.18.0-arm.fpk",
-      "sha256": "3d3e77af0968860bbabfe47331355882f63f2b55e840098df5ba6d60b2bad902",
-      "size": 521688
+    },
+    "2.18.1": {
+     "changelog": "v2.18.1<br>① 盘位与内存插槽卡片自适应：硬盘 / 内存数量少时卡片拉伸铺满模块宽度，多时自动换行；修复盘位卡片文字溢出（型号最多两行截断、精简前缀）<br>② 修复设置页侧边栏高亮错位：点击立即高亮并跟随滚动位置，底部矮分组也能正确高亮<br>③ 修复飞牛官方手机 app 内嵌打开面板报 csrf_rejected 无法登录的问题（放行同主机名任意端口与局域网来源，跨站防护不降级）",
+     "updated_at": "2026-10-14T21:30:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-x86.fpk",
+       "sha256": "6ec6da5c4c187cd644cac324b463d85f88f9f0e1a668eed1092603060123c456",
+       "size": 522966
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.1/fnmonitor-2.18.1-arm.fpk",
+       "sha256": "14690c042e11d39ee3879783258e3fcca2e14d4723ceb69cd58a9d108d4c63c4",
+       "size": 522977
+      }
      }
-    }
-   },
-   "2.17.1": {
-    "changelog": "v2.17.1<br>① 移除风扇控制功能：本系统定位为纯数据读取监控，不操作系统硬件；删除风扇调速滑块、占空比设置、恢复自动温控（交还 BIOS）等所有写操作，仅保留风扇转速读取与趋势展示",
-    "updated_at": "2026-10-11T10:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-x86.fpk",
-      "sha256": "0aff3590619cb57a1b4852d5e1947135379161f054e117aa432c70198343d091",
-      "size": 304939
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-arm.fpk",
-      "sha256": "f1f8cda08ee235964a07da287a91dc3fd000708e3fd823571da68954dfa94fc1",
-      "size": 304957
+    },
+    "2.18.0": {
+     "changelog": "v2.18.0<br>① 全新界面与后端升级（社区贡献者 @iqiuzixuan）：界面与设计体系全面重设计，新增虚拟机（QEMU/KVM）监控页（列表 / 实时读数 / 开关机等操作），后端安全加固（登录令牌 / CSRF / Host 校验 / 请求体限制 / 敏感信息脱敏），补全回归测试套件与 GitHub Actions CI（多 Python 版本单元 / HTTP 集成测试 + 前端构建一致性校验）；合并上游 PR #8 / #9 / #10 / #12<br>② 更换全新应用图标（桌面 / 应用中心 / 包内 / 网页 favicon 统一）<br>③ 补充 MIT 许可证（双版权：Misite齊 / iqiuzixuan），README 与应用内「关于」页加入贡献者署名与 GitHub 链接",
+     "updated_at": "2026-10-14T20:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.0/fnmonitor-2.18.0-x86.fpk",
+       "sha256": "52ec38ddf72f7011b54b17fc349a93fcb9bf3125584d6a81519703fa1fd42dba",
+       "size": 521683
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.18.0/fnmonitor-2.18.0-arm.fpk",
+       "sha256": "3d3e77af0968860bbabfe47331355882f63f2b55e840098df5ba6d60b2bad902",
+       "size": 521688
+      }
      }
-    }
-   },
-   "2.16.8": {
-    "changelog": "v2.16.8<br>① 修复更新后版本号显示为旧值（2.9.7 缓存问题）：HTML head 添加 meta Cache-Control/Pragma/Expires 禁止缓存，更新成功后 location.reload 改为 cache-busting URL（?v=时间戳）强制浏览器从服务器获取最新页面；② 删除「一键初始化界面」描述中残留的「云纹背景」字样；③ 修复开启上月汇总后总仪表盘不显示汇总卡片：用户刚开启功能时 monthly_summary 表暂无数据（需等 cleanup 触发归档），原逻辑 available=false 时卡片隐藏；改为 enabled=true 时无论有无数据都显示，无数据时展示暂无汇总数据提示",
-    "updated_at": "2026-10-09T17:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-x86.fpk",
-      "sha256": "abc256aee20e0df53748a6770db8f11c0d9500c79f7e4863c092d3ec0fdf260e",
-      "size": 297458
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-arm.fpk",
-      "sha256": "3a45db13b54ea3964cc9bb108d081cb7ce618106c89c33d92411134ba4a109cd",
-      "size": 297171
+    },
+    "2.17.1": {
+     "changelog": "v2.17.1<br>① 移除风扇控制功能：本系统定位为纯数据读取监控，不操作系统硬件；删除风扇调速滑块、占空比设置、恢复自动温控（交还 BIOS）等所有写操作，仅保留风扇转速读取与趋势展示",
+     "updated_at": "2026-10-11T10:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-x86.fpk",
+       "sha256": "0aff3590619cb57a1b4852d5e1947135379161f054e117aa432c70198343d091",
+       "size": 304939
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.17.1/fnmonitor-2.17.1-arm.fpk",
+       "sha256": "f1f8cda08ee235964a07da287a91dc3fd000708e3fd823571da68954dfa94fc1",
+       "size": 304957
+      }
      }
-    }
-   },
-   "2.16.7": {
-    "changelog": "v2.16.7<br>① 修复「上月汇总」开关点击启用后瞬间复原、功能打不开：api_config_save 保存配置到 config.json 后同步内存 self.config 时漏了 monthly_summary_enabled 字段，导致内存中始终是旧值 0，紧接着 pollMonthlySummary 回读 /api/monthly_summary 返回 enabled=false 把 checkbox 重置；现内存同步循环补入 monthly_summary_enabled；同时前端 loadConfigForm 补入开关状态加载，renderMonthlySummary 移除回写 checkbox 逻辑",
-    "updated_at": "2026-10-09T16:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-x86.fpk",
-      "sha256": "b96e27da6e5ad739e98bd89348eb20e1b9998d5ee64135887d2879e711493ae5",
-      "size": 296670
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-arm.fpk",
-      "sha256": "3e8f6dc6f51e3d8f69c3dc25f60c51fa244bae1fbbca1d065702b6adc3827de1",
-      "size": 296679
+    },
+    "2.16.8": {
+     "changelog": "v2.16.8<br>① 修复更新后版本号显示为旧值（2.9.7 缓存问题）：HTML head 添加 meta Cache-Control/Pragma/Expires 禁止缓存，更新成功后 location.reload 改为 cache-busting URL（?v=时间戳）强制浏览器从服务器获取最新页面；② 删除「一键初始化界面」描述中残留的「云纹背景」字样；③ 修复开启上月汇总后总仪表盘不显示汇总卡片：用户刚开启功能时 monthly_summary 表暂无数据（需等 cleanup 触发归档），原逻辑 available=false 时卡片隐藏；改为 enabled=true 时无论有无数据都显示，无数据时展示暂无汇总数据提示",
+     "updated_at": "2026-10-09T17:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-x86.fpk",
+       "sha256": "abc256aee20e0df53748a6770db8f11c0d9500c79f7e4863c092d3ec0fdf260e",
+       "size": 297458
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.8/fnmonitor-2.16.8-arm.fpk",
+       "sha256": "3a45db13b54ea3964cc9bb108d081cb7ce618106c89c33d92411134ba4a109cd",
+       "size": 297171
+      }
      }
-    }
-   },
-   "2.16.6": {
-    "changelog": "v2.16.6<br>① 新增「上月汇总」功能：总览仪表盘顶部新增上月汇总卡片，展示上个月各项监控数据汇总（CPU/内存/磁盘/温度的均值与峰值、网络总流量、功耗 kWh 与电费、负载等），设置中可开关。核心机制：清理前增量叠加——每次 cleanup 删除过期 metrics 数据前，先把数据按月汇总 UPSERT 到独立的 monthly_summary 表（不受 cleanup 影响），即使历史保留天数不足整月（如 7 天）月度汇总仍完整不丢失；历史保留天数 < 31 时在设置页与卡片中提示已自动叠加保存汇总统计",
-    "updated_at": "2026-10-09T15:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-x86.fpk",
-      "sha256": "1a9cadf77b939edde110532136fc33e58b9df08daa6e98d7013ea92fb5aab190",
-      "size": 296705
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-arm.fpk",
-      "sha256": "37e654718fc5172832e2b72995009c63e8ac2d64be48738f121db9e7cfc5bb66",
-      "size": 296701
+    },
+    "2.16.7": {
+     "changelog": "v2.16.7<br>① 修复「上月汇总」开关点击启用后瞬间复原、功能打不开：api_config_save 保存配置到 config.json 后同步内存 self.config 时漏了 monthly_summary_enabled 字段，导致内存中始终是旧值 0，紧接着 pollMonthlySummary 回读 /api/monthly_summary 返回 enabled=false 把 checkbox 重置；现内存同步循环补入 monthly_summary_enabled；同时前端 loadConfigForm 补入开关状态加载，renderMonthlySummary 移除回写 checkbox 逻辑",
+     "updated_at": "2026-10-09T16:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-x86.fpk",
+       "sha256": "b96e27da6e5ad739e98bd89348eb20e1b9998d5ee64135887d2879e711493ae5",
+       "size": 296670
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.7/fnmonitor-2.16.7-arm.fpk",
+       "sha256": "3e8f6dc6f51e3d8f69c3dc25f60c51fa244bae1fbbca1d065702b6adc3827de1",
+       "size": 296679
+      }
      }
-    }
-   },
-   "2.16.5": {
-    "changelog": "v2.16.5<br>① 修复长期运行后内存冲顶不回落（issue #3）：历史导出与流量统计/健康报告路径的查询结果被误挂入休眠读缓存 _read_memo 永久持有——全表 fetchall 可达数百万行，一次导出即 +1.44 GiB RSS 且不释放；导出是用户主动的一次性操作不该缓存，现改为不挂缓存（函数返回后 GC 回收），_memo 仅保留给面板轮询查询（休眠保护场景）；全表查询加 LIMIT 1000000 保护；休眠保护仍生效（休眠时返回空列表）",
-    "updated_at": "2026-10-08T15:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.5/fnmonitor-2.16.5-x86.fpk",
-      "sha256": "2be361468df78de79977e5e162885bfcea149ecbe85b824292870be62dce84bb",
-      "size": 293166
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.5/fnmonitor-2.16.5-arm.fpk",
-      "sha256": "e66be22a191619d9b8116cbf4740dd05f011d84d211f725670371de2a3d01535",
-      "size": 293162
+    },
+    "2.16.6": {
+     "changelog": "v2.16.6<br>① 新增「上月汇总」功能：总览仪表盘顶部新增上月汇总卡片，展示上个月各项监控数据汇总（CPU/内存/磁盘/温度的均值与峰值、网络总流量、功耗 kWh 与电费、负载等），设置中可开关。核心机制：清理前增量叠加——每次 cleanup 删除过期 metrics 数据前，先把数据按月汇总 UPSERT 到独立的 monthly_summary 表（不受 cleanup 影响），即使历史保留天数不足整月（如 7 天）月度汇总仍完整不丢失；历史保留天数 < 31 时在设置页与卡片中提示已自动叠加保存汇总统计",
+     "updated_at": "2026-10-09T15:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-x86.fpk",
+       "sha256": "1a9cadf77b939edde110532136fc33e58b9df08daa6e98d7013ea92fb5aab190",
+       "size": 296705
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.6/fnmonitor-2.16.6-arm.fpk",
+       "sha256": "37e654718fc5172832e2b72995009c63e8ac2d64be48738f121db9e7cfc5bb66",
+       "size": 296701
+      }
      }
-    }
-   },
-   "2.16.4": {
-    "changelog": "v2.16.4<br>① 修复「时间·农历」显示与真实农历不同步：公历转农历查表算法的三处错误——年份回补误用下一年天数（闰月年后日期错 1～2 个月，如 2025-06-25 误显四月廿九、实为六月初一）、月份回补同理且闰月标志未复位（闰月后月份全被错标为「闰」，出现闰七月/闰腊月）、日干支常数错误（+50 应为 +17，日柱长期算错）；已经 1950–2048 共 36000 天逐日连续性自检与权威万年历对照（2026-10-06 = 丙午年八月廿六·癸丑日）",
-    "updated_at": "2026-10-06T20:00:00+08:00",
-    "os_min_version": "0.9.0",
-    "packages": {
-     "x86": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-x86.fpk",
-      "sha256": "52aada51df4dd32c71199b58c98355cbc7289b97a48111b68b21ed5c577f9373",
-      "size": 292259
-     },
-     "arm": {
-      "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-arm.fpk",
-      "sha256": "170984c9ae094c5d9bb1f519b4d961943d76349fc8c251b064c2aea68012f169",
-      "size": 292271
+    },
+    "2.16.5": {
+     "changelog": "v2.16.5<br>① 修复长期运行后内存冲顶不回落（issue #3）：历史导出与流量统计/健康报告路径的查询结果被误挂入休眠读缓存 _read_memo 永久持有——全表 fetchall 可达数百万行，一次导出即 +1.44 GiB RSS 且不释放；导出是用户主动的一次性操作不该缓存，现改为不挂缓存（函数返回后 GC 回收），_memo 仅保留给面板轮询查询（休眠保护场景）；全表查询加 LIMIT 1000000 保护；休眠保护仍生效（休眠时返回空列表）",
+     "updated_at": "2026-10-08T15:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.5/fnmonitor-2.16.5-x86.fpk",
+       "sha256": "2be361468df78de79977e5e162885bfcea149ecbe85b824292870be62dce84bb",
+       "size": 293166
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.5/fnmonitor-2.16.5-arm.fpk",
+       "sha256": "e66be22a191619d9b8116cbf4740dd05f011d84d211f725670371de2a3d01535",
+       "size": 293162
+      }
      }
-    }
-   },
-   "2.16.3": {
+    },
+    "2.16.4": {
+     "changelog": "v2.16.4<br>① 修复「时间·农历」显示与真实农历不同步：公历转农历查表算法的三处错误——年份回补误用下一年天数（闰月年后日期错 1～2 个月，如 2025-06-25 误显四月廿九、实为六月初一）、月份回补同理且闰月标志未复位（闰月后月份全被错标为「闰」，出现闰七月/闰腊月）、日干支常数错误（+50 应为 +17，日柱长期算错）；已经 1950–2048 共 36000 天逐日连续性自检与权威万年历对照（2026-10-06 = 丙午年八月廿六·癸丑日）",
+     "updated_at": "2026-10-06T20:00:00+08:00",
+     "os_min_version": "0.9.0",
+     "packages": {
+      "x86": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-x86.fpk",
+       "sha256": "52aada51df4dd32c71199b58c98355cbc7289b97a48111b68b21ed5c577f9373",
+       "size": 292259
+      },
+      "arm": {
+       "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.16.4/fnmonitor-2.16.4-arm.fpk",
+       "sha256": "170984c9ae094c5d9bb1f519b4d961943d76349fc8c251b064c2aea68012f169",
+       "size": 292271
+      }
+     }
+    },
+    "2.16.3": {
      "changelog": "v2.16.3<br>① 修复已安装最新版仍提示「发现新版本」：版本号常量硬编码未随 2.16.x 升级，现改为启动时从 manifest 动态读取（唯一数据源）<br>② 修复「关于 / 软件更新」版本号与已安装版本对不上：侧边栏/页脚硬编码 v2.15.1 残留，现四处版本显示统一由接口实时下发",
      "updated_at": "2026-09-27T23:30:00+08:00",
      "os_min_version": "0.9.0",

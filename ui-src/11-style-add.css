@@ -199,7 +199,8 @@ dd .diag-link { margin: 0; height: 24px; }
 }
 
 /* 设置 → 版块显示 */
-.set-sub { margin: 14px 0 2px; color: var(--ink-3); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.set-sub { display: flex; align-items: center; gap: 6px; margin: 12px 0 4px; color: var(--ink-2); font-size: 12.5px; font-weight: 700; letter-spacing: .01em; }
+.set-sub::before { content: ""; flex: none; width: 3px; height: 13px; border-radius: 2px; background: var(--d-p); }
 .set-card > .set-sub:first-child { margin-top: 0; }
 .blk-row .lbl { transition: opacity .15s ease; }
 .blk-row.blk-off .lbl { opacity: .5; }

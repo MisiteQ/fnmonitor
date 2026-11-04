@@ -43,31 +43,61 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
+# 推送历史模块（app/utils/push_history.py，与主文件同目录）
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+from utils import push_history as _push_history
+# fnOS 日志事件监控运行时（P3）
+try:
+    from utils import monitor_runtime as _monitor_runtime_mod
+    from utils import access_diagnostics as _access_diag_mod
+    _MONITOR_RUNTIME_AVAILABLE = True
+except Exception as _mr_e:
+    _monitor_runtime_mod = None
+    _access_diag_mod = None
+    _MONITOR_RUNTIME_AVAILABLE = False
+
 def _read_manifest_version():
     """从 manifest 读取权威版本号（打包版本由 manifest 决定，避免与应用内常量双处维护不一致）。
-    依次尝试：TRIM_APPDEST（fnOS 应用目录）、仓库布局 app/ 上一级、fnOS 应用基础目录。"""
+    依次尝试：TRIM_APPDEST（fnOS 应用目录，最优先）、fnOS 应用基础目录 fnmonitor 子目录、
+    仓库布局 app/ 上一级（开发环境）。绝对禁止读父目录 manifest（那是应用中心总清单，版本永远落后）。"""
     here = os.path.dirname(os.path.abspath(__file__))
-    for base in (os.environ.get("TRIM_APPDEST", ""), os.path.dirname(here),
-                 "/var/apps/fnmonitor"):
+    candidates = []
+    # 1. TRIM_APPDEST（fnOS 打包安装时设置的环境变量，最权威）
+    trim_appdest = os.environ.get("TRIM_APPDEST", "")
+    if trim_appdest:
+        candidates.append(trim_appdest)
+    # 2. /var/apps/fnmonitor（fnOS 应用基础目录的 fnmonitor 子目录）
+    candidates.append("/var/apps/fnmonitor")
+    # 3. 开发环境：server.py 位于 app/ 目录，上一级就是 repo root
+    candidates.append(os.path.dirname(here))
+    for base in candidates:
         if not base:
             continue
         try:
-            with open(os.path.join(base, "manifest"), "r", encoding="utf-8",
+            manifest_path = os.path.join(base, "manifest")
+            if not os.path.isfile(manifest_path):
+                continue
+            with open(manifest_path, "r", encoding="utf-8",
                       errors="ignore") as f:
                 for line in f:
                     m = re.match(r'\s*version\s*=\s*"?([^"\r\n]+?)"?\s*$', line)
                     if m:
-                        return m.group(1)
+                        # 防御：父目录总清单里 manifest 也可能被读到——校验版本号格式
+                        v = m.group(1)
+                        if re.match(r'^\d+\.\d+\.\d+$', v):
+                            return v
         except Exception:
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.30.4"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.40.0"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -3417,6 +3447,14 @@ def disk_scan_once(db, config=None):
             note = None
         if note:
             summary["notify"] = note
+        # 巡检结果摘要推送（disk_scan_notify 开关）：每轮完成都推一条结果摘要
+        try:
+            note2 = notify_scan_summary(summary, config, db)
+        except Exception:
+            traceback.print_exc()
+            note2 = None
+        if note2:
+            summary["notify_summary"] = note2
         _disk_scan_state.update({"last_ts": ts, "summary": summary, "error": ""})
         return summary
     except Exception as e:
@@ -3785,11 +3823,12 @@ def notify_load(data_dir):
         cfg["report_modules"] = mods or list(NOTIFY_DEFAULT["report_modules"])
     rd = str(user.get("report_detail") or "").strip().lower()
     cfg["report_detail"] = rd if rd in ("brief", "detail") else NOTIFY_DEFAULT["report_detail"]
-    if "report_last_sent" in user:
-        try:
-            cfg["report_last_sent"] = float(user["report_last_sent"])
-        except Exception:
-            pass
+    for k in ("report_last_sent", "report_last_fail"):
+        if k in user:
+            try:
+                cfg[k] = float(user[k])
+            except Exception:
+                pass
     return cfg
 
 
@@ -4614,7 +4653,18 @@ def _notify_flush_dnd(cfg):
     subject = "勿扰时段汇总（%d 条）" % len(items)
     body = "\n".join(lines)
     subject, body = _notify_apply_global(cfg, subject, body)
-    return _notify_send_all_raw(cfg, subject, body)
+    ok_all, res = _notify_send_all_raw(cfg, subject, body)
+    # 写入推送历史（flush 后的真实推送同样记一条）
+    try:
+        _push_history.record(
+            success=ok_all,
+            event_type="DND_FLUSH",
+            summary=subject,
+            detail={"channels": res},
+        )
+    except Exception:
+        pass
+    return ok_all, res
 
 
 def _notify_send_all_raw(cfg, subject, body):
@@ -4657,7 +4707,18 @@ def notify_send_all(cfg, subject, body, skip_minimal=False):
         if len(_NOTIFY_DND_BUFFER) > 100:
             _NOTIFY_DND_BUFFER.pop(0)
         return True, {"dnd": True}
-    return _notify_send_all_raw(cfg, subject, body)
+    ok_all, res = _notify_send_all_raw(cfg, subject, body)
+    # 写入推送历史（异常不影响主流程，db_path 未初始化时 record 内部是空操作）
+    try:
+        _push_history.record(
+            success=ok_all,
+            event_type="NOTIFY_SEND",
+            summary=subject,
+            detail={"channels": res, "body_preview": (body or "")[:500]},
+        )
+    except Exception:
+        pass
+    return ok_all, res
 
 
 DISK_METRIC_KEYS = (("defects", "重映射扇区"), ("pending_defects", "待映射扇区"),
@@ -4843,6 +4904,289 @@ def notify_after_scan(items, ts, db, config=None):
     except Exception:
         traceback.print_exc()
         return None
+
+
+def notify_scan_summary(summary, config=None, db=None):
+    """巡检完成摘要推送（disk_scan_notify 开关，默认关）。返回通知摘要或 None，异常不外抛。
+
+    与 notify_after_scan 的分工：那边只在「新增故障 / 加重 / 恢复」时发一条告警，
+    且不受本开关影响；这边是每轮巡检完成后都推一条结果摘要（几块盘、分级分布、
+    有没有变动），让人不开面板也能确认巡检确实在跑。
+    """
+    try:
+        if not int((config or {}).get("disk_scan_notify", DEFAULT_CONFIG["disk_scan_notify"]) or 0):
+            return None
+        data_dir = os.path.dirname(getattr(db, "db_path", "") or "")
+        if not data_dir:
+            return None
+        cfg = notify_load(data_dir)
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
+            return None
+        counts = summary.get("counts") or {}
+        total = int(summary.get("total") or 0)
+        skipped = len(summary.get("skipped_standby") or [])
+        errors = summary.get("errors") or []
+        subject = "硬盘巡检完成：正常 %s · 留意 %s · 故障 %s" % (
+            counts.get("ok", 0), counts.get("warn", 0), counts.get("crit", 0))
+        lines = ["共巡检 %d 块硬盘，完成于 %s。" % (total, time.strftime("%H:%M"))]
+        if counts.get("unknown"):
+            lines.append("其中 %s 块未能分级（未读取到 SMART）。" % counts.get("unknown"))
+        if skipped:
+            lines.append("休眠跳过 %d 块（未唤醒）。" % skipped)
+        if summary.get("changed"):
+            log = (summary.get("log") or {}).get("text") or ""
+            lines.append(("本次变动：%s" % log) if log else "检测到状态变动。")
+        else:
+            lines.append("各级分级与计数均无变化。")
+        if errors:
+            lines.append("异常 %d 条：%s" % (len(errors), "；".join(str(x) for x in errors[:3])))
+        ok, res = notify_send_all(cfg, subject, "\n".join(lines))
+        return {"ts": summary.get("ts"), "ok": ok, "subject": subject, "channels": res}
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+# ---------------------------------------------------------------- 阈值警告推送
+#
+# 「设置 → 提醒阈值」的警告（CPU / 内存 / 存储池 / CPU 温度 / 硬盘温度 / SMART /
+# 单盘容量 / 阵列成员盘）通过统一通知渠道推送，threshold_notify 开关控制（默认关）。
+# 与硬盘巡检告警（notify_after_scan）相互独立：巡检看的是 SMART 巡检结果的变化，
+# 这里看的是实时读数是否越过阈值。口径与指纹规则和前端健康检查保持一致：
+#   · 数值类指纹就是级别，留意 → 严重 升级会重新提醒，降级静默；
+#   · SMART 指纹含各计数（重映射扇区 8 → 12 即重新提醒）；
+#   · 阵列指纹含故障成员盘列表；
+#   · 在健康检查里忽略的问题（ui.json ignored）同样不推送，指纹变化才重新提醒。
+# 状态落 threshold-state.json：首次评估只记基线不推送，避免刚开启就收到一封
+# 「一直都在」的清单；发送失败不落状态，下一轮评估自动重试。
+THRESHOLD_STATE_FILE = "threshold-state.json"
+_THRESHOLD_EVAL_GAP = 60          # 评估间隔（秒）：读数不会突变，没必要每轮采集都算
+_THRESHOLD_CPU_SUSTAIN = 3        # CPU 需连续 N 次评估越限才提醒（≈3 分钟），避免转码尖峰误报
+_threshold_mem = {"eval_ts": 0.0, "cpu_high": 0, "ui_mtime": 0.0, "ui": {}}
+
+# 与前端 SMART_KEYS 同序（33-state.js）：指纹与文案都依赖这个顺序
+_THRESHOLD_SMART_KEYS = ("reallocated_sectors", "reallocated_events",
+                         "pending_sectors", "uncorrectable", "udma_crc")
+_THRESHOLD_SMART_LABELS = ("重映射扇区", "重映射事件", "待映射扇区", "无法纠正错误", "UDMA CRC 错误")
+
+
+def _th_lv(v, warn, crit):
+    """阈值分级：'' / 'warn' / 'crit'。非数字一律返回 ''。"""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(v):
+        return ""
+    return "crit" if v >= crit else "warn" if v >= warn else ""
+
+
+def _threshold_ui_cfg(data_dir):
+    """读 ui.json（按 mtime 缓存）：thresholds 与 ignored 都在这里。主文件读失败回退备份。"""
+    path = os.path.join(data_dir or "", "ui.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        return {}
+    if mtime == _threshold_mem["ui_mtime"]:
+        return _threshold_mem["ui"]
+    ui = {}
+    for p in (path, path + ".bak"):
+        try:
+            with open(p, "r", errors="ignore") as f:
+                ui = json.load(f)
+            break
+        except Exception:
+            continue
+    _threshold_mem.update({"ui_mtime": mtime, "ui": ui if isinstance(ui, dict) else {}})
+    return _threshold_mem["ui"]
+
+
+def _threshold_disk_label(d):
+    """与前端 diskLabel 同口径：优先「插槽 N」，没有槽位才退回设备名。"""
+    slot = d.get("slot")
+    try:
+        if slot is not None and str(slot) != "" and math.isfinite(float(slot)):
+            return "插槽 %s" % int(float(slot))
+    except (TypeError, ValueError):
+        pass
+    return str(d.get("name") or "")
+
+
+def _threshold_issues(snap, th, cpu_sustained):
+    """从快照评估越限项（与前端健康检查同口径，不含容器与 iDRAC 阵列卡）。
+    返回 [{key, level, fp, text}]。休眠盘读不到读数，不参与判定。"""
+    out = []
+
+    def add(level, key, text, fp=None):
+        out.append({"key": key, "level": level, "text": text,
+                    "fp": level if fp is None else str(fp)})
+
+    if cpu_sustained:
+        c = (snap.get("cpu") or {}).get("percent")
+        lv = _th_lv(c, th["cpuWarn"], th["cpuCrit"])
+        if lv:
+            add(lv, "cpu", "CPU 占用%s（%d%%）" % ("过高" if lv == "crit" else "偏高", int(c)))
+    m = snap.get("mem") or {}
+    lv = _th_lv(m.get("percent"), th["memWarn"], th["memCrit"])
+    if lv:
+        add(lv, "mem", "内存占用%s（%d%%）" % ("过高" if lv == "crit" else "偏高", int(m.get("percent"))))
+    if float(snap.get("disk_size") or 0) > 0:
+        lv = _th_lv(snap.get("disk_total"), th["capWarn"], th["capCrit"])
+        if lv:
+            add(lv, "pool", "存储空间%s（%d%%）" % ("即将用尽" if lv == "crit" else "偏满",
+                                                    int(snap.get("disk_total"))))
+    lv = _th_lv((snap.get("temp") or {}).get("cpu"), th["tempWarn"], th["tempCrit"])
+    if lv:
+        add(lv, "temp", "CPU 温度%s（%d℃）" % ("过高" if lv == "crit" else "偏高",
+                                                int((snap.get("temp") or {}).get("cpu"))))
+    pool_pct = float(snap.get("disk_total") or 0)
+    for d in snap.get("disks") or []:
+        if not isinstance(d, dict) or not d.get("name"):
+            continue
+        if d.get("standby") or d.get("state") == "standby":
+            continue
+        label = _threshold_disk_label(d)
+        lv = _th_lv(d.get("temp"), th["diskTempWarn"], th["diskTempCrit"])
+        if lv:
+            add(lv, "dt:%s" % d.get("name"), "%s 温度%s（%d℃）" % (
+                label, "过高" if lv == "crit" else "偏高", int(d.get("temp"))))
+        # SMART：FAIL 未通过 / 任一计数 > 0 即留意（与前端 smartState 一致）
+        health = str(d.get("health") or "").upper()
+        counts = [int(d.get(k) or 0) for k in _THRESHOLD_SMART_KEYS]
+        s_lv = "crit" if "FAIL" in health else ("warn" if any(counts) else "")
+        if s_lv:
+            if "FAIL" in health:
+                text = "%s：SMART 未通过" % label
+            else:
+                text = "%s：%s" % (label, "、".join(
+                    "%s %d" % (lb, v) for lb, v in zip(_THRESHOLD_SMART_LABELS, counts) if v > 0))
+            add(s_lv, "smart:%s" % d.get("name"), text,
+                fp=":".join([s_lv, health] + [str(x) for x in counts]))
+        # 单盘容量：与存储池用量几乎相同的不再单独提醒（与前端一致）
+        lv = _th_lv(d.get("percent"), th["capWarn"], th["capCrit"])
+        if lv and abs(float(d.get("percent") or 0) - pool_pct) > 0.5:
+            add(lv, "cap:%s" % d.get("name"), "%s 已用 %d%%" % (label, int(d.get("percent"))))
+    for r in snap.get("raid") or []:
+        if not isinstance(r, dict):
+            continue
+        bad = sorted(str(x) for x in (r.get("members") or []) if "(F)" in str(x))
+        if bad:
+            add("crit", "raid:%s" % r.get("device"), "阵列 %s 有成员盘故障" % r.get("device"),
+                fp="crit:" + "|".join(bad))
+    return out
+
+
+def _threshold_state_write(data_dir, items):
+    """落盘阈值推送状态（只存判定要用的字段，异常不外抛）。"""
+    try:
+        write_json_secure(os.path.join(data_dir, THRESHOLD_STATE_FILE),
+                          {"inited": 1,
+                           "items": {k: {"fp": v["fp"], "level": v["level"], "text": v["text"]}
+                                     for k, v in items.items()},
+                           "ts": time.time()})
+    except Exception:
+        traceback.print_exc()
+
+
+def _threshold_build_msg(events):
+    """阈值警告 → (标题, 正文)。新增 / 升级在前，恢复在后。"""
+    cur = [e for e in events if e["act"] in ("new", "worse")]
+    rec = [e for e in events if e["act"] == "recovered"]
+    n_crit = sum(1 for e in cur if e["level"] == "crit")
+    if cur and n_crit:
+        subject = "阈值警告：%d 项严重" % n_crit
+        if len(cur) > n_crit:
+            subject += "、%d 项需要留意" % (len(cur) - n_crit)
+    elif cur:
+        subject = "阈值提醒：%d 项需要留意" % len(cur)
+    else:
+        subject = "阈值警告解除：%d 项已恢复" % len(rec)
+    lines = []
+    for e in cur:
+        lines.append("· %s%s" % (e["text"], "（较此前加重）" if e["act"] == "worse" else ""))
+    for e in rec:
+        lines.append("· %s（已恢复）" % e["text"])
+    return subject, "\n".join(lines)
+
+
+def threshold_notify_tick(data_dir, config, snap):
+    """阈值警告推送评估（由采集线程每轮调用，内部按 _THRESHOLD_EVAL_GAP 限频）。异常不外抛。"""
+    try:
+        now = time.time()
+        if now - _threshold_mem["eval_ts"] < _THRESHOLD_EVAL_GAP:
+            return
+        _threshold_mem["eval_ts"] = now
+        if not int((config or {}).get("threshold_notify", DEFAULT_CONFIG["threshold_notify"]) or 0):
+            _threshold_mem["cpu_high"] = 0
+            return
+        data_dir = data_dir or ""
+        if not data_dir:
+            return
+        ui = _threshold_ui_cfg(data_dir)
+        th = sanitize_thresholds(ui.get("thresholds"))
+        # CPU 需连续多次评估越限才提醒（与前端 ≥3 次采样同思路）
+        cpu_lv = _th_lv((snap.get("cpu") or {}).get("percent"), th["cpuWarn"], th["cpuCrit"])
+        _threshold_mem["cpu_high"] = _threshold_mem["cpu_high"] + 1 if cpu_lv else 0
+        issues = _threshold_issues(snap, th, _threshold_mem["cpu_high"] >= _THRESHOLD_CPU_SUSTAIN)
+        # 忽略分流（与前端一致）：指纹一致 → 静默；指纹变化 → 重新提醒
+        ignored = {str(x.get("key")): x for x in (ui.get("ignored") or [])
+                   if isinstance(x, dict) and x.get("key")}
+        cur = {}
+        for it in issues:
+            ig = ignored.get(it["key"])
+            if ig and str(ig.get("fp")) == str(it["fp"]):
+                continue
+            cur[it["key"]] = it
+        st = {}
+        try:
+            with open(os.path.join(data_dir, THRESHOLD_STATE_FILE), "r", errors="ignore") as f:
+                st = json.load(f)
+        except Exception:
+            st = {}
+        prev = st.get("items") if isinstance(st.get("items"), dict) else {}
+        # 首次评估：只记基线不推送
+        if not st.get("inited"):
+            _threshold_state_write(data_dir, cur)
+            return
+        events, nxt = [], {}
+        for key, it in cur.items():
+            old = prev.get(key)
+            if not old:
+                events.append(dict(it, act="new"))
+            else:
+                olv, nlv = str(old.get("level")), it["level"]
+                # 升级（留意 → 严重）提醒；同级别但指纹变化（如 SMART 计数上涨）也算加重；
+                # crit → warn 降级静默，只更新状态
+                if nlv == "crit" and olv != "crit":
+                    events.append(dict(it, act="worse"))
+                elif nlv == olv and str(old.get("fp")) != str(it["fp"]):
+                    events.append(dict(it, act="worse"))
+            nxt[key] = it
+        for key, old in prev.items():
+            if key in nxt:
+                continue
+            if ignored.get(key):
+                continue   # 已被忽略：问题消失不发恢复，状态里直接清掉
+            events.append({"act": "recovered", "key": key, "level": "warn",
+                           "fp": old.get("fp"), "text": str(old.get("text") or key)})
+        if not events:
+            if {k: (v.get("fp"), v.get("level")) for k, v in prev.items()} != \
+               {k: (v["fp"], v["level"]) for k, v in nxt.items()}:
+                _threshold_state_write(data_dir, nxt)
+            return
+        cfg = notify_load(data_dir)
+        if not any(c.get("enabled") for c in (cfg.get("channels") or [])):
+            return
+        subject, body = _threshold_build_msg(events)
+        ok, res = notify_send_all(cfg, subject, body)
+        if ok:
+            # 发送成功才落状态：失败时保留旧状态，下一轮评估重试同一批事件
+            _threshold_state_write(data_dir, nxt)
+        else:
+            print("[fnmonitor] 阈值警告推送失败：%s" % res)
+    except Exception:
+        traceback.print_exc()
 
 
 # ---------------------------------------------------------------- 硬件告警：攒批 + 定时
@@ -5127,9 +5471,14 @@ def _report_due(cfg, now=None):
     sch = cfg.get("report_schedule") or {}
     stype = sch.get("type") or "daily"
     lt = time.localtime(now)
-    last = float(cfg.get("report_last_sent") or 0)
-    # 失败退避
-    if last > 0 and now - last < REPORT_RETRY_GAP and last == cfg.get("report_last_fail", 0):
+    last_ok = float(cfg.get("report_last_sent") or 0)
+    last_fail = float(cfg.get("report_last_fail") or 0)
+    # 周期判定用「上次尝试」时间（成功或失败都算）：失败后同一周期不再每 30 秒重发，
+    # 否则会被渠道限流（PushPlus 会直接返回「用户账号使用受限」）。原来的退避条件
+    # 用 report_last_sent 做基准，失败时该值不变，等于永远不退避。
+    last = max(last_ok, last_fail)
+    # 失败退避：距上次失败不足 REPORT_RETRY_GAP 时不重试
+    if last_fail > 0 and now - last_fail < REPORT_RETRY_GAP:
         return False
     if stype == "hourly":
         # 每小时整点过 1 分内可触发；同一小时只发一次
@@ -5488,21 +5837,24 @@ def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None)
 
 
 def notify_report_build(cfg, payload, now):
-    """把采集到的各模块数据组装成推送正文（Markdown + emoji，支持简略/详细）。"""
+    """把采集到的各模块数据组装成推送正文（纯文本 + emoji，支持简略/详细）。
+
+    不用 Markdown：部分渠道（邮件 / Server酱 / Bark / 企微 text 等）按纯文本渲染，
+    ** 与 ## 会原样露出。"""
     detail = cfg.get("report_detail") == "detail"
     lines = []
     ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
-    lines.append("📊 **飞牛监控定时报告**")
+    lines.append("📊 飞牛监控定时报告")
     lines.append("🕐 %s" % ts)
     lines.append("")
 
     def _sec(emoji, title):
         lines.append("")
-        lines.append("## %s %s" % (emoji, title))
+        lines.append("%s %s" % (emoji, title))
 
     def _kv(k, v):
-        """加粗键 + 值。"""
-        lines.append("**%s**: %s" % (k, v))
+        """键 + 值。"""
+        lines.append("%s：%s" % (k, v))
 
     if "system" in payload:
         s = payload["system"]
@@ -5553,14 +5905,14 @@ def notify_report_build(cfg, payload, now):
         _sec("🎮", "显卡")
         gpus = g.get("gpus") or []
         if not gpus:
-            lines.append("> 未检测到独立显卡")
+            lines.append("未检测到独立显卡")
         elif detail:
             for gp in gpus[:6]:
                 util = gp.get("util")
                 util_str = ("%s%%" % util) if util is not None else "--"
                 temp = gp.get("temp")
                 temp_str = ("%s°C" % temp) if temp is not None else "--"
-                line = "  • **%s**: 利用率 %s · 温度 %s" % (gp.get("name", "?"), util_str, temp_str)
+                line = "  • %s：利用率 %s · 温度 %s" % (gp.get("name", "?"), util_str, temp_str)
                 mp = gp.get("mem_pct")
                 mu = gp.get("mem_used_gb")
                 mt = gp.get("mem_total_gb")
@@ -5577,7 +5929,7 @@ def notify_report_build(cfg, payload, now):
             temps = [gp.get("temp") for gp in gpus if isinstance(gp, dict) and gp.get("temp") is not None]
             avg_util = round(sum(utils) / len(utils), 1) if utils else None
             max_temp = max(temps) if temps else None
-            line = "> 共 **%d** 块显卡" % len(gpus)
+            line = "共 %d 块显卡" % len(gpus)
             if avg_util is not None:
                 line += " · 平均利用率 %s%%" % avg_util
             if max_temp is not None:
@@ -5594,38 +5946,38 @@ def notify_report_build(cfg, payload, now):
         if sys_t is not None:
             _kv("主板", "%s°C" % sys_t)
         if cpu_t is None and sys_t is None:
-            lines.append("> 未检测到温度传感器")
+            lines.append("未检测到温度传感器")
         if detail:
             disks_t = t.get("disks") or []
             for dt in disks_t[:10]:
                 if isinstance(dt, dict) and dt.get("temp") is not None:
-                    lines.append("  • %s: %s°C" % (dt.get("name", "?"), dt.get("temp")))
+                    lines.append("  • %s：%s°C" % (dt.get("name", "?"), dt.get("temp")))
 
     if "fan" in payload:
         f = payload["fan"]
         _sec("🌀", "风扇")
         fans = f.get("fans") or []
         if not fans:
-            lines.append("> 未检测到风扇")
+            lines.append("未检测到风扇")
         elif detail:
             for fn in fans[:12]:
                 rpm = fn.get("rpm") or 0
                 flag = "🟢" if rpm > 0 else "⚪"
-                lines.append("  • %s `%s`: %s RPM" % (flag, fn.get("name", "?"), rpm))
+                lines.append("  • %s %s：%s RPM" % (flag, fn.get("name", "?"), rpm))
         else:
             rpms = [fn.get("rpm") or 0 for fn in fans if isinstance(fn, dict)]
             running = sum(1 for r in rpms if r > 0)
             avg_rpm = round(sum(rpms) / len(rpms)) if rpms else 0
-            lines.append("> 共 **%d** 个风扇 · 运行 **%d** 个 · 平均 **%s** RPM" % (len(fans), running, avg_rpm))
+            lines.append("共 %d 个风扇 · 运行 %d 个 · 平均 %s RPM" % (len(fans), running, avg_rpm))
 
     if "disk" in payload:
         d = payload["disk"]
         _sec("💿", "硬盘")
-        lines.append("> 共 **%d** 块盘 · 总容量 **%s TB** · 已用 **%s TB**（**%s%%**）" % (
+        lines.append("共 %d 块盘 · 总容量 %s TB · 已用 %s TB（%s%%）" % (
             d.get("count", 0), d.get("size_tb", "--"), d.get("used_tb", "--"), d.get("total_percent", "--")))
         if detail:
             for dk in (d.get("disks") or [])[:15]:
-                line = "  • %s `%s` · %sG" % (dk.get("name", "?"), dk.get("model", "--"), dk.get("size_gb", "--"))
+                line = "  • %s %s · %sG" % (dk.get("name", "?"), dk.get("model", "--"), dk.get("size_gb", "--"))
                 line += " · 已用 %s%%" % dk.get("used_percent", "--")
                 line += " · %s°C · %s · %s" % (dk.get("temp", "--"), dk.get("health", "--"), dk.get("power", "--"))
                 poh = dk.get("power_on_hours", "--")
@@ -5636,20 +5988,20 @@ def notify_report_build(cfg, payload, now):
             disks = d.get("disks") or []
             bad = [dk for dk in disks if str(dk.get("health", "")).lower() in ("crit", "故障", "warn", "留意")]
             standby = sum(1 for dk in disks if dk.get("power") == "休眠")
-            line = "> 运行 **%d** · 休眠 **%d**" % (len(disks) - standby, standby)
+            line = "运行 %d · 休眠 %d" % (len(disks) - standby, standby)
             if bad:
-                line += " · ⚠️ 异常 **%d**" % len(bad)
+                line += " · ⚠️ 异常 %d" % len(bad)
             lines.append(line)
 
     if "smart" in payload:
         s = payload["smart"]
         _sec("🩺", "SMART 健康")
         if s.get("bad"):
-            lines.append("> ⚠️ **%d 块异常**：" % s["bad"])
+            lines.append("⚠️ %d 块异常：" % s["bad"])
             for b in (s.get("bad_list") or [])[:10]:
                 lines.append("  • %s — %s" % (b.get("name", "?"), b.get("health", "--")))
         else:
-            lines.append("> ✅ 全部正常（共 %d 块）" % s.get("total", 0))
+            lines.append("✅ 全部正常（共 %d 块）" % s.get("total", 0))
 
     if "storage" in payload:
         st = payload["storage"]
@@ -5661,7 +6013,7 @@ def notify_report_build(cfg, payload, now):
             if detail:
                 for r in raids[:8]:
                     if isinstance(r, dict):
-                        lines.append("  • %s · 状态: %s" % (r.get("device") or r.get("name") or "?", r.get("status") or r.get("state") or "--"))
+                        lines.append("  • %s · 状态：%s" % (r.get("device") or r.get("name") or "?", r.get("status") or r.get("state") or "--"))
         else:
             _kv("RAID 阵列", "无")
 
@@ -5676,11 +6028,11 @@ def notify_report_build(cfg, payload, now):
                 rx = itf.get("rx_rate", 0) or 0
                 tx = itf.get("tx_rate", 0) or 0
                 rate_str = " · ↓%s ↑%s KB/s" % (round(rx, 1), round(tx, 1)) if (rx or tx) else ""
-                lines.append("  • **%s**: `%s` · %s%s" % (itf.get("name", "?"), itf.get("ip", "--"), sp_str, rate_str))
+                lines.append("  • %s：%s · %s%s" % (itf.get("name", "?"), itf.get("ip", "--"), sp_str, rate_str))
         else:
             total_rx = sum((itf.get("rx_rate") or 0) for itf in ifs if isinstance(itf, dict))
             total_tx = sum((itf.get("tx_rate") or 0) for itf in ifs if isinstance(itf, dict))
-            line = "> 共 **%d** 个物理网卡" % len(ifs)
+            line = "共 %d 个物理网卡" % len(ifs)
             if total_rx or total_tx:
                 line += " · 总流量 ↓%s ↑%s KB/s" % (round(total_rx, 1), round(total_tx, 1))
             lines.append(line)
@@ -5701,13 +6053,13 @@ def notify_report_build(cfg, payload, now):
     if "docker" in payload:
         dk = payload["docker"]
         _sec("🐳", "Docker 容器")
-        lines.append("> 共 **%d** 个 · 运行 **%d** · 停止 **%d**" % (
+        lines.append("共 %d 个 · 运行 %d · 停止 %d" % (
             dk.get("total", 0), dk.get("running", 0), dk.get("stopped", 0)))
         if detail:
             for c in (dk.get("containers") or [])[:20]:
                 st = c.get("state", "--")
                 flag = "🟢" if st in ("running", "运行中") else "🔴"
-                line = "  • %s `%s` · %s" % (flag, c.get("name", "?"), st)
+                line = "  • %s %s · %s" % (flag, c.get("name", "?"), st)
                 cpu_v = c.get("cpu")
                 mem_v = c.get("mem")
                 if cpu_v not in ("--", None, "") or mem_v not in ("--", None, ""):
@@ -5717,11 +6069,11 @@ def notify_report_build(cfg, payload, now):
     if "vms" in payload:
         v = payload["vms"]
         _sec("💻", "虚拟机")
-        lines.append("> 共 **%d** 台 · 运行 **%d**" % (v.get("total", 0), v.get("running", 0)))
+        lines.append("共 %d 台 · 运行 %d" % (v.get("total", 0), v.get("running", 0)))
         if detail:
             for vm in (v.get("vms") or [])[:15]:
                 flag = "🟢" if vm.get("running") else "🔴"
-                line = "  • %s `%s` · %s" % (flag, vm.get("name", "?"), vm.get("state", "--"))
+                line = "  • %s %s · %s" % (flag, vm.get("name", "?"), vm.get("state", "--"))
                 parts = []
                 if vm.get("vcpus"):
                     parts.append("%s vCPU" % vm["vcpus"])
@@ -10269,6 +10621,12 @@ class Collector(threading.Thread):
         except Exception:
             traceback.print_exc()
 
+        # ---- 阈值警告推送（每 60 秒评估一次；与硬盘巡检告警相互独立）----
+        try:
+            threshold_notify_tick(self.data_dir, self.config, snapshot)
+        except Exception:
+            traceback.print_exc()
+
         with self._lock:
             self.latest = snapshot
 
@@ -10730,6 +11088,62 @@ class MonitorApp:
         self._static_cache = {}
         self._export_sem = threading.BoundedSemaphore(2)   # 报告 / 导出并发上限
         self._apps_refresh_ts = 0.0
+        # P3: fnOS 日志事件监控 runtime（由 main() 创建后通过 set_monitor_runtime 注入）
+        self._monitor_runtime = None
+
+    def set_monitor_runtime(self, runtime):
+        """main() 里创建 MonitorRuntime 后注入，供 api_monitor_save 重启用。"""
+        self._monitor_runtime = runtime
+
+    def restart_monitor_runtime(self, cfg):
+        """保存 monitor 配置后调用：停旧 runtime → 启新 runtime。
+        实际启停放到后台线程：停止轮询器要等 journalctl / docker 事件读取退出，
+        同步做会让「点击保存」卡 3 秒左右。"""
+        if not _MONITOR_RUNTIME_AVAILABLE:
+            return False
+        if getattr(self, "_monitor_restarting", False):
+            # 上一次重启还没收尾：配置已落盘，本次忽略即可
+            return True
+        self._monitor_restarting = True
+        # 重启期间再次保存：记住最新配置，后台线程收尾时用最新的
+        self._monitor_pending_cfg = cfg
+
+        def _do_restart():
+            try:
+                rt = self._monitor_runtime
+                if rt is not None:
+                    try:
+                        rt.stop()
+                    except Exception:
+                        pass
+                cursor_dir = os.path.join(self.data_dir, "cursor")
+                os.makedirs(cursor_dir, exist_ok=True)
+                latest_cfg = getattr(self, "_monitor_pending_cfg", cfg) or {}
+
+                def _notify(t, b):
+                    try:
+                        # 通知渠道在 notify.json（不是 config.json），必须现读
+                        _ok, _res = notify_send_all(notify_load(self.data_dir), t, b)
+                        if not _ok:
+                            print("[fnmonitor] 日志事件推送失败：%s" % (_res,))
+                    except Exception as _ne:
+                        print("[fnmonitor] 日志事件推送异常：%s" % _ne)
+
+                new_rt = _monitor_runtime_mod.MonitorRuntime(
+                    cursor_dir=cursor_dir,
+                    notify_fn=_notify,
+                    cfg=latest_cfg,
+                )
+                new_rt.start()
+                self._monitor_runtime = new_rt
+                print("[fnmonitor] 日志事件监控运行时已重启（后台完成）")
+            except Exception as exc:
+                print("[fnmonitor] monitor runtime 重启失败：%s" % exc)
+            finally:
+                self._monitor_restarting = False
+
+        threading.Thread(target=_do_restart, name="MonitorRestart", daemon=True).start()
+        return True
 
     def make_handler(self):
         app = self
@@ -10972,6 +11386,91 @@ class MonitorApp:
                     return
                 if path == "/api/notify":
                     self._json(app.api_notify_get())
+                    return
+                if path == "/api/notify-stats":
+                    # 推送历史统计：总条数 + 当日条数
+                    try:
+                        self._json(_push_history.get_stats())
+                    except Exception:
+                        self._json({"total": {"total": 0, "success": 0, "fail": 0},
+                                    "today": {"total": 0, "success": 0, "fail": 0}})
+                    return
+                if path == "/api/notify-history":
+                    # 推送历史列表：limit / offset / success（true/false）
+                    try:
+                        _l = min(100, max(1, int((qs.get("limit") or ["50"])[0])))
+                    except Exception:
+                        _l = 50
+                    try:
+                        _o = max(0, int((qs.get("offset") or ["0"])[0]))
+                    except Exception:
+                        _o = 0
+                    _sf = None
+                    _sf_raw = (qs.get("success") or [""])[0].strip().lower()
+                    if _sf_raw in ("1", "true", "yes"):
+                        _sf = True
+                    elif _sf_raw in ("0", "false", "no"):
+                        _sf = False
+                    try:
+                        self._json(_push_history.list_records(limit=_l, offset=_o, success_filter=_sf))
+                    except Exception:
+                        self._json([])
+                    return
+                if path == "/api/monitor":
+                    # 返回 monitor 配置（含自动探测的默认路径）
+                    try:
+                        self._json(app.api_monitor_get())
+                    except Exception as _e:
+                        self._json({"ok": False, "error": str(_e), "config": {}})
+                    return
+                if path.startswith("/api/notify-history/"):
+                    # 推送历史单条详情 /api/notify-history/<id>
+                    try:
+                        _rid = int(path.rsplit("/", 1)[1])
+                        self._json(_push_history.get_record(_rid))
+                    except Exception:
+                        self._json(None)
+                    return
+                if path == "/api/monitor/diagnostics":
+                    # 权限探测：把 monitor cfg 里的数据源路径都扫一遍
+                    if _MONITOR_RUNTIME_AVAILABLE and _access_diag_mod is not None:
+                        _mc = config.get("monitor") or {}
+                        try:
+                            self._json(_access_diag_mod.run_all(
+                                logger_db_path=_mc.get("logger_db_path", ""),
+                                backup_db_path=_mc.get("backup_db_path", ""),
+                                trim_media_db_path=_mc.get("trim_media_db_path", ""),
+                                trim_activity_db_path=_mc.get("trim_activity_db_path", ""),
+                                photo_db_path=_mc.get("photo_db_path", ""),
+                                music_db_path=_mc.get("music_db_path", ""),
+                                docker_socket_path=_mc.get("docker_socket_path", "/var/run/docker.sock"),
+                            ))
+                        except Exception:
+                            self._json([])
+                    else:
+                        self._json([])
+                    return
+                if path == "/api/monitor/status":
+                    # 监控运行时状态：各轮询器是否在跑
+                    if app._monitor_runtime is not None:
+                        try:
+                            self._json(app._monitor_runtime.status())
+                        except Exception:
+                            self._json({"started": False, "pollers": {}})
+                    else:
+                        self._json({"started": False, "pollers": {}})
+                    return
+                if path == "/api/monitor/event-formatter-test":
+                    # 调试接口：传入 event_type + event_data → 返回 (title, body)
+                    from utils import event_formatter as _ef
+                    try:
+                        et = (qs.get("event_type") or [""])[0]
+                        eds = (qs.get("event_data") or ["{}"])[0]
+                        edj = json.loads(eds) if eds else {}
+                        msg = _ef.build_message(et, edj) if et else None
+                        self._json({"event_type": et, "msg": msg})
+                    except Exception as _e:
+                        self._json({"error": str(_e)})
                     return
                 if path == "/api/idrac":
                     self._json(app.api_idrac_get(qs))
@@ -11240,6 +11739,17 @@ class MonitorApp:
                     dest = str(data.get("path") or "").strip()
                     self._json(app.api_update_download_nas(dest_dir=dest or None))
                     return
+                if path == "/api/monitor/save":
+                    self._json(app.api_monitor_save(data))
+                    return
+                if path == "/api/history/clear":
+                    # 清空推送历史（P2）
+                    try:
+                        _push_history.clear_all()
+                        self._json({"ok": True})
+                    except Exception as _e:
+                        self._json({"ok": False, "error": str(_e)})
+                    return
                 self._json({"ok": False, "error": "not_found"}, status=404)
 
             def log_message(self, fmt, *args):
@@ -11414,6 +11924,209 @@ class MonitorApp:
         print("[fnmonitor] 通知配置已更新：共 %d 个渠道，%d 个已启用"
               % (len(cfg.get("channels") or []), cnt))
         return {"ok": True, "notify": notify_public(cfg)}
+
+    # ── P3: fnOS 日志事件监控配置 ──────────────────────────────
+    # fnOS 标准数据源路径（与 FNMessageBots 保持一致）
+    _MONITOR_DEFAULT_PATHS = {
+        "logger_db_path": "/usr/trim/var/eventlogger_service/logger_data.db3",
+        "backup_db_path": "/usr/trim/var/backup_service/basic_backup.db3",
+        "trim_media_db_path": "/usr/local/apps/@appdata/trim.media/database/trimmedia.db",
+        "trim_activity_db_path": "/usr/local/apps/@appdata/trim.media/database/trimactivity.db",
+        "photo_db_path": "/usr/local/apps/@appdata/trim.photos/db/photo.db",
+        "music_db_path": "/usr/local/apps/@appdata/trim.music/db/music.db",
+        "docker_socket_path": "/var/run/docker.sock",
+    }
+
+    def _monitor_discover_path(self, key, configured=""):
+        """空配置时尝试探测：先已知默认路径、再回退其他候选。"""
+        cur = (configured or "").strip()
+        if cur:
+            return cur
+        default = self._MONITOR_DEFAULT_PATHS.get(key, "")
+        if default and os.path.exists(default):
+            return default
+        # 没找到也返回默认值（让 UI 能显示出来）
+        return default or cur
+
+    def _discover_vm_event_ids(self, db_path):
+        """从主日志库读取实际出现过的 VM 事件 ID。
+        虚拟机事件名是动态的（CREATE_VM / START_VM / STATUS_PAUSED_VM …），
+        静态清单只有 4 个兜底项，界面里选不到的事件会因 "VM" 白名单放行而无条件推送。"""
+        if not db_path or not os.path.isfile(db_path):
+            return []
+        conn = None
+        try:
+            conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=2)
+            rows = conn.execute(
+                "SELECT DISTINCT eventId FROM log WHERE eventId IS NOT NULL "
+                "AND UPPER(eventId) LIKE '%VM%' ORDER BY eventId ASC"
+            ).fetchall()
+            return [str(r[0]).strip() for r in rows if r and str(r[0]).strip()]
+        except Exception:
+            return []
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def api_monitor_get(self):
+        """返回 monitor 配置 + 事件分类列表 + 默认选中事件（UI 渲染用）。"""
+        cfg = load_config(self._cfg_dir) if _MONITOR_RUNTIME_AVAILABLE else {}
+        mon = dict(cfg.get("monitor") or {})
+        # 显式补全布尔开关默认值，避免前端拿到 undefined 后各处判定不一致
+        mon.setdefault("enable", False)
+        mon.setdefault("enable_docker", True)
+        mon.setdefault("enable_ssh_journal", True)
+        mon.setdefault("enable_ssh_open_watch", True)
+        mon.setdefault("enable_wan_ip", True)
+        mon.setdefault("ignore_ssh_loopback", False)
+        mon.setdefault("ignore_ssh_lan", False)
+        mon.setdefault("poll_interval", 5)
+        mon.setdefault("ssh_open_remind_minutes", 30)
+        mon.setdefault("wan_ip_poll_interval", 600)
+        mon.setdefault("source_enabled", {})
+        # 空路径自动填默认值/探测值，但只对「配置里从未出现过」的键做探测：
+        # 用户把路径清空后保存（键存在且为空串）必须保持为空，否则一刷新地址又被填回去，
+        # 看起来「删不掉」。想临时停用某个数据源请用右侧开关，而不是删路径。
+        for path_key in self._MONITOR_DEFAULT_PATHS:
+            if path_key in mon:
+                continue
+            mon[path_key] = self._monitor_discover_path(path_key, "")
+        # 不能让前端传进来的路径决定 runtime 重启时机——runtime 只在保存时重启
+        if _MONITOR_RUNTIME_AVAILABLE:
+            try:
+                from utils import event_formatter as _ef
+                defaults_set = set(_ef.DEFAULT_SELECTED_EVENTS)
+                cats = []
+                for label, ids in _ef.EVENT_CATEGORIES:
+                    events = []
+                    for eid in ids:
+                        raw = _ef.EVENT_TITLES.get(eid) or eid
+                        # 界面只显示可读的事件名，去掉 {user}/{IP} 等占位符；
+                        # 顺便收掉去掉占位符后残留的尾部 @ / ：/ - 等分隔符
+                        title = re.sub(r"\s*\{[^}]*\}", "", raw)
+                        title = re.sub(r"[\s@：:|·\-]+$", "", title).strip() or eid
+                        events.append({
+                            "id": eid,
+                            "title": title,
+                            "recommended": eid in defaults_set,
+                        })
+                    cats.append({"label": label, "ids": list(ids), "events": events})
+                # 动态 VM 事件补齐（库里实际出现过的事件名才有意义）
+                vm_ids = self._discover_vm_event_ids(mon.get("logger_db_path") or "")
+                if vm_ids:
+                    for c in cats:
+                        if c["label"].startswith("虚拟机"):
+                            exist = {e["id"] for e in c["events"]}
+                            for vid in vm_ids:
+                                if vid in exist:
+                                    continue
+                                c["ids"].append(vid)
+                                c["events"].append({
+                                    "id": vid,
+                                    "title": "虚拟机事件：" + vid,
+                                    "recommended": False,
+                                })
+                            break
+                defaults = list(_ef.DEFAULT_SELECTED_EVENTS)
+                allowed = list(_ef.MONITOR_EVENT_IDS)
+            except Exception:
+                cats, defaults, allowed = [], [], []
+        else:
+            cats, defaults, allowed = [], [], []
+        out = {
+            "ok": True,
+            "config": mon,
+            "categories": cats,
+            "default_selected": defaults,
+            "allowed_events": allowed,
+            "runtime": _monitor_runtime_mod.MonitorRuntime.__name__ if _MONITOR_RUNTIME_AVAILABLE else None,
+        }
+        return out
+
+    def api_monitor_save(self, data):
+        """保存 monitor 配置到 config.json + 重启 monitor_runtime + 返回 diagnostics。"""
+        if not isinstance(data, dict):
+            return {"ok": False, "error": "invalid_body"}
+        cfg = load_config(self._cfg_dir)
+        # 合并并清洗
+        mon_prev = cfg.get("monitor") or {}
+
+        def _pick(key, default=None):
+            """前端显式传了就用前端的值（空字符串 / 空列表也算显式），没传才回退旧配置。
+            之前统一用 `or 旧值`，导致「清空事件 / 清空路径」保存后又被旧值盖回去。"""
+            if key in data:
+                return data[key]
+            if key in mon_prev:
+                return mon_prev[key]
+            return default
+
+        # 数据源开关：键与路径键一一对应，缺省视为启用（兼容旧配置 / 旧前端）
+        _src_prev = _pick("source_enabled") or {}
+        if not isinstance(_src_prev, dict):
+            _src_prev = {}
+        source_enabled = {
+            k: bool(_src_prev.get(k, True))
+            for k in ("logger_db_path", "backup_db_path", "trim_media_db_path",
+                      "trim_activity_db_path", "photo_db_path", "music_db_path")
+        }
+        mon_new = {
+            "enable": bool(_pick("enable", True)),
+            "monitor_events": [str(x) for x in (_pick("monitor_events") or [])],
+            "poll_interval": max(3, int(_pick("poll_interval") or 5)),
+            "logger_db_path": str(_pick("logger_db_path") or "").strip(),
+            "backup_db_path": str(_pick("backup_db_path") or "").strip(),
+            "trim_media_db_path": str(_pick("trim_media_db_path") or "").strip(),
+            "trim_activity_db_path": str(_pick("trim_activity_db_path") or "").strip(),
+            "photo_db_path": str(_pick("photo_db_path") or "").strip(),
+            "music_db_path": str(_pick("music_db_path") or "").strip(),
+            "docker_socket_path": str(_pick("docker_socket_path") or "/var/run/docker.sock").strip(),
+            "source_enabled": source_enabled,
+            "enable_docker": bool(_pick("enable_docker", True)),
+            "enable_ssh_journal": bool(_pick("enable_ssh_journal", True)),
+            "enable_ssh_open_watch": bool(_pick("enable_ssh_open_watch", True)),
+            "ssh_open_remind_minutes": max(5, int(_pick("ssh_open_remind_minutes") or 30)),
+            "enable_wan_ip": bool(_pick("enable_wan_ip", True)),
+            "wan_ip_poll_interval": max(60, int(_pick("wan_ip_poll_interval") or 600)),
+            "ignore_ssh_loopback": bool(_pick("ignore_ssh_loopback", False)),
+            "ignore_ssh_lan": bool(_pick("ignore_ssh_lan", False)),
+        }
+        cfg["monitor"] = mon_new
+        try:
+            self._update_config_file({"monitor": mon_new})
+        except Exception as exc:
+            return {"ok": False, "error": "保存 config.json 失败：" + str(exc)}
+        # 重启/停止 runtime：关闭监控时必须真的停掉正在跑的轮询线程
+        started_count = 0
+        if _MONITOR_RUNTIME_AVAILABLE:
+            try:
+                if mon_new.get("enable"):
+                    self.restart_monitor_runtime(mon_new)
+                elif self._monitor_runtime is not None:
+                    # 停止同样放后台：关监控后立刻返回「已关闭」，不让保存按钮等待线程退出
+                    threading.Thread(target=self._monitor_runtime.stop, daemon=True).start()
+                    print("[fnmonitor] 日志事件监控已关闭，轮询器正在后台停止")
+            except Exception as exc:
+                print("[fnmonitor] monitor runtime 启停异常：%s" % exc)
+        # 跑 diagnostics（保存后立刻给用户反馈哪些数据源可用/不可用）
+        diagnostics = []
+        if _access_diag_mod is not None:
+            try:
+                diagnostics = _access_diag_mod.run_all(
+                    logger_db_path=mon_new.get("logger_db_path", ""),
+                    backup_db_path=mon_new.get("backup_db_path", ""),
+                    trim_media_db_path=mon_new.get("trim_media_db_path", ""),
+                    trim_activity_db_path=mon_new.get("trim_activity_db_path", ""),
+                    photo_db_path=mon_new.get("photo_db_path", ""),
+                    music_db_path=mon_new.get("music_db_path", ""),
+                    docker_socket_path=mon_new.get("docker_socket_path", "/var/run/docker.sock"),
+                )
+            except Exception:
+                diagnostics = []
+        print("[fnmonitor] fnOS 日志事件监控配置已更新")
+        return {"ok": True, "config": mon_new, "diagnostics": diagnostics}
 
     def api_notify_test(self, data):
         """立刻发一条测试消息。channel 传渠道 id，只测该渠道；不传测全部已启用渠道。"""
@@ -12200,7 +12913,7 @@ class MonitorApp:
         onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
                   "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
-                  "disk_scan_enabled"):
+                  "disk_scan_enabled", "disk_scan_notify", "threshold_notify"):
             if k in data:
                 updates[k] = onoff(data[k])
         # 硬盘巡检间隔：0 = 关闭；其余就近取档位（6/12/24/72/168 小时）
@@ -13374,7 +14087,7 @@ def load_config(data_dir):
     # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测 / 硬盘巡检）必须随配置恢复
     for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
               "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
-              "disk_scan_enabled"):
+              "disk_scan_enabled", "disk_scan_notify", "threshold_notify"):
         if k in user:
             cfg[k] = onoff(user[k])
     if "disk_scan_interval_h" in user:
@@ -13393,6 +14106,9 @@ def load_config(data_dir):
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
     if "data_dir" in user:
         cfg["data_dir"] = str(user["data_dir"]).strip()
+    # fnOS 日志事件监控配置（独立节点，整体透传，具体字段在 api_monitor_get/save 内清洗）
+    if isinstance(user.get("monitor"), dict):
+        cfg["monitor"] = user["monitor"]
     # 飞牛桌面打开方式（iframe=飞牛窗口内打开 / url=浏览器新标签页）
     if str(user.get("open_mode", "")).lower() in ("iframe", "url"):
         cfg["open_mode"] = str(user["open_mode"]).lower()
@@ -13618,6 +14334,12 @@ def main():
         print("[fnmonitor] 自定义数据目录不可用，回退到 %s" % original_dir)
         args.data_dir = original_dir
 
+    # 推送历史 SQLite：与 monitor.db / ui.json 共用 data_dir
+    try:
+        _push_history.init(args.data_dir)
+    except Exception as _ph_e:
+        print("[fnmonitor] 推送历史初始化失败（不影响主流程）：%s" % _ph_e)
+
     app = MonitorApp(args.data_dir, config, args.host, args.port, cfg_dir=original_dir)
     handler = app.make_handler()
     # 端口：配置文件优先（网页设置修改端口后重启生效）。配置端口越界或无法绑定时依次回退到
@@ -13666,12 +14388,47 @@ def main():
     # 同线程会把风扇和功耗的 20 秒刷新整轮堵住
     idrac_slow = IdracSlowPoller(app.collector.data_dir)
     idrac_slow.start()
+    # ── P3: fnOS 日志事件监控运行时 ──────────────────────────────
+    _monitor_runtime = None
+    if _MONITOR_RUNTIME_AVAILABLE:
+        _monitor_cfg = config.get("monitor") or {}
+        if _monitor_cfg.get("enable", True):
+            try:
+                _cursor_dir = os.path.join(app.collector.data_dir, "cursor")
+                os.makedirs(_cursor_dir, exist_ok=True)
+
+                def _notify_monitor(title, body):
+                    # 包装 notify_send_all(cfg, subject, body)，runtime 只管 (title, body)
+                    try:
+                        _ok, _res = notify_send_all(notify_load(app.collector.data_dir), title, body)
+                        if not _ok:
+                            print("[fnmonitor] 日志事件推送失败：%s" % (_res,))
+                    except Exception as _ne:
+                        print("[fnmonitor] 日志事件推送异常：%s" % _ne)
+
+                _monitor_runtime = _monitor_runtime_mod.MonitorRuntime(
+                    cursor_dir=_cursor_dir,
+                    notify_fn=_notify_monitor,
+                    cfg=_monitor_cfg,
+                )
+                _monitor_runtime.start()
+                app.set_monitor_runtime(_monitor_runtime)
+                print("[fnmonitor] fnOS 日志事件监控已启动（数据源数量：%d）" %
+                      sum(1 for v in _monitor_runtime.status().get("pollers", {}).values() if v))
+            except Exception as _mr_start_e:
+                print("[fnmonitor] fnOS 日志事件监控启动失败（不影响主流程）：%s" % _mr_start_e)
 
     def shutdown(sig, frame):
         app.collector.stop()
         scanner.stop()
         idrac_poller.stop()
         idrac_slow.stop()
+        # P3: 停掉所有轮询器
+        if _monitor_runtime is not None:
+            try:
+                _monitor_runtime.stop()
+            except Exception:
+                pass
         threading.Thread(target=httpd.shutdown, daemon=True).start()
         sys.exit(0)
 

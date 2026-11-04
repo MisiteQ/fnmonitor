@@ -446,6 +446,455 @@ const SHEETS = {
       <div class="card"><div style="font-size:12px;color:var(--ink-3);line-height:1.7">提示：每个渠道卡片都有「测试」按钮，保存后可立即验证配置是否正确。全局设置（标题前缀 / 极简推送 / 勿扰模式）对所有渠道生效。</div></div>`;
     },
   },
+
+  monitor: {
+    icon: () => 'eye', title: () => '事件监控', sub: () => 'fnOS 系统事件实时推送 · 数据源路径自动探测',
+    build(body, arg, ctx) {
+    body.innerHTML = `
+    <style>
+    .mm-cats { display:flex; flex-direction:column; gap:8px; max-height:min(52vh,480px); overflow-y:auto; }
+    .mm-cat { flex:0 0 auto; border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+    .mm-cat-head { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer; background:var(--fill-1); user-select:none; }
+    .mm-cat-name { font-weight:550; font-size:12.5px; color:var(--ink-1); }
+    .mm-cat-num { font-size:11px; color:var(--ink-3); }
+    .mm-cat-all { margin-left:auto; font-size:11.5px; font-weight:550; color:var(--d-p); padding:2px 8px; border-radius:var(--r-pill); }
+    .mm-cat-all:hover { background:var(--ok-soft); }
+    .mm-cat-arrow { font-size:10px; color:var(--ink-3); transition:transform .15s; }
+    .mm-cat.open .mm-cat-arrow { transform:rotate(180deg); }
+    .mm-cat-body { display:none; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; padding:10px 12px; }
+    .mm-cat.open .mm-cat-body { display:grid; }
+    .mm-chip { display:flex; align-items:center; gap:6px; padding:6px 9px; border-radius:8px; font-size:12px; cursor:pointer; background:var(--fill-1); color:var(--ink-2); border:1px solid transparent; }
+    .mm-chip:hover { background:var(--fill-2); }
+    .mm-chip.on { background:var(--ok-soft); color:var(--ink-1); border-color:color-mix(in srgb,var(--d-p) 28%,transparent); }
+    .mm-chip input { margin:0; flex-shrink:0; }
+    .mm-chip .mt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mm-diag { padding:9px 12px; border-radius:var(--r-md); font-size:12.5px; margin-bottom:6px; }
+    .mm-diag.ok { background:var(--ok-soft); color:var(--ok); }
+    .mm-diag.fail { background:var(--crit-soft); color:var(--crit); }
+    .mm-diag-hint { font-size:11px; margin-top:4px; white-space:pre-wrap; line-height:1.6; }
+    </style>
+    <div class="note info">${ic('eye')}<span><b>fnOS 系统事件实时推送</b>：统一经事件模板化后走「通知设置」里配置的推送渠道；改动后点底部「保存并启动」生效。</span></div>
+    ${sec('基础')}
+    <div class="card pad" style="padding-top:6px;padding-bottom:6px">
+    <div class="set-row inline"><div><div class="lbl">启用监控</div><div class="hint">关闭后所有轮询器停止，事件不再推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-enable" aria-checked="false" aria-label="启用监控"></button></div></div>
+    <div class="set-row"><div><div class="lbl">轮询间隔</div><div class="hint">主日志库 / 备份库 / SSH journal 的读取周期，3–60 秒</div></div><div class="ctl"><input type="number" id="mm-poll" class="textfield mono" min="3" max="60" value="5" style="width:86px" aria-label="轮询间隔（秒）"><span class="faint">秒</span></div></div>
+    </div>
+    ${sec('数据源路径', '<span class="faint">右侧开关控制是否启用该数据源，关闭后即使路径有值也不会启动对应轮询器；路径留空同样视为不启用</span>')}
+    <div class="card pad" style="padding-top:6px;padding-bottom:6px">
+    <div class="set-row"><div><div class="lbl">fnOS 主日志库</div><div class="hint">系统登录 / 文件操作等主事件</div></div><div class="ctl"><input type="text" id="mm-logger" class="textfield mono" placeholder="/usr/trim/var/eventlogger_service/logger_data.db3" style="width:min(280px,42vw)" spellcheck="false" aria-label="fnOS 主日志库路径"><button class="switch" type="button" role="switch" id="mm-src-logger" aria-checked="true" aria-label="启用 fnOS 主日志库"></button></div></div>
+    <div class="set-row"><div><div class="lbl">备份任务库</div><div class="hint">备份任务开始 / 完成 / 失败</div></div><div class="ctl"><input type="text" id="mm-backup" class="textfield mono" placeholder="/usr/trim/var/backup_service/basic_backup.db3" style="width:min(280px,42vw)" spellcheck="false" aria-label="备份任务库路径"><button class="switch" type="button" role="switch" id="mm-src-backup" aria-checked="true" aria-label="启用备份任务库"></button></div></div>
+    <div class="set-row"><div><div class="lbl">影视库（资源）</div><div class="hint">媒体入库与刮削事件</div></div><div class="ctl"><input type="text" id="mm-trim" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.media/database/trimmedia.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="影视资源库路径"><button class="switch" type="button" role="switch" id="mm-src-trim" aria-checked="true" aria-label="启用影视库（资源）"></button></div></div>
+    <div class="set-row"><div><div class="lbl">影视库（活动）</div><div class="hint">播放 / 观看活动事件</div></div><div class="ctl"><input type="text" id="mm-trimact" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.media/database/trimactivity.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="影视活动库路径"><button class="switch" type="button" role="switch" id="mm-src-trimact" aria-checked="true" aria-label="启用影视库（活动）"></button></div></div>
+    <div class="set-row"><div><div class="lbl">相册库</div><div class="hint">照片备份与相册变更</div></div><div class="ctl"><input type="text" id="mm-photo" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.photos/db/photo.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="相册库路径"><button class="switch" type="button" role="switch" id="mm-src-photo" aria-checked="true" aria-label="启用相册库"></button></div></div>
+    <div class="set-row"><div><div class="lbl">音乐库</div><div class="hint">音乐库变更</div></div><div class="ctl"><input type="text" id="mm-music" class="textfield mono" placeholder="/usr/local/apps/@appdata/trim.music/db/music.db" style="width:min(280px,42vw)" spellcheck="false" aria-label="音乐库路径"><button class="switch" type="button" role="switch" id="mm-src-music" aria-checked="true" aria-label="启用音乐库"></button></div></div>
+    <div class="set-row"><div><div class="lbl">Docker Socket</div><div class="hint">容器启动 / 停止 / 健康检查事件</div></div><div class="ctl"><input type="text" id="mm-docker-sock" class="textfield mono" placeholder="/var/run/docker.sock" style="width:min(280px,42vw)" spellcheck="false" aria-label="Docker Socket 路径"><button class="switch" type="button" role="switch" id="mm-src-docker" aria-checked="true" aria-label="启用 Docker 事件监控"></button></div></div>
+    </div>
+    ${sec('轮询器')}
+    <div class="card pad" style="padding-top:6px;padding-bottom:6px">
+    <div class="set-row inline"><div><div class="lbl">SSH journal 日志</div><div class="hint">从 systemd journal 读取 SSH 登录 / 断开</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-en-ssh-jrn" aria-checked="true" aria-label="SSH journal 日志"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">SSH 开启超时提醒</div><div class="hint">会话持续超过设定分钟数时推送</div></div><div class="ctl"><input type="number" id="mm-ssh-min" class="textfield mono" min="5" max="300" value="30" style="width:72px" aria-label="超过多少分钟提醒"><span class="faint">分钟</span><button class="switch" type="button" role="switch" id="mm-en-ssh-open" aria-checked="true" aria-label="SSH 开启超时提醒"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">WAN IP 变更</div><div class="hint">公网 IP 变化时推送</div></div><div class="ctl"><input type="number" id="mm-wan-int" class="textfield mono" min="60" max="86400" value="600" style="width:86px" aria-label="WAN IP 轮询间隔（秒）"><span class="faint">秒</span><button class="switch" type="button" role="switch" id="mm-en-wan" aria-checked="true" aria-label="WAN IP 变更"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">忽略 SSH 回环</div><div class="hint">本机 127.0.0.1 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-loop" aria-checked="true" aria-label="忽略 SSH 回环"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">忽略 SSH 局域网</div><div class="hint">内网 IP 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-lan" aria-checked="false" aria-label="忽略 SSH 局域网"></button></div></div>
+    </div>
+    ${sec('事件类型', '<span class="faint" id="mm-selected-count"></span>')}
+    <div class="card pad">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <input type="search" id="mm-q" class="textfield" placeholder="搜索事件，如 SSH、删除文件、备份" style="flex:1;min-width:150px;width:auto" aria-label="搜索事件">
+    <button class="btn sm ghost" id="mm-defaults" type="button">推荐默认</button>
+    <button class="btn sm ghost" id="mm-select-all" type="button">全选</button>
+    <button class="btn sm ghost" id="mm-clear-all" type="button">清空</button>
+    </div>
+    <div id="mm-cats-wrap" class="mm-cats"></div>
+    <p class="sub" style="margin:8px 0 0">轮询周期：主日志库 / 备份库 / SSH journal 用上方「轮询间隔」；影视 / 相册 / 音乐为其 2 倍（最少 10 秒）；SSH 开启检测 120 秒；WAN IP 600 秒。</p>
+    </div>
+    <div id="mm-diag-wrap" style="display:none">
+    ${sec('诊断')}
+    <div class="card pad" id="mm-diag-list" style="padding-top:10px;padding-bottom:4px"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+    <button class="btn primary" id="mm-save" type="button">${ic('play')}保存并启动</button>
+    <button class="btn" id="mm-status" type="button">${ic('pulse')}运行状态</button>
+    <button class="btn" id="mm-test" type="button">${ic('bell')}测试推送</button>
+    <button class="btn danger" id="mm-disable" type="button">${ic('power')}全部关闭</button>
+    </div>
+    <div id="mm-msg" class="sub" style="margin-top:10px"></div>
+    `;
+
+    // ===== 工具：body 内查找（比全局 $ 精确） =====
+    const $b = (sel) => body.querySelector(sel);
+    const $$b = (sel) => body.querySelectorAll(sel);
+    const setSw = (sel, on) => { const el = $b(sel); if (el) el.setAttribute('aria-checked', on ? 'true' : 'false'); };
+    const swOn = (sel) => { const el = $b(sel); return !!el && el.getAttribute('aria-checked') === 'true'; };
+    $$b('[role=switch]').forEach(el => el.addEventListener('click', () => {
+    el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    }));
+
+    // ===== 事件绑定（先绑定！即使后面数据填充 throw，按钮也能用） =====
+    async function doMonitorSave() {
+    try {
+    const events = Array.from($$b('#mm-cats-wrap input[type=checkbox]:checked')).map(cb => cb.value);
+    const payload = {
+    enable: swOn('#mm-enable'),
+    monitor_events: events,
+    poll_interval: parseInt($b('#mm-poll').value) || 5,
+    logger_db_path: $b('#mm-logger').value.trim(),
+    backup_db_path: $b('#mm-backup').value.trim(),
+    trim_media_db_path: $b('#mm-trim').value.trim(),
+    trim_activity_db_path: $b('#mm-trimact').value.trim(),
+    photo_db_path: $b('#mm-photo').value.trim(),
+    music_db_path: $b('#mm-music').value.trim(),
+    docker_socket_path: $b('#mm-docker-sock').value.trim(),
+    source_enabled: {
+    logger_db_path: swOn('#mm-src-logger'),
+    backup_db_path: swOn('#mm-src-backup'),
+    trim_media_db_path: swOn('#mm-src-trim'),
+    trim_activity_db_path: swOn('#mm-src-trimact'),
+    photo_db_path: swOn('#mm-src-photo'),
+    music_db_path: swOn('#mm-src-music'),
+    },
+    enable_docker: swOn('#mm-src-docker'),
+    enable_ssh_journal: swOn('#mm-en-ssh-jrn'),
+    enable_ssh_open_watch: swOn('#mm-en-ssh-open'),
+    ssh_open_remind_minutes: parseInt($b('#mm-ssh-min').value) || 30,
+    enable_wan_ip: swOn('#mm-en-wan'),
+    wan_ip_poll_interval: parseInt($b('#mm-wan-int').value) || 600,
+    ignore_ssh_loopback: swOn('#mm-ssh-loop'),
+    ignore_ssh_lan: swOn('#mm-ssh-lan'),
+    };
+    setText($b('#mm-msg'), '保存中…');
+    const r = await API.post('/api/monitor/save', payload);
+    if (!r.ok) { setText($b('#mm-msg'), '保存失败：' + (r.error || '')); return; }
+    // 启停现在由后台线程完成，状态可能要等一小会儿才反映出来：轮询几次直到一致
+    let runTxt = '';
+    let st = null;
+    for (let i = 0; i < 6; i++) {
+    try { st = await API.get('/api/monitor/status'); } catch (e2) { st = null; }
+    if (!payload.enable) break;
+    if (st && st.started) break;
+    await new Promise(res => setTimeout(res, 400));
+    }
+    if (st) {
+    const runN = Object.values(st.pollers || {}).filter(v => v).length;
+    runTxt = `（started=${st.started}，运行中轮询器 ${runN}/${Object.keys(st.pollers || {}).length}）`;
+    }
+    setText($b('#mm-msg'), '✅ 已保存，监控运行时已' + (payload.enable ? '启动' : '关闭') + runTxt);
+    if (r.diagnostics && r.diagnostics.length) {
+    $b('#mm-diag-wrap').style.display = '';
+    $b('#mm-diag-list').innerHTML = r.diagnostics.map(d => {
+    const hint = d.ok ? '' : `<div class="mm-diag-hint">${d.error || ''}\n${d.hint || ''}</div>`;
+    return `<div class="mm-diag ${d.ok ? 'ok' : 'fail'}">${d.ok ? '✓ ' : '✗ '}${d.label}${hint}</div>`;
+    }).join('');
+    }
+    } catch (e) { console.error('[monitor] save error', e); setText($b('#mm-msg'), '保存请求异常：' + e.message); }
+    }
+
+    // 「保存并启动」= 拨开开关再保存（避免忘了拨开关导致保存后监控仍是关闭）
+    $b('#mm-save').addEventListener('click', () => { setSw('#mm-enable', true); doMonitorSave(); });
+
+    $b('#mm-status').addEventListener('click', async () => {
+    try {
+    const r = await API.get('/api/monitor/status');
+    let chLine = '';
+    try {
+    const n = await API.get('/api/notify');
+    const chs = Array.isArray(n.channels) ? n.channels : [];
+    const on = chs.filter(c => c.enabled).length;
+    chLine = `<div style="padding:4px 0;font-size:12px;color:${on ? 'var(--ok)' : 'var(--crit)'};">通知渠道：已启用 ${on} / 共 ${chs.length}${on ? '' : '（没有已启用渠道时事件不会推送，请先到「通知设置」配置并启用一个渠道）'}</div>`;
+    } catch (e) { chLine = ''; }
+    const items = Object.entries(r.pollers || {});
+    const html = items.map(([k, v]) => `<div class="row-i" style="grid-template-columns:1fr auto;padding:9px 0"><span style="font-size:12.5px">${esc(k)}</span><span class="pill ${v ? 'ok' : ''}" style="height:22px">${v ? '<span class="dot"></span>运行中' : '未启动'}</span></div>`).join('');
+    $b('#mm-diag-wrap').style.display = '';
+    $b('#mm-diag-list').innerHTML = `<div class="eyebrow" style="margin:4px 0 2px">运行状态 · started=${r.started}</div>${chLine}${html}`;
+    } catch (e) { console.error('[monitor] status error', e); setText($b('#mm-msg'), '状态查询异常：' + e.message); }
+    });
+
+    $b('#mm-disable').addEventListener('click', async () => {
+    setSw('#mm-enable', false);
+    doMonitorSave();
+    });
+
+    // 测试推送：直接走通知渠道（绕过事件检测），用于确认渠道本身能发消息
+    $b('#mm-test').addEventListener('click', async () => {
+    setText($b('#mm-msg'), '正在发送测试推送…');
+    try {
+    const r = await API.post('/api/notify/test', {});
+    if (r.ok) {
+    const res = r.channels || r.results || r.result || {};
+    const ok = Object.values(res).filter(x => x && x.ok).length;
+    const total = Object.keys(res).length;
+    setText($b('#mm-msg'), `✅ 测试推送完成：成功 ${ok}/${total}${total ? '' : '（无已启用渠道）'}`);
+    } else {
+    setText($b('#mm-msg'), '❌ 测试推送失败：' + (r.error || r.message || '未知错误'));
+    }
+    } catch (e) { setText($b('#mm-msg'), '❌ 测试推送异常：' + e.message); }
+    });
+
+    // ===== 数据填充（异步执行，独立 try-catch，throw 只影响数据不影响按钮） =====
+    (async () => {
+    try {
+    const resp = await API.get('/api/monitor');
+    if (!resp.ok) throw new Error(resp.error || 'backend_not_ok');
+    const cfg = resp.config || {};
+    const cats = Array.isArray(resp.categories) ? resp.categories : [];
+    const defaults = Array.isArray(resp.default_selected) ? resp.default_selected : [];
+
+    // 填充已有配置
+    setSw('#mm-enable', cfg.enable === true);
+    if (cfg.poll_interval) $b('#mm-poll').value = cfg.poll_interval;
+    if (cfg.logger_db_path) $b('#mm-logger').value = cfg.logger_db_path;
+    if (cfg.backup_db_path) $b('#mm-backup').value = cfg.backup_db_path;
+    if (cfg.trim_media_db_path) $b('#mm-trim').value = cfg.trim_media_db_path;
+    if (cfg.trim_activity_db_path) $b('#mm-trimact').value = cfg.trim_activity_db_path;
+    if (cfg.photo_db_path) $b('#mm-photo').value = cfg.photo_db_path;
+    if (cfg.music_db_path) $b('#mm-music').value = cfg.music_db_path;
+    if (cfg.docker_socket_path) $b('#mm-docker-sock').value = cfg.docker_socket_path;
+    const srcOn = cfg.source_enabled || {};
+    setSw('#mm-src-logger', srcOn.logger_db_path !== false);
+    setSw('#mm-src-backup', srcOn.backup_db_path !== false);
+    setSw('#mm-src-trim', srcOn.trim_media_db_path !== false);
+    setSw('#mm-src-trimact', srcOn.trim_activity_db_path !== false);
+    setSw('#mm-src-photo', srcOn.photo_db_path !== false);
+    setSw('#mm-src-music', srcOn.music_db_path !== false);
+    setSw('#mm-src-docker', cfg.enable_docker !== false);
+    setSw('#mm-en-ssh-jrn', cfg.enable_ssh_journal !== false);
+    setSw('#mm-en-ssh-open', cfg.enable_ssh_open_watch !== false);
+    if (cfg.ssh_open_remind_minutes) $b('#mm-ssh-min').value = cfg.ssh_open_remind_minutes;
+    setSw('#mm-en-wan', cfg.enable_wan_ip !== false);
+    if (cfg.wan_ip_poll_interval) $b('#mm-wan-int').value = cfg.wan_ip_poll_interval;
+    setSw('#mm-ssh-loop', cfg.ignore_ssh_loopback !== false);
+    setSw('#mm-ssh-lan', !!cfg.ignore_ssh_lan);
+
+    // 已保存过就按保存的来（空数组=用户主动清空，不能又回填成默认）
+    const selected = new Set(
+    Array.isArray(cfg.monitor_events) ? cfg.monitor_events : defaults
+    );
+
+    const catsWrap = $b('#mm-cats-wrap');
+    catsWrap.innerHTML = cats.map((c, ci) => {
+    const evs = (Array.isArray(c.events) && c.events.length)
+    ? c.events
+    : (Array.isArray(c.ids) ? c.ids : []).map(id => ({ id: id, title: id, recommended: false }));
+    const label = c.label || ('分类 ' + (ci + 1));
+    return `<div class="mm-cat open" data-ci="${ci}">
+    <div class="mm-cat-head">
+    <span class="mm-cat-name">${label}</span>
+    <span class="mm-cat-num" data-num="${ci}"></span>
+    <span class="mm-cat-all" data-all="${ci}">全选</span>
+    <span class="mm-cat-arrow">▾</span>
+    </div>
+    <div class="mm-cat-body">
+    ${evs.map(e => `<label class="mm-chip${selected.has(e.id) ? ' on' : ''}" data-text="${(e.id + ' ' + (e.title || '')).toLowerCase()}">
+    <input type="checkbox" value="${e.id}" ${selected.has(e.id) ? 'checked' : ''}>
+    <span class="mt">${e.title || e.id}</span>
+    </label>`).join('')}
+    </div>
+    </div>`;
+    }).join('');
+
+    const allCbs = () => Array.from($$b('#mm-cats-wrap input[type=checkbox]'));
+    function syncUi() {
+    allCbs().forEach(cb => {
+    const chip = cb.parentElement;
+    if (chip) chip.classList.toggle('on', cb.checked);
+    });
+    const total = allCbs().length;
+    const sel = allCbs().filter(cb => cb.checked).length;
+    setText($b('#mm-selected-count'), `已选 ${sel} / ${total}`);
+    cats.forEach((c, ci) => {
+    const cbs = Array.from($$b(`#mm-cats-wrap [data-ci="${ci}"] input[type=checkbox]`));
+    const n = cbs.filter(cb => cb.checked).length;
+    const numEl = $b(`#mm-cats-wrap [data-num="${ci}"]`);
+    const allEl = $b(`#mm-cats-wrap [data-all="${ci}"]`);
+    if (numEl) setText(numEl, `${n}/${cbs.length}`);
+    if (allEl) setText(allEl, n === cbs.length ? '取消全选' : '全选');
+    });
+    }
+    syncUi();
+    catsWrap.addEventListener('change', syncUi);
+
+    // 分类头：点击折叠；「全选 / 取消全选」只作用于该分类
+    catsWrap.addEventListener('click', (ev) => {
+    const allEl = ev.target.closest('[data-all]');
+    if (allEl) {
+    ev.stopPropagation();
+    const ci = allEl.getAttribute('data-all');
+    const cbs = Array.from($$b(`#mm-cats-wrap [data-ci="${ci}"] input[type=checkbox]`));
+    const shouldCheck = cbs.filter(cb => cb.checked).length < cbs.length;
+    cbs.forEach(cb => { cb.checked = shouldCheck; });
+    syncUi();
+    return;
+    }
+    const headEl = ev.target.closest('.mm-cat-head');
+    if (headEl) headEl.parentElement.classList.toggle('open');
+    });
+
+    // 搜索：按中文标题或事件 ID 过滤，命中的分类自动展开
+    const qEl = $b('#mm-q');
+    if (qEl) qEl.addEventListener('input', () => {
+    const q = qEl.value.trim().toLowerCase();
+    $$b('#mm-cats-wrap .mm-cat').forEach(card => {
+    let shown = 0;
+    card.querySelectorAll('.mm-chip').forEach(chip => {
+    const hit = !q || (chip.getAttribute('data-text') || '').indexOf(q) >= 0;
+    chip.style.display = hit ? '' : 'none';
+    if (hit) shown++;
+    });
+    card.style.display = (q && shown === 0) ? 'none' : '';
+    if (q && shown > 0) card.classList.add('open');
+    });
+    });
+
+    $b('#mm-defaults').addEventListener('click', () => {
+    allCbs().forEach(cb => { cb.checked = defaults.indexOf(cb.value) >= 0; });
+    syncUi();
+    });
+    $b('#mm-select-all').addEventListener('click', () => { allCbs().forEach(cb => { cb.checked = true; }); syncUi(); });
+    $b('#mm-clear-all').addEventListener('click', () => { allCbs().forEach(cb => { cb.checked = false; }); syncUi(); });
+    } catch (e) {
+    console.error('[monitor] data load error', e);
+    setText($b('#mm-msg'), '⚠ 配置加载失败：' + e.message + '（按钮仍可用）');
+    }
+    })();
+    return null;
+    },
+  },
+
+  pushHistory: {
+    icon: () => 'history', title: () => '推送历史与统计', sub: () => '近 1 万条推送记录，可按成功/失败筛选',
+    build(body, arg, ctx) {
+    body.innerHTML = `
+    <style>
+    .ph-stat { display:flex; gap:14px; }
+    .ph-stat-item { flex:1; text-align:center; padding:12px 0; border-radius:8px; background:var(--bg-2); }
+    .ph-stat-item .v { font-size:20px; font-weight:600; }
+    .ph-stat-item .l { font-size:12px; color:var(--ink-2); margin-top:2px; }
+    .ph-list { margin-top:14px; }
+    .ph-row { display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--bg-3); font-size:12px; cursor:pointer; }
+    .ph-row:hover { background:var(--bg-2); }
+    .ph-row .ok { color:#07c160; width:24px; flex-shrink:0; }
+    .ph-row .bad { color:#ff4d4f; width:24px; flex-shrink:0; }
+    .ph-row .t { width:150px; color:var(--ink-2); flex-shrink:0; }
+    .ph-row .e { width:130px; color:var(--ink-2); flex-shrink:0; }
+    .ph-row .s { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ph-head { display:flex; gap:8px; padding:6px 10px; font-size:11px; color:var(--ink-2); font-weight:600; border-bottom:2px solid var(--bg-3); }
+    .ph-head .ok { width:24px; }
+    .ph-head .t { width:150px; }
+    .ph-head .e { width:130px; }
+    .ph-head .s { flex:1; }
+    .ph-detail { padding:10px; background:var(--bg-2); border-radius:6px; font-size:12px; white-space:pre-wrap; margin-top:4px; display:none; }
+    .ph-filter { display:flex; gap:10px; align-items:center; margin-bottom:10px; font-size:12px; }
+    .ph-filter select { padding:4px 8px; border-radius:4px; background:var(--bg-2); color:var(--ink-1); border:1px solid var(--bg-3); }
+    .ph-pager { display:flex; justify-content:space-between; align-items:center; margin-top:10px; font-size:12px; color:var(--ink-2); }
+    .ph-pager button { padding:4px 12px; border-radius:4px; border:1px solid var(--bg-3); background:var(--bg-2); color:var(--ink-1); cursor:pointer; }
+    .ph-pager button:disabled { opacity:0.4; cursor:not-allowed; }
+    </style>
+    <div class="card">
+    <div class="ph-stat" id="ph-stat"></div>
+    </div>
+    <div class="card">
+    <div class="ph-filter">
+    <label>筛选：</label>
+    <select id="ph-filter">
+    <option value="">全部</option>
+    <option value="true">仅成功</option>
+    <option value="false">仅失败</option>
+    </select>
+    <span id="ph-count" style="margin-left:auto"></span>
+    <button class="btn btn-danger" id="ph-clear" type="button" style="padding:3px 10px; font-size:12px;">清空全部历史</button>
+    </div>
+    <div class="ph-list">
+    <div class="ph-head">
+    <div class="ok">状态</div><div class="t">时间</div><div class="e">事件类型</div><div class="s">摘要</div>
+    </div>
+    <div id="ph-rows"></div>
+    </div>
+    <div class="ph-pager">
+    <button id="ph-prev">上一页</button>
+    <span id="ph-page-info"></span>
+    <button id="ph-next">下一页</button>
+    </div>
+    </div>
+    `;
+    
+    let page = 0, limit = 50, filter = '';
+    const statEl = $('#ph-stat'), rowsEl = $('#ph-rows'), countEl = $('#ph-count');
+    const prevBtn = $('#ph-prev'), nextBtn = $('#ph-next'), pageInfo = $('#ph-page-info');
+    
+    async function loadStats() {
+    try {
+    const s = await API.get('/api/notify-stats');
+    statEl.innerHTML = `
+    <div class="ph-stat-item"><div class="v">${s.total && s.total.total || 0}</div><div class="l">总条数</div></div>
+    <div class="ph-stat-item"><div class="v">${s.today && s.today.total || 0}</div><div class="l">今日</div></div>
+    <div class="ph-stat-item"><div class="v" style="color:#07c160">${s.total && s.total.success || 0}</div><div class="l">成功</div></div>
+    <div class="ph-stat-item"><div class="v" style="color:#ff4d4f">${s.total && s.total.fail || 0}</div><div class="l">失败</div></div>
+    `;
+    } catch (e) { statEl.innerHTML = '<div style="color:#ff4d4f">加载统计失败</div>'; }
+    }
+    
+    async function loadRows() {
+    const qs = new URLSearchParams({ limit, offset: page * limit });
+    if (filter) qs.set('success', filter);
+    try {
+    const rows = await API.get('/api/notify-history?' + qs.toString());
+    countEl.textContent = `当前返回 ${rows.length} 条`;
+    if (!rows.length && page > 0) { page = 0; return loadRows(); }
+    rowsEl.innerHTML = rows.map(r => `
+    <div class="ph-row" data-id="${r.id}">
+    <div class="${r.success ? 'ok' : 'bad'}">${r.success ? '✓' : '✗'}</div>
+    <div class="t">${r.created_at || ''}</div>
+    <div class="e">${r.event_type || ''}</div>
+    <div class="s" title="${(r.summary || '').replace(/"/g, '&quot;')}">${r.summary || ''}</div>
+    </div>
+    `).join('') || '<div style="padding:20px;text-align:center;color:var(--ink-3);font-size:13px">暂无推送记录</div>';
+    pageInfo.textContent = `第 ${page + 1} 页`;
+    prevBtn.disabled = page === 0;
+    nextBtn.disabled = rows.length < limit;
+    // 行点击展开详情
+    rowsEl.querySelectorAll('.ph-row').forEach(row => {
+    row.addEventListener('click', async () => {
+    const id = row.dataset.id;
+    let detail = row.nextElementSibling;
+    if (detail && detail.classList.contains('ph-detail')) {
+    detail.remove(); return;
+    }
+    // 先删其它展开
+    rowsEl.querySelectorAll('.ph-detail').forEach(el => el.remove());
+    detail = document.createElement('div');
+    detail.className = 'ph-detail';
+    detail.style.display = '';
+    try {
+    const rec = await API.get('/api/notify-history/' + id);
+    if (rec && rec.detail) {
+    try { const d = JSON.parse(rec.detail); detail.textContent = JSON.stringify(d, null, 2); } catch (e2) { detail.textContent = rec.detail; }
+    } else { detail.textContent = rec ? JSON.stringify({ created_at: rec.created_at, event_type: rec.event_type, summary: rec.summary }, null, 2) : ''; }
+    } catch (e) { detail.textContent = '加载详情失败'; }
+    row.parentElement.insertBefore(detail, row.nextSibling);
+    });
+    });
+    } catch (e) { rowsEl.innerHTML = '<div style="color:#ff4d4f">加载失败</div>'; }
+    }
+    
+    $('#ph-filter').addEventListener('change', e => { filter = e.target.value; page = 0; loadRows(); });
+    prevBtn.addEventListener('click', () => { if (page > 0) { page--; loadRows(); } });
+    nextBtn.addEventListener('click', () => { page++; loadRows(); });
+    $('#ph-clear').addEventListener('click', async () => {
+    if (!confirm('确定清空所有推送历史？此操作不可恢复')) return;
+    try { await API.post('/api/history/clear', {}); page = 0; loadRows(); loadStats(); } catch (e) { alert('清空失败'); }
+    });
+    
+    (async () => {
+    await loadStats();
+    await loadRows();
+    })();
+    
+    // 统计定时刷新（每 10 秒）；抽屉关闭/切换时由 teardownSheet 调用 clearTimer 清理
+    const timer = setInterval(loadStats, 10000);
+    ctx.clearTimer = () => clearInterval(timer);
+    return null;
+    },
+  },
 };
 const ICO_OF = (type, arg) => { const d = SHEETS[type]; return typeof d.icon === 'function' ? d.icon(arg) : d.icon; };
 const SHEET_DC = { cpu: 'util', mem: 'util', storage: 'util', disk: 'util', net: 'io', temp: 'temp', power: 'pwr' };
@@ -473,7 +922,7 @@ function openSheet(key, fromRoute) {
   if (type === 'cpu' || type === 'mem') Poll.run('procs');
   setTimeout(() => $('#sheet').focus({ preventScroll: true }), 60);
 }
-function teardownSheet() { if (sheetCtx) { sheetCtx.charts.forEach(c => c.destroy()); sheetCtx = null; } }
+function teardownSheet() { if (sheetCtx) { try { sheetCtx.clearTimer && sheetCtx.clearTimer(); } catch (e) { /* noop */ } sheetCtx.charts.forEach(c => c.destroy()); sheetCtx = null; } }
 function closeSheet(fromRoute) {
   if (!S.sheet) return;
   teardownSheet(); S.sheet = null;

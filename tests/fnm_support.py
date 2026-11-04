@@ -85,6 +85,7 @@ class ServerProcess:
         app = os.path.join(self.pkg, "app")
         os.makedirs(app)
         shutil.copy2(self.server_py, os.path.join(app, "server.py"))
+        shutil.copytree(os.path.join(REPO, "app", "utils"), os.path.join(app, "utils"))
         shutil.copytree(os.path.join(REPO, "app", "www"), os.path.join(app, "www"))
         cities = os.path.join(REPO, "app", "cities_cn.json")
         if os.path.exists(cities):

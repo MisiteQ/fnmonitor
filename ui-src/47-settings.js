@@ -131,19 +131,20 @@ const cfgItem = (k, label, type, extra) => Object.assign({ k, label, type, get: 
 const cfgToggle = (k, label, extra) => Object.assign(cfgItem(k, label, 'toggle', extra), { get: () => S.cfg ? !!+S.cfg[k] : false });
 const uiItem = (k, label, type, extra) => Object.assign({ k, label, type, get: () => UI[k], set: v => { UI[k] = v; applyUI(k); saveUI(); toast(`已保存 · ${label}`, { key: 'save' }); } }, extra);
 const SET_SCHEMA = [
-  { id: 'service', title: '服务', icon: 'server', desc: '飞牛监控自身的运行方式。', items: [
+  { id: 'service', title: '服务·采集', icon: 'server', desc: '飞牛监控自身的运行方式、采集频率与采集例外项；更短的间隔更实时，也会写入更多数据、占用更多 NAS 资源。', items: [
     Object.assign(cfgItem('port', '服务端口', 'number', { min: 1024, max: 65535, strict: true, hint: () => '1024 – 65535；修改后需在 应用中心 → 飞牛监控 中重启应用生效，并在飞牛防火墙放行新端口' + (S.cfg && +S.cfg.port && S.cfg.listen_port && +S.cfg.listen_port !== +S.cfg.port ? `；当前实际监听 ${esc(S.cfg.listen_port)}（重启后切换）` : '') }), { get: () => S.cfg ? (+S.cfg.port || +S.cfg.listen_port || +location.port || 8777) : undefined }),
     cfgItem('open_mode', '飞牛桌面打开方式', 'seg', { options: [['url', '独立网页'], ['iframe', '飞牛窗口']], help: '点击飞牛桌面「飞牛监控」图标时的打开方式。独立网页：直接在浏览器新标签页打开（完整浏览器能力：全屏 / 下载 / 插件）。飞牛窗口：在 fnOS 桌面内嵌窗口中打开。保存时自动写入桌面入口——刷新飞牛桌面页面（F5）或重新登录后生效；若桌面尚未刷新仍弹出内嵌窗口，窗口内会显示引导页可一键转到浏览器。', hint: () => inIframe ? '当前在飞牛窗口内 · <a href="/" target="_blank" rel="noopener">立即在新标签页打开 ↗</a>' : '' }),
-    { k: 'weatherAuto', label: '天气自动定位', type: 'toggle', hint: '按 NAS 公网 IP 估算城市；需要外网', get: () => !(S.cfg && S.cfg.weather_city) && !S.weatherManual, set: (v, row) => { if (v) { S.weatherManual = false; saveCfg({ weather_city: '' }, '已切换为自动定位天气', row).then(() => { syncSettings(); setTimeout(() => Poll.run('weather'), 800); }); } else { S.weatherManual = true; syncSettings(); setTimeout(() => { const i = $('.set-row[data-k="weather_city"] input'); i && i.focus(); }, 60); } } },
-    cfgItem('weather_city', '天气位置', 'text', { placeholder: '城市名（如 徐州）或 纬度,经度', showIf: () => !!(S.cfg && S.cfg.weather_city) || !!S.weatherManual, hint: '填城市名，或 纬度,经度（如 34.26,117.18）',
-      validate: v => !v ? '请输入城市名或坐标；如需自动定位，请打开上方开关' : v.includes(',') && !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(v) ? '坐标格式应为 纬度,经度（如 34.26,117.18）' : v.length > 100 ? '位置太长了' : '',
-      set: (v, row) => saveCfg({ weather_city: v }, '天气位置', row).then(() => setTimeout(() => Poll.run('weather'), 800)) }),
-  ] },
-  { id: 'collect', title: '采集与历史', icon: 'pulse', desc: '更短的间隔更实时，也会写入更多数据、占用更多 NAS 资源。', items: [
     cfgItem('interval', '实时采集间隔', 'number', { min: 5, max: 3600, unit: '秒', hint: '监控刷新周期，值越小越实时但负载略高' }),
     cfgItem('history_interval', '历史采样间隔', 'number', { min: 60, max: 86400, unit: '秒', hint: '历史趋势每隔多久记录一条，默认 60 秒' }),
     cfgItem('retention_days', '历史保留', 'number', { min: 1, max: 365, unit: '天', hint: '超过保留期的历史数据会自动清理' }),
     cfgToggle('monthly_summary_enabled', '上月汇总', { hint: () => `在总览底部显示上个月的运行回顾${S.cfg && +S.cfg.retention_days < 31 ? `；历史保留 ${esc(S.cfg.retention_days)} 天不足整月，会自动叠加保存汇总` : ''}`, help: '每月自动生成。即使历史保留不足一个月，也会单独保存月度聚合数据，确保汇总完整。', set: (v, row) => saveCfg({ monthly_summary_enabled: v ? 1 : 0 }, '上月汇总', row).then(() => { Poll.run('monthly'); }) }),
+    cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { hint: '不计入虚拟网卡的累计流量', help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
+    cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
+    cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
+    { k: 'weatherAuto', label: '天气自动定位', type: 'toggle', hint: '按 NAS 公网 IP 估算城市；需要外网', get: () => !(S.cfg && S.cfg.weather_city) && !S.weatherManual, set: (v, row) => { if (v) { S.weatherManual = false; saveCfg({ weather_city: '' }, '已切换为自动定位天气', row).then(() => { syncSettings(); setTimeout(() => Poll.run('weather'), 800); }); } else { S.weatherManual = true; syncSettings(); setTimeout(() => { const i = $('.set-row[data-k="weather_city"] input'); i && i.focus(); }, 60); } } },
+    cfgItem('weather_city', '天气位置', 'text', { placeholder: '城市名（如 徐州）或 纬度,经度', showIf: () => !!(S.cfg && S.cfg.weather_city) || !!S.weatherManual, hint: '填城市名，或 纬度,经度（如 34.26,117.18）',
+      validate: v => !v ? '请输入城市名或坐标；如需自动定位，请打开上方开关' : v.includes(',') && !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(v) ? '坐标格式应为 纬度,经度（如 34.26,117.18）' : v.length > 100 ? '位置太长了' : '',
+      set: (v, row) => saveCfg({ weather_city: v }, '天气位置', row).then(() => setTimeout(() => Poll.run('weather'), 800)) }),
   ] },
   { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
   { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
@@ -153,30 +154,9 @@ const SET_SCHEMA = [
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
     cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0.5, unit: 'W', hint: 'RAPL 只测 CPU 封装，整机估算叠加此底座，可按插座实测补差' }),
   ] },
-  { id: 'disk', title: '网络与硬盘', icon: 'net', items: [
-    cfgToggle('traffic_exclude_bridge', '排除 Docker 网桥流量', { help: '开启后不计入 docker / veth / br- / virbr / tun / tap 等虚拟网卡的累计流量，统计更接近真实的外网用量。' }),
-    cfgToggle('disk_standby_protect', '休眠硬盘保护', { hint: '不唤醒已停转的硬盘', help: '开启后跳过休眠硬盘的容量 / SMART / 温度读取，避免把它唤醒；历史在硬盘醒来后补写。关闭则每个周期完整采集，硬盘可能无法进入休眠。' }),
-    cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
-    cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
-    { k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
-      hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
-      run: async b => {
-        b.disabled = true;
-        try {
-          const j = await API.post('/api/disk_scan/now', {});
-          if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
-          else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
-        } catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
-        b.disabled = false;
-      } },
-    { k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
-      hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
-      run: () => openSheet('scanlog') },
-    cfgToggle('ec_fan_probe', '实验性 · EC 风扇读取', { hint: '通过硬件 I/O 端口读取部分商用机（NEC / 联想）风扇转速，默认关闭', help: '仅在标准 hwmon / IPMI 读不到风扇时使用。该方式直接访问主板 EC 端口（只读），个别机型可能不兼容，如出现异常请关闭。' }),
-  ] },
-  { id: 'notify', title: '通知', icon: 'bell', desc: '硬盘巡检发现故障变化时，把消息推送到邮箱或微信；两个通道各自独立，测试也各测各的。', custom: renderNotify },
+  { id: 'monitor', title: '事件监控', icon: 'eye', desc: 'fnOS 80+ 种系统事件实时推送（主日志库 / 备份 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP），经事件模板化后走既有推送出口；硬盘巡检的开关、间隔、结果推送与已忽略的提醒也在这里。', custom: renderMonitor },
+  { id: 'notify', title: '通知设置', icon: 'bell', desc: '事件推送、硬盘巡检告警、阈值警告与定时报告都走这里配置的渠道；支持多渠道同时推送，测试也各测各的。', custom: renderNotify },
   { id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
-  { id: 'ignored', title: '已忽略的提醒', icon: 'eye-off', desc: '在 健康检查 中忽略的问题会列在这里：不计入健康分与首页结论；问题状态发生变化（如重映射扇区数增加、级别从留意升为严重、未运行的容器变化）时会自动重新提醒。', custom: renderIgnored },
   { id: 'look', title: '外观', icon: 'palette', items: [
     uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
     { k: 'colorspec', label: '色彩规范', type: 'colorspec', wide: true, hint: '概览安静、分析丰富：颜色按层级分工，紧急程度覆盖一切' },
@@ -192,7 +172,7 @@ const SET_SCHEMA = [
     desc: '按页面列出所有版块，关掉的版块不显示，后端也会尽量停掉对应采集（省 CPU 与磁盘 IO）。顶部「一句话结论 / 健康分」始终显示，它依赖 CPU、内存、容量、CPU 温度、阵列与容器列表——这几类数据无论怎么关都会继续采集，否则结论会失真。',
     custom: renderBlocks },
   { id: 'auth', title: '登录口令', icon: 'lock', desc: '开启后，访问飞牛监控需要先输入口令。', custom: renderAuth },
-  { id: 'data', title: '数据', icon: 'folder', custom: renderData },
+  { id: 'pushHistory', title: '日志·数据', icon: 'history', desc: '每条推送日志自动落库，可按成功/失败筛选、分页浏览、一键清空；数据保存目录与历史 / 流量 / 功耗 CSV、健康报告导出也在这里。', custom: renderHistoryData },
   { id: 'update', title: '软件更新', icon: 'download', custom: renderUpdate },
   { id: 'about', title: '关于', icon: 'info', custom: renderAbout },
 ];
@@ -270,6 +250,7 @@ function renderIgnored(card) {
 function renderThresholds(card) {
   const ROWS = [['cpu', 'CPU 占用', '%'], ['mem', '内存占用', '%'], ['cap', '存储容量', '%'], ['temp', 'CPU 温度', '℃'], ['diskTemp', '硬盘温度', '℃']];
   card.innerHTML = ROWS.map(([k, l]) => `<div class="set-row th-row" data-k="${k}Warn"><div><div class="lbl">${l}</div><div class="hint" data-h="${k}"></div></div><div class="ctl th-pair" data-p="${k}"></div></div>`).join('') +
+    `<div data-ref="tnotify"></div>` +
     `<div class="set-row inline"><div><div class="lbl">恢复默认阈值</div><div class="hint">CPU / 内存 / 容量 85% · 95%，CPU 温度 80 · 90℃，硬盘温度 50 · 58℃</div></div><div class="ctl"><button class="btn" type="button" data-ref="reset">恢复默认</button></div></div>`;
   const save = (k, v, row) => {
     const t = Object.assign({}, TH, { [k]: v }), pair = TH_PAIRS.find(p => p.includes(k));
@@ -286,6 +267,7 @@ function renderThresholds(card) {
     });
   });
   card._r = collect(card);
+  card._r.tnotify.appendChild(setRow(cfgToggle('threshold_notify', '阈值警告推送', { hint: '超过以上阈值时（CPU / 内存 / 容量 / 温度 / SMART / 阵列）通过「通知设置」里的渠道推送，恢复时也会通知；在健康检查里忽略的问题不会推送' })));
   card._r.reset.onclick = () => { setThresholds({}); saveUI(); applyThresholds(); syncSettings(); toast('已恢复默认阈值'); };
   card._sync = () => { $$('.numfield', card).forEach(n => n.sync && n.sync()); ROWS.forEach(([k, , u]) => setText(card.querySelector(`[data-h="${k}"]`), `≥ ${TH[k + 'Warn']}${u} 警告 · ≥ ${TH[k + 'Crit']}${u} 严重`)); };
   card._sync();
@@ -430,22 +412,19 @@ function renderNotify(card) {
   let chSeq = 0; // 新建渠道 id 自增
   const newId = () => 'ch_' + Date.now().toString(36) + (chSeq++);
 
-  card.innerHTML = `<div class="note info notify-note">${ic('bell')}<span><b>两条独立的告警线，可分别开关</b>：<br>
-· <b>硬盘巡检</b>：新增故障 / 加重 / 已恢复各发一条，同一块盘的同一状态只发一次，发送失败下一轮巡检自动重试（跟着「硬盘巡检」走，需先在 网络与硬盘 里打开巡检）；<br>
-· <b>硬件告警</b>：iDRAC 的 SEL 硬件日志与风扇 / 温度 / 电源，攒到每天指定时刻统一发一封，<b>到点前已经恢复的整条不发</b>，一直没恢复的每 7 天再提醒，正文带发生时间。</span></div>
+  card.innerHTML = `<div class="set-sub">推送渠道</div>
+    <div class="note info notify-note">${ic('bell')}<span><b>事件推送、硬盘巡检告警、阈值警告、iDRAC 硬件告警与定时报告都走这里配置的渠道</b>，渠道可添加多个同时发送；每类推送有自己的开关：巡检的故障变化始终推送、每轮结果摘要在 事件监控 里开关，硬件告警到点只发仍未恢复的。</span></div>
     <div class="notify-channels" data-ref="chList"></div>
-    <div style="display:flex;gap:8px;margin:8px 0 16px">
+    <div style="display:flex;gap:8px;margin:8px 0 4px">
       <button class="btn" type="button" data-ref="addCh" style="flex:1">+ 添加推送渠道</button>
       <button class="btn" type="button" data-ref="guideBtn" style="flex:0 0 auto">? 使用说明</button>
     </div>
-    <div class="set-row"><div><div class="lbl" style="margin-top:6px">全局通知设置</div><div class="hint">标题前缀、勿扰模式、极简推送，对所有渠道生效</div></div></div>
+    <div class="set-sub" style="margin-top:14px">全局行为 · 对所有渠道生效</div>
     <div class="set-row"><div><div class="lbl">标题前缀</div><div class="hint">每条通知标题前加的前缀，默认「飞牛监控」</div></div><div class="ctl"><input class="textfield" data-ref="titlePrefix" placeholder="飞牛监控" maxlength="32" aria-label="通知标题前缀"></div></div>
     <div class="set-row inline"><div><div class="lbl">极简推送</div><div class="hint" data-ref="hMin"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swMin" aria-label="极简推送"></button></div></div>
-    <div class="set-row inline"><div><div class="lbl">勿扰模式</div><div class="hint" data-ref="hDnd"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swDnd" aria-label="勿扰模式"></button></div></div>
-    <div class="set-row"><div><div class="lbl">勿扰时段</div><div class="hint">该时段内的通知会缓存，结束后汇总成一条发送</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:90px" type="time" data-ref="dndStart" aria-label="勿扰开始时间"><span>至</span><input class="textfield mono" style="width:90px" type="time" data-ref="dndEnd" aria-label="勿扰结束时间"></div></div>
-    <div class="set-row inline"><div><div class="lbl">硬件告警</div><div class="hint" data-ref="hHw"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警"></button></div></div>
-    <div class="set-row"><div><div class="lbl">硬件告警发送时间</div><div class="hint">每天到这个时刻汇总发一封：只发仍未恢复的，正文带发生时间；持续没恢复的每 7 天再提醒一次，通知过又恢复的补一封「已恢复」</div></div><div class="ctl"><input class="textfield mono" style="width:110px" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"></div></div>
-    <div class="set-row"><div><div class="lbl" style="margin-top:6px">定时推送报告</div><div class="hint">按设定周期把系统各模块数据汇总推送一条报告；与告警推送互不干扰</div></div></div>
+    <div class="set-row inline"><div><div class="lbl">勿扰模式</div><div class="hint" data-ref="hDnd"></div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="dndStart" aria-label="勿扰开始时间"><span class="faint" data-ref="dndTo" style="display:none">至</span><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="dndEnd" aria-label="勿扰结束时间"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swDnd" aria-label="勿扰模式"></button></div></div>
+    <div class="set-row inline"><div><div class="lbl">硬件告警汇总</div><div class="hint" data-ref="hHw"></div></div><div class="ctl" style="display:flex;gap:6px;align-items:center"><input class="textfield mono" style="width:88px;display:none" type="time" data-ref="hwTime" aria-label="硬件告警发送时间"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swHw" aria-label="硬件告警汇总"></button></div></div>
+    <div class="set-sub" style="margin-top:14px">定时推送报告 · 与告警互不干扰</div>
     <div class="set-row inline"><div><div class="lbl">开启定时报告</div><div class="hint" data-ref="hRep"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swRep" aria-label="开启定时报告"></button></div></div>
     <div class="set-row" data-ref="repSchRow"><div><div class="lbl">推送周期</div><div class="hint">到点自动发一条汇总报告</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
       <select class="textfield" data-ref="repType" aria-label="推送周期类型" style="width:auto">
@@ -464,7 +443,7 @@ function renderNotify(card) {
     </div></div>
     <div class="set-row wide" data-ref="repModRow"><div><div class="lbl">推送内容</div><div class="hint">勾选要在报告里推送的模块，并选择详细程度</div></div><div class="ctl" style="flex-direction:column;align-items:stretch;gap:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-        <span class="set-sub" style="margin:0">详细程度</span>
+        <span style="font-size:11px;font-weight:600;color:var(--ink-3);letter-spacing:.02em">详细程度</span>
         <div data-ref="repDetailSeg"></div>
       </div>
       <div class="rep-mods" data-ref="repMods"></div>
@@ -731,6 +710,10 @@ function renderNotify(card) {
     x.swMin.setAttribute('aria-checked', String(!!+f.notify_minimal));
     x.swDnd.setAttribute('aria-checked', String(!!+f.notify_dnd_enabled));
     x.swHw.setAttribute('aria-checked', String(!!+f.hw_enabled));
+    // 合并行里的时间输入：仅在对应开关打开时显示
+    const dndOn = !!+f.notify_dnd_enabled, hwOn = !!+f.hw_enabled;
+    x.dndStart.style.display = x.dndEnd.style.display = x.dndTo.style.display = dndOn ? '' : 'none';
+    x.hwTime.style.display = hwOn ? '' : 'none';
     if (document.activeElement !== x.titlePrefix) x.titlePrefix.value = f.notify_title_prefix || '飞牛监控';
     if (document.activeElement !== x.dndStart) x.dndStart.value = f.notify_dnd_start || '23:00';
     if (document.activeElement !== x.dndEnd) x.dndEnd.value = f.notify_dnd_end || '08:00';
@@ -832,6 +815,105 @@ async function loadIdrac(opts) {
   catch (e) { IB = Object.assign({}, IB || {}, { ok: false, configured: true, error: e.message || '读取失败' }); }
   return IB;
 }
+// ---------- 事件监控：fnOS 系统事件实时推送 + 硬盘巡检 ----------
+async function renderMonitor(card) {
+  card.innerHTML = `<div class="note info notify-note">${ic('eye')}<span><b>事件监控</b>：fnOS 80+ 种系统事件实时推送（主日志库 / 备份任务库 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP 等），统一经事件模板化后走「通知」里的推送出口。数据源路径、轮询器开关与事件白名单在完整配置中调整。</span></div>
+    <div class="set-row inline"><div><div class="lbl">运行状态</div><div class="hint" data-ref="hMon">正在读取…</div></div><div class="ctl" data-ref="stPill"></div></div>
+    <div class="set-row inline"><div><div class="lbl">完整配置</div><div class="hint">数据源路径、轮询间隔、事件分类勾选、权限诊断与修复命令</div></div><div class="ctl"><button class="btn" type="button" data-mon-open>${ic('chev')}打开配置</button></div></div>
+    <div class="set-sub">硬盘巡检</div>`;
+  card.querySelector('[data-mon-open]').addEventListener('click', () => openSheet('monitor'));
+  // 巡检设置行：与设置页其他行同一套控件，_sync 由全局 syncSettings 统一调用
+  [
+    cfgToggle('disk_scan_enabled', '硬盘巡检', { hint: '定时全盘读取 SMART 并分级，盘位卡片的健康状态来自这里', help: '巡检在后台按固定周期执行：全盘 smartctl → 红黄绿分级 → 存入本机数据库，盘位卡片只读这份结果，打开页面不会再逐盘读取。关闭后不再巡检，盘位显示「未巡检」。休眠中的硬盘会被跳过（带 -n standby，不会唤醒），沿用上次结论。' }),
+    cfgItem('disk_scan_interval_h', '巡检间隔', 'seg', { options: [[6, '6 小时'], [12, '12 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天']], hint: '间隔越短发现退化越及时，读取次数也越多；14 块盘一轮约 15–20 秒' }),
+    { k: 'diskScanNow', label: '立即巡检', type: 'action', button: '现在巡检一次',
+      hint: '不等下一个周期，立刻跑一轮全盘 SMART 并更新盘位分级；换盘或刚装完想马上看到结果时用',
+      run: async b => {
+        b.disabled = true;
+        try {
+          const j = await API.post('/api/disk_scan/now', {});
+          if (j && j.ok) { toast(j.message || '已开始巡检', { key: 'scan', icon: 'check', ms: 4000 }); setTimeout(() => Poll.run('overview'), 16000); }
+          else toast((j && j.message) || '启动失败', { icon: 'alert', ms: 4000 });
+        } catch (e) { toast('启动失败 · ' + String(e.message).slice(0, 60), { icon: 'alert', ms: 4000 }); }
+        b.disabled = false;
+      } },
+    { k: 'scanLog', label: '巡检历史', type: 'action', button: '查看巡检记录',
+      hint: '每次巡检一行：有变动记变动内容，没变动记「未见异常」；未见异常保留 7 天，有变动的永久保留直到手动清理',
+      run: () => openSheet('scanlog') },
+    cfgToggle('disk_scan_notify', '巡检结果推送', { hint: '开启后每轮巡检完成都会把结果摘要（正常 / 留意 / 故障数量与变动）推送到「通知设置」里的渠道；故障变化的告警不受此开关影响，始终推送' }),
+  ].forEach(it => card.appendChild(setRow(it)));
+  // 已忽略的提醒：并入事件监控（巡检设置下方），复用原独立分组的管理界面
+  const igSub = document.createElement('div');
+  igSub.className = 'set-sub';
+  igSub.textContent = '已忽略的提醒';
+  card.appendChild(igSub);
+  const igBox = document.createElement('div');
+  card.appendChild(igBox);
+  renderIgnored(igBox);
+  const x = collect(card);
+  card._sync = () => igBox._sync && igBox._sync();
+  try {
+    const [cfgResp, stResp] = await Promise.all([API.get('/api/monitor'), API.get('/api/monitor/status')]);
+    const cfg = cfgResp && cfgResp.config ? cfgResp.config : {};
+    const enabled = cfg.enable === true;
+    const started = stResp && stResp.started;
+    const pollers = stResp && stResp.pollers ? Object.values(stResp.pollers) : [];
+    const runCount = pollers.filter(v => v).length;
+    setText(x.hMon, enabled
+      ? `已启用${started ? '' : '（未运行）'} · 轮询器 ${runCount}/${pollers.length} · 间隔 ${cfg.poll_interval || 5} 秒`
+      : '未启用 · 事件不推送，在完整配置中可开启');
+    setHTML(x.stPill, `<span class="pill ${enabled ? (started ? 'ok' : 'warn') : 'sleep'}">${enabled ? (started ? '<span class="dot"></span>运行中' : ic('alert') + '未运行') : '已关闭'}</span>`);
+  } catch (e) {
+    setText(x.hMon, '状态获取失败：' + e.message);
+  }
+}
+
+async function renderPushHistory(card) {
+  card.innerHTML = `<div class="note info notify-note">${ic('history')}<span><b>推送历史与统计</b>：每条推送记录（成功/失败、事件类型、摘要、完整 JSON 详情）自动落 SQLite，可按成功/失败筛选、分页浏览、点击展开查看详情。</span></div>
+    <div id="phStats" style="display:flex;gap:10px;margin:10px 0;flex-wrap:wrap"></div>
+    <div class="set-row inline"><div><div class="lbl">打开推送历史面板</div><div class="hint">筛选、分页浏览所有推送记录，支持一键清空</div></div><div class="ctl"><button class="btn btn-primary" type="button" data-ph-open>${ic('history')}打开历史</button></div></div>`;
+  card.querySelector('[data-ph-open]').addEventListener('click', () => openSheet('pushHistory'));
+  const statEl = card.querySelector('#phStats');
+  try {
+  const s = await API.get('/api/notify-stats');
+  const total = s && s.total ? s.total.total : 0;
+  const success = s && s.total ? s.total.success : 0;
+  const fail = s && s.total ? s.total.fail : 0;
+  const today = s && s.today ? s.today.total : 0;
+  statEl.innerHTML = `
+  <div style="padding:8px 12px;border-radius:6px;background:var(--bg-2);flex:1;min-width:120px">
+  <div style="font-size:11px;color:var(--ink-3)">总条数</div><div style="font-weight:600">${total}</div>
+  </div>
+  <div style="padding:8px 12px;border-radius:6px;background:rgba(79,140,255,0.12);flex:1;min-width:120px">
+  <div style="font-size:11px;color:var(--ink-3)">今日</div><div style="font-weight:600">${today}</div>
+  </div>
+  <div style="padding:8px 12px;border-radius:6px;background:rgba(7,193,96,0.12);flex:1;min-width:120px">
+  <div style="font-size:11px;color:var(--ink-3)">成功</div><div style="font-weight:600;color:#07c160">${success}</div>
+  </div>
+  <div style="padding:8px 12px;border-radius:6px;background:rgba(255,77,79,0.12);flex:1;min-width:120px">
+  <div style="font-size:11px;color:var(--ink-3)">失败</div><div style="font-weight:600;color:#ff4d4f">${fail}</div>
+  </div>
+  `;
+    } catch (e) {
+    statEl.innerHTML = `<div style="color:#ff4d4f;font-size:12px">统计获取失败：${esc(e.message)}</div>`;
+  }
+  }
+
+/** 历史·数据：推送历史统计 + 数据目录与导出，合并为一个设置分组。 */
+function renderHistoryData(card) {
+  const ph = document.createElement('div');
+  card.appendChild(ph);
+  renderPushHistory(ph);
+  const sub = document.createElement('div');
+  sub.className = 'set-sub';
+  sub.textContent = '数据目录与导出';
+  card.appendChild(sub);
+  const dt = document.createElement('div');
+  card.appendChild(dt);
+  renderData(dt);
+  card._sync = () => dt._sync && dt._sync();
+}
+
 /** iDRAC：Redfish 只读接带外管理口，风扇 / 温度 / 功耗 / 硬件日志。 */
 function renderIdrac(card) {
   card.innerHTML = `<div class="note info notify-note">${ic('server')}<span><b>只读</b>：通过 Redfish 直连 iDRAC 读取风扇转速、温度、功耗与硬件日志，不会改动服务器任何设置。密码单独存 <span class="mono">idrac.json</span>（0600），接口只回「是否已填」。自签证书需要关闭校验，仅建议在内网使用。</span></div>
