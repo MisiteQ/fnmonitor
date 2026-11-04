@@ -46,6 +46,7 @@ const barOpts = (days, series, fmt, h) => ({
 function powerParts(p) {
   // iDRAC 给的是整机电源输出，拆不出 CPU/内存/硬盘，直接一条整机实测
   if (p.source === 'idrac') return [['整机实测', +p.total || 0, 'var(--d-p)']];
+  if (p.source === 'ups') return [['UPS 输出', +p.total || 0, 'var(--d-p)']];
   const parts = [];
   if (ok(p.package)) parts.push(['CPU 封装', +p.package, 'var(--d-p)']);
   if (ok(p.dram)) parts.push(['内存', +p.dram, 'color-mix(in srgb, var(--d-p) 55%, var(--card))']);
@@ -56,7 +57,7 @@ function powerParts(p) {
   return parts;
 }
 const ppI = c => c === 'hatch' ? '<i class="hatch"></i>' : `<i style="background:${c}"></i>`;
-const SRC_TXT = { idrac: 'iDRAC 实测', rapl: '硬件 RAPL', estimated: '模型估算' };
+const SRC_TXT = { idrac: 'iDRAC 实测', rapl: '硬件 RAPL', estimated: '模型估算', ups: 'UPS 输出实测' };
 /** 本月预计：已用电量 + 剩余时长 × 平均功率 */
 const monthProj = (mk, o) => { const a = avgW(o); if (!ok(mk) || !a) return null; const d = new Date(), end = new Date(d.getFullYear(), d.getMonth() + 1, 1); return { kwh: mk + a.w * (end - d) / 3.6e9, w: a.w, basis: a.basis }; };
 /** 全年估算：平均功率 × 8760 小时（只是估算，口径写在副标题里） */
@@ -70,6 +71,7 @@ defineModule({
         <div class="label">实时功耗<span class="pill" style="margin-left:auto" data-ref="src"></span></div>
         <div class="dnum huge" style="margin-top:18px"><span class="dm" data-ref="w"></span><span class="unit">W</span></div>
         <div class="sub" style="margin-top:6px" data-ref="wSub"></div>
+        <div class="sub" style="margin-top:6px" data-ref="upsSub"></div>
         <div class="stack" style="margin-top:22px;height:12px" data-ref="stack"></div>
         <div class="legend" data-ref="leg"></div>
       </div>
@@ -113,9 +115,13 @@ defineModule({
     const x = m.x, p = o.power || {}, has = pwrOk(o), ps = S.pstats, rate = ps && ps.cost ? ps.cost.rate_yuan_per_kwh : (S.cfg && S.cfg.power_rate_yuan);
     dnum(x.w, has ? +p.total : null, F.d1);
     setText(x.src, has ? (SRC_TXT[p.source] || '来源未知') : '不可用');
-    setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗'
+    setText(x.wSub, !has ? (p.source === 'ups' ? 'UPS 读数不可用，已暂停功率历史记录' : '无法读取 RAPL，也无法估算整机功耗')
+      : p.source === 'ups' ? `UPS 输出 ${F.d2(p.voltage)} V × ${(+p.current).toFixed(3)} A；用于用电量与电费计算`
       : p.source === 'idrac' ? `iDRAC 实测整机输出${ok(p.capacity) ? ` · 电源容量 ${F.int(p.capacity)} W` : ''}${ok(p.min) && ok(p.max) ? ` · 近 1 分钟 ${F.int(p.min)}–${F.int(p.max)} W` : ''}`
         : p.source === 'rapl' ? '整机 = CPU 封装（RAPL 实测）+ 内存 + 主板底座 + 活动硬盘' : '无 RAPL：按 TDP × CPU 占用 + 硬盘 + 网卡 + 主板底座估算');
+    const up = o.ups_power || {}, selected = !!(S.cfg && +S.cfg.power_use_ups);
+    x.upsSub.hidden = selected || (!up.ok && !(S.cfg && S.cfg.power_ups_name));
+    setText(x.upsSub, up.ok ? `UPS 输出 ${F.d1(up.total)} W · 当前未用于用电量与电费计算` : 'UPS 输出功率不可用');
     const parts = has ? powerParts(p) : [], sig = parts.map(q => q[0]).join();
     if (m.psig !== sig) { m.psig = sig; x.stack.innerHTML = parts.map(q => ppI(q[2])).join(''); }
     parts.forEach((q, i) => { if (x.stack.children[i]) x.stack.children[i].style.flexGrow = q[1].toFixed(2); });

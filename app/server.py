@@ -67,7 +67,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "power_use_ups": 0, "power_ups_name": "", "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -1505,6 +1505,40 @@ def estimate_power(cpu_percent, disks_active, nics, tdp_w, disk_w, nic_w):
         return round(base + disks_active * disk_w + nics * nic_w, 2)
     except Exception:
         return round(tdp_w * 0.3, 2)
+
+
+def read_ups_output_power(name=""):
+    """Read local NUT output power. Missing data must never become zero watts."""
+    name = str(name or "").strip()
+    if name and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
+        return {"ok": False, "source": "ups", "reason": "invalid_name"}
+    try:
+        if not name:
+            listed = subprocess.run(["upsc", "-l"], capture_output=True, text=True,
+                                    timeout=3, check=True).stdout.splitlines()
+            names = [line.strip() for line in listed if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", line.strip())]
+            if len(names) != 1:
+                return {"ok": False, "source": "ups", "reason": "choose_device" if names else "no_device"}
+            name = names[0]
+        output = subprocess.run(["upsc", name], capture_output=True, text=True,
+                                timeout=3, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {"ok": False, "source": "ups", "reason": "read_failed"}
+    values = {}
+    for line in output.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            values[key.strip()] = value.strip()
+    try:
+        voltage = float(values["output.voltage"])
+        current = float(values["output.current"])
+    except (KeyError, ValueError):
+        return {"ok": False, "source": "ups", "reason": "missing_output"}
+    watts = voltage * current
+    if not all(math.isfinite(v) and v >= 0 for v in (voltage, current, watts)):
+        return {"ok": False, "source": "ups", "reason": "invalid_output"}
+    return {"ok": True, "source": "ups", "total": round(watts, 2),
+            "voltage": voltage, "current": current, "device": name}
 
 
 # ===================== 硬盘休眠状态检测（不唤醒 STANDBY 硬盘） =====================
@@ -5401,7 +5435,7 @@ def notify_report_collect(snapshot, data_dir, cfg, extra=None, vms_monitor=None)
         payload["network"] = {"count": len(net_list), "interfaces": net_list}
     if "power" in mods:
         pwr = snap.get("power") or {}
-        src_map = {"rapl": "RAPL 实测", "idrac": "iDRAC", "estimated": "模型估算", "unknown": "不可用"}
+        src_map = {"rapl": "RAPL 实测", "idrac": "iDRAC", "estimated": "模型估算", "ups": "UPS 输出实测", "unknown": "不可用"}
         # kWh / 电费不在采集快照里（快照只有实时瓦数），由调用方经 extra["power_stats"] 注入
         ps = extra.get("power_stats") or {}
         payload["power"] = {
@@ -9743,6 +9777,8 @@ class Collector(threading.Thread):
         self._last_fans_ts = 0.0
         self._last_power = {"ok": False}
         self._last_power_ts = 0.0
+        self._last_ups_power = {"ok": False, "source": "ups"}
+        self._last_ups_power_ts = 0.0
         # iDRAC：配置每 30 秒看一次（改了立刻生效），数据只读后台 Poller 的缓存
         self._idrac_cfg = {}
         self._idrac_cfg_ts = 0.0
@@ -9985,7 +10021,7 @@ class Collector(threading.Thread):
                     temps["disks"].append({"name": "阵列 " + str(_p.get("loc")),
                                            "temp": _p.get("temp")})
         snapshot["temp"] = temps
-        # ---- 实时功耗（每 10 秒）：iDRAC 整机读数 > RAPL > 估算模型 ----
+        # ---- 实时功耗（每 10 秒）：可选 UPS 输出，否则 iDRAC > RAPL > 估算 ----
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
         # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
         # 而趋势图却有估算数据的自相矛盾。
@@ -9995,6 +10031,9 @@ class Collector(threading.Thread):
         # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
         # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
+            if not _skip("power") and now - self._last_ups_power_ts >= 10:
+                self._last_ups_power = read_ups_output_power(self.config.get("power_ups_name", ""))
+                self._last_ups_power_ts = now
             if not _skip("power") and now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
                 # 与旧行为一致，明确 standby 的盘才剔除
@@ -10003,7 +10042,10 @@ class Collector(threading.Thread):
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
                 disks_w = round(disks_active * disk_w_unit, 2)
                 idr = self._idrac_fast()
-                if idr and _nz(idr.get("power_watts")) is not None:
+                if bool(int(self.config.get("power_use_ups", 0) or 0)):
+                    # 选定 UPS 后不静默回退估算值，避免历史 kWh 混入另一来源。
+                    self._last_power = dict(self._last_ups_power)
+                elif idr and _nz(idr.get("power_watts")) is not None:
                     self._last_power = {
                         "ok": True, "source": "idrac",
                         "total": round(float(idr["power_watts"]), 2),
@@ -10047,6 +10089,7 @@ class Collector(threading.Thread):
         except Exception:
             self._last_power = {"ok": False, "source": "unknown"}
         snapshot["power"] = self._last_power
+        snapshot["ups_power"] = self._last_ups_power
         # ---- GPU 实时（每 10 秒） ----
         try:
             if now - self._last_gpu_ts >= 10:
@@ -10110,7 +10153,7 @@ class Collector(threading.Thread):
                 rows.append((now, "temp_mb", _r2(temps["system"])))
             # ---- 功耗（历史维度）：与接口实时快照同源（RAPL 实测 / 模型估算） ----
             pw = self._last_power or {}
-            if pw.get("ok") and pw.get("total"):
+            if pw.get("ok") and pw.get("total") is not None:
                 rows.append((now, "power", _r2(pw.get("total"))))
                 if pw.get("source") == "estimated":
                     # 估算值额外写一份 power_est，导出 CSV 时可区分实测/估算口径
@@ -12200,7 +12243,7 @@ class MonitorApp:
         onoff = lambda x: 1 if str(x).lower() in ("1", "true", "on") else 0
         for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
                   "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
-                  "disk_scan_enabled"):
+                  "disk_scan_enabled", "power_use_ups"):
             if k in data:
                 updates[k] = onoff(data[k])
         # 硬盘巡检间隔：0 = 关闭；其余就近取档位（6/12/24/72/168 小时）
@@ -12220,6 +12263,11 @@ class MonitorApp:
                         updates[k] = max(0.0, min(500.0, fv))
                 except Exception:
                     pass
+        if "power_ups_name" in data:
+            name = str(data["power_ups_name"] or "").strip()
+            if name and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
+                return {"ok": False, "error": "UPS 名称只能包含字母、数字、点、下划线和短横线"}, 200, None
+            updates["power_ups_name"] = name
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -12259,6 +12307,10 @@ class MonitorApp:
         for k in remove:
             self.config[k] = ""
         self._overview_bytes = b""
+        if "power_use_ups" in updates or "power_ups_name" in updates:
+            self.collector._last_power_ts = 0.0
+            self.collector._last_ups_power_ts = 0.0
+            self._power_stats_cache = None
         open_mode_changed = False
         new_mode = str(updates.get("open_mode", "")).lower()
         if new_mode in ("iframe", "url"):
@@ -12414,7 +12466,7 @@ class MonitorApp:
         snap = self.collector.get_snapshot()
         power = snap.get("power", {"ok": False})
         source = power.get("source", "unknown")
-        power_w = power.get("total", 0) if power.get("ok") else 0
+        power_w = power.get("total") if power.get("ok") else None
         # kWh 计算：从 power 历史积分
         hist_interval = int(self.config.get("history_interval", 60))
         import datetime
@@ -12439,7 +12491,7 @@ class MonitorApp:
             energy_basis = "history"
         # 开机累计估算
         uptime = snap.get("uptime", 0)
-        boot_kwh = round(power_w * uptime / 3_600_000, 4) if uptime > 0 else 0.0
+        boot_kwh = round(power_w * uptime / 3_600_000, 4) if power_w is not None and uptime > 0 else None
         # 电费
         rate = float(self.config.get("power_rate_yuan", 0.6))
         # 硬盘休眠状态（60s 缓存），并与「硬盘信息」(lsblk 物理盘) 校对，只保留物理硬盘
@@ -13374,7 +13426,7 @@ def load_config(data_dir):
     # 开关类（在线更新 / 流量 / 休眠保护 / 上月汇总 / 鉴权 / EC 风扇探测 / 硬盘巡检）必须随配置恢复
     for k in ("update_autocheck", "update_autodownload", "update_autoupdate", "traffic_exclude_bridge",
               "disk_standby_protect", "monthly_summary_enabled", "auth_enabled", "ec_fan_probe",
-              "disk_scan_enabled"):
+              "disk_scan_enabled", "power_use_ups"):
         if k in user:
             cfg[k] = onoff(user[k])
     if "disk_scan_interval_h" in user:
@@ -13391,6 +13443,9 @@ def load_config(data_dir):
                 pass
     if "weather_city" in user:
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
+    name = str(user.get("power_ups_name") or "").strip()
+    if not name or re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
+        cfg["power_ups_name"] = name
     if "data_dir" in user:
         cfg["data_dir"] = str(user["data_dir"]).strip()
     # 飞牛桌面打开方式（iframe=飞牛窗口内打开 / url=浏览器新标签页）

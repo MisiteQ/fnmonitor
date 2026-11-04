@@ -302,12 +302,12 @@ const SHEETS = {
         <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
       sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
       b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
-        <div class="note info">${ic('info')}<span>接了 iDRAC 时直接用电源实测的整机输出，这是最准的口径（含主板、内存、网卡与全部硬盘）。没有 iDRAC 才会退回 RAPL：它只测得 CPU 封装（与内存）功耗，整机值再叠加主板底座与活动硬盘的典型功耗；无 RAPL 时按 TDP × CPU 占用估算。休眠硬盘不计入。</span></div>`);
+        <div class="note info">${ic('info')}<span>仅当 UPS 只给本机供电时，才适合用其输出功率替代整机计算。开启后，实时功率和后续历史使用 UPS 读数，电量与电费沿用功率历史积分；断连时暂停记录，不回退估算。切换前历史不重算。UPS 输出侧电费估算不含 UPS 自身损耗与充电耗电。未启用 UPS 时，优先使用 iDRAC 实测；否则用 RAPL 读数加部件估算，或按 TDP 与负载估算。</span></div>`);
       const x = collect(b);
       b.addEventListener('click', e => { const g = e.target.closest('[data-goset]'); if (g) { closeSheet(); focusGroup(g.dataset.goset); } });
       return o => {
         const p = o.power || {}, has = pwrOk(o), ps = S.pstats || {};
-        dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'idrac' ? 'iDRAC 整机实测' : p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
+        dnum(x.v, has ? p.total : null, F.d1); setText(x.src, has ? (p.source === 'ups' ? 'UPS 输出实测' : p.source === 'idrac' ? 'iDRAC 整机实测' : p.source === 'rapl' ? 'RAPL 实测 + 底座 / 硬盘估算' : '模型估算（无 RAPL）') : '不可用');
         const parts = has ? powerParts(p) : [];
         setHTML(x.st, parts.map(q => ppI(q[2])).join('')); parts.forEach((q, i) => { x.st.children[i].style.flexGrow = q[1].toFixed(2); });
         setHTML(x.leg, parts.map(([l, v, c]) => `<span>${ppI(c)}${esc(l)} <b>${F.d1(v)} W</b></span>`).join('') || '<span>无功耗数据</span>');
@@ -315,7 +315,9 @@ const SHEETS = {
         // iDRAC 给的是整机电源输出，没有 CPU/内存/硬盘的分解，改列电源侧读数
         const psuRows = (p.psu || []).map(u => [`电源 ${esc(u.name)}`,
           `${ok(u.volts) ? esc(String(u.volts)) + ' V' : '—'} · ${esc(u.health || '')}${u.model ? ' · ' + esc(u.model) : ''}`]);
-        setHTML(x.parts, has ? (p.source === 'idrac'
+        setHTML(x.parts, has ? (p.source === 'ups'
+          ? kvHTML([['UPS 输出功率', w(p.total)], ['输出电压', ok(p.voltage) ? F.d2(p.voltage) + ' V' : '—'], ['输出电流', ok(p.current) ? (+p.current).toFixed(3) + ' A' : '—']])
+          : p.source === 'idrac'
           ? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
           : kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
         const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;

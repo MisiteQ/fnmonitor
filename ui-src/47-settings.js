@@ -146,8 +146,10 @@ const SET_SCHEMA = [
     cfgToggle('monthly_summary_enabled', '上月汇总', { hint: () => `在总览底部显示上个月的运行回顾${S.cfg && +S.cfg.retention_days < 31 ? `；历史保留 ${esc(S.cfg.retention_days)} 天不足整月，会自动叠加保存汇总` : ''}`, help: '每月自动生成。即使历史保留不足一个月，也会单独保存月度聚合数据，确保汇总完整。', set: (v, row) => saveCfg({ monthly_summary_enabled: v ? 1 : 0 }, '上月汇总', row).then(() => { Poll.run('monthly'); }) }),
   ] },
   { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
-  { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
+  { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '选择功率来源、设置电价与整机估算参数。', items: [
     cfgItem('power_rate_yuan', '电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh' }),
+    cfgToggle('power_use_ups', '用 UPS 输出功率计算整机用电', { hint: '仅在 UPS 只给本机供电时开启。后续功率历史改用 UPS 输出；断连暂停记录。电费为输出侧估算，不含 UPS 自身损耗；旧历史不重算。' }),
+    cfgItem('power_ups_name', 'NUT UPS 名称', 'text', { placeholder: '留空自动选择唯一 UPS', hint: '可通过 upsc -l 查看；多台 UPS 时必须填写名称。只读取本机 NUT。' }),
     cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
     cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),

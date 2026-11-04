@@ -263,6 +263,19 @@ class NoAuthTest(ServerTestCase):
             self.post("/api/config/save", {"interval": 10, "retention_days": 7, "history_interval": 60,
                                            "power_rate_yuan": 0.6, "ec_fan_probe": 0})
 
+    def test_ups_power_source_config_roundtrip(self):
+        try:
+            _, bad, *_ = self.post("/api/config/save", {"power_ups_name": "ups@remote"})
+            self.assertFalse(bad["ok"])
+            _, saved, *_ = self.post("/api/config/save", {"power_use_ups": 1,
+                                                           "power_ups_name": "2340161"})
+            self.assertTrue(saved["ok"], saved)
+            cfg = self.get("/api/config")[1]["config"]
+            self.assertEqual(cfg["power_use_ups"], 1)
+            self.assertEqual(cfg["power_ups_name"], "2340161")
+        finally:
+            self.post("/api/config/save", {"power_use_ups": 0, "power_ups_name": ""})
+
     def test_ui_roundtrip_and_thresholds(self):
         cur = self.get("/api/ui")[1]["ui"]
         try:

@@ -130,15 +130,15 @@ defineModule({
     if (dmax != null && tv != null) tp.push(`硬盘最高 ${F.int(dmax)}℃`);
     setText(x.tempSub, tv == null && dmax == null ? '未读取到温度传感器' : tp.join(' · ') || 'CPU 封装温度');
     m.sp.temp.set([{ values: vals(tv != null ? (ct != null ? S.live.temp : S.live.tempMb) : []) }], {});
-    // POWER —— 数据源可能是 iDRAC（整机实测）/ RAPL（CPU 封装）/ 估算模型
+    // POWER —— 数据源可能是 UPS 输出 / iDRAC / RAPL / 估算模型
     const pw = o.power || {}, has3 = pwrOk(o), w = has3 ? +pw.total : null, ep = S.pstats && S.pstats.estimation_params;
     const capW = pw.capacity ? +pw.capacity : (ep ? ep.tdp_w + ep.base_w + ep.disk_typical_w * Math.max(1, dd.length) + ep.nic_fixed_w * Math.max(1, ni.length) : Math.max(60, (w || 0) * 1.5));
     dnum(x.pwrV, w, F.d1); m.g.pwr.set(w != null ? w / capW : 0, ''); m.g.pwr.tone(w != null ? rampAt(w / capW * 100, 'gen') : ''); inkTo(x.pwrV, w != null ? rampInk(w / capW * 100, 'gen') : '');
-    st('pwr', '', !has3 ? '不可用' : pw.source === 'idrac' ? 'iDRAC 实测' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
+    st('pwr', '', !has3 ? '不可用' : pw.source === 'ups' ? 'UPS 输出' : pw.source === 'idrac' ? 'iDRAC 实测' : pw.source === 'rapl' ? '实测 + 估算' : '估算');
     const en = S.pstats && S.pstats.energy, co = S.pstats && S.pstats.cost;
-    const pwrSrc = pw.source === 'idrac' ? `iDRAC 整机读数${pw.capacity ? ` · 电源容量 ${F.int(pw.capacity)} W` : ''}`
+    const pwrSrc = pw.source === 'ups' ? 'UPS 输出功率' : pw.source === 'idrac' ? `iDRAC 整机读数${pw.capacity ? ` · 电源容量 ${F.int(pw.capacity)} W` : ''}`
       : pw.source === 'rapl' ? '硬件 RAPL 读数' : '按部件模型估算';
-    setText(x.pwrSub, !has3 ? '无法读取或估算功耗' : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : pwrSrc);
+    setText(x.pwrSub, !has3 ? (pw.source === 'ups' ? 'UPS 读数不可用，暂停功率记录' : '无法读取或估算功耗') : en ? `今日 ${F.kwh(en.today_kwh)} kWh · ${F.yuan(co && co.today_yuan)}` : pwrSrc);
     m.sp.pwr.set([{ values: vals(S.live.power) }], { min: 0 });
   },
 });
