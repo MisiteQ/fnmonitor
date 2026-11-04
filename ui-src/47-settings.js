@@ -6,6 +6,12 @@ const stripSecrets = c => { const o = Object.assign({}, c || {}); SECRET_KEYS.fo
 const pwSet = () => !!(S.cfg && (S.cfg.auth_password_set != null ? S.cfg.auth_password_set : S.cfg.auth_has_password));
 const authOn = () => !!(S.cfg && +S.cfg.auth_enabled);
 const inIframe = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+let upsDevices = null;
+async function refreshUpsDevices() {
+  try { upsDevices = await API.get('/api/ups/devices'); }
+  catch (e) { upsDevices = { ok: false, devices: [], error: '设备列表读取失败' }; }
+  syncSettings();
+}
 function flashRow(row) { if (!row) return; row.classList.remove('saved'); void row.offsetWidth; row.classList.add('saved'); }
 async function loadConfig() {
   const j = await API.get('/api/config');
@@ -22,6 +28,14 @@ async function saveCfg(data, label, row, quiet) {
     Object.keys(data).forEach(k => { if (!SECRET_KEYS.includes(k) && S.cfg[k] === undefined) S.cfg[k] = data[k]; });
     flashRow(row); if (!quiet) toast(j.note ? `已保存 · ${label}。${j.note}` : `已保存 · ${label}`, { key: 'save', ms: j.note ? 9000 : 2400 });
     applyConfig(); syncSettings();
+    if ('power_use_ups' in data || 'power_ups_name' in data) {
+      Hist.clear(); S.live.power = [];
+      if (MODS.trends) MODS.trends.res = null;
+      Poll.run('overview'); Poll.run('pstats');
+      if (MODS.trends && MODS.trends.load) MODS.trends.load();
+      if (sheetCtx && sheetCtx.chartReload) sheetCtx.chartReload();
+      if ('power_use_ups' in data) refreshUpsDevices();
+    }
     return j;
   } catch (e) {
     toast(`保存失败 · ${label}：${String(e.message).slice(0, 80)}`, { icon: 'alert', ms: 5000 });
@@ -70,6 +84,22 @@ function controlFor(it, row) {
     row.classList.add('inline'); b.sync(); return b;
   }
   if (it.type === 'seg') { const s = makeSeg(it.options, it.get(), v => it.set(v, row), 'sm'); s.sync = () => { const v = it.get(); if (String(v) !== String(s.value)) s.set(v); }; return s; }
+  if (it.type === 'ups-select') {
+    const el = mount(`<span class="txt-ctl"><select class="textfield" aria-label="${esc(it.label)}"></select><button class="btn ghost" type="button">刷新</button></span>`);
+    const select = el.querySelector('select'), refresh = el.querySelector('button');
+    el.sync = () => {
+      const current = String(it.get() || '');
+      const devices = (upsDevices && upsDevices.devices) || [];
+      const options = [['', '自动选择（仅一台 UPS）'], ...devices.map(d => [d.name, d.model ? `${d.name}（${d.model}）` : d.name])];
+      if (current && !devices.some(d => d.name === current)) options.push([current, `${current}（当前未发现）`]);
+      select.innerHTML = options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('');
+      select.value = current;
+      refresh.disabled = !!(upsDevices && upsDevices.loading);
+    };
+    select.onchange = () => { if (select.value !== String(it.get() || '')) it.set(select.value, row); };
+    refresh.onclick = () => refreshUpsDevices();
+    el.sync(); return el;
+  }
   if (it.type === 'number') return numField(it, row);
   if (it.type === 'text') {
     const el = mount(`<span class="txt-ctl"><input class="textfield ${it.mono ? 'mono' : ''}" placeholder="${esc(it.placeholder || '')}" aria-label="${esc(it.label)}" spellcheck="false"><button class="btn" type="button" data-ref="save">保存</button>${it.cancel ? '<button class="btn ghost" type="button" data-ref="cancel" hidden>取消</button>' : ''}</span>`);
@@ -149,7 +179,7 @@ const SET_SCHEMA = [
   { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '选择功率来源、设置电价与整机估算参数。', items: [
     cfgItem('power_rate_yuan', '电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh' }),
     cfgToggle('power_use_ups', '用 UPS 输出功率计算整机用电', { hint: '仅在 UPS 只给本机供电时开启。后续功率历史改用 UPS 输出；断连暂停记录。电费为输出侧估算，不含 UPS 自身损耗；旧历史不重算。' }),
-    cfgItem('power_ups_name', 'NUT UPS 名称', 'text', { placeholder: '留空自动选择唯一 UPS', hint: '可通过 upsc -l 查看；多台 UPS 时必须填写名称。只读取本机 NUT。' }),
+    cfgItem('power_ups_name', 'NUT UPS 设备', 'ups-select', { hint: () => upsDevices && !upsDevices.ok ? esc(upsDevices.error || '设备列表读取失败') : upsDevices && !upsDevices.devices.length ? '未发现本机 NUT UPS；可以刷新重试' : '只读取本机 NUT；有多台设备时请选择具体 UPS。' }),
     cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
     cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),

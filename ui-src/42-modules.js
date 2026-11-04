@@ -11,6 +11,11 @@ async function fetchSeries(keys, range) {
 }
 function seriesOf(res, key, range) {
   const [b, f] = SERIES_SRC[key] || [key, 'points'], d = res && res[b], pts = (d && d[f]) || [];
+  if (key === 'power') {
+    const since = Math.max(+(d && d.since || 0), +(S.cfg && S.cfg.power_trend_since || 0));
+    const cut = range === 'all' ? since : Math.max(since, Date.now() / 1000 - RANGE_SEC[range]);
+    return mergeLive(pts, S.live.power).filter(p => p[0] >= cut);
+  }
   if (!['10m', '1h', '6h'].includes(range) || !LIVE_OF[key]) return pts;
   const cut = Date.now() / 1000 - RANGE_SEC[range];
   return mergeLive(pts, S.live[LIVE_OF[key]]).filter(p => p[0] >= cut);
@@ -22,12 +27,13 @@ const emptyFor = key => () => {
   if (key === 'power' && !pwrOk(o)) return '功耗不可用';
   return `暂无数据 · 后台每 ${histIv()} 秒记录一条历史，稍后自动出现`;
 };
+const powerTrendTitle = () => S.cfg && +S.cfg.power_use_ups ? 'UPS 输出功率' : '整机功耗';
 const TREND_DEFS = [
   { id: 'cpumem', title: 'CPU 与内存', sheet: 'cpu', yMin: 0, yMax: 100, yTick: v => v + '%', peak: true, thresholds: () => [{ v: TH.cpuWarn, lv: 'warn' }, { v: TH.cpuCrit, lv: 'crit' }], series: [{ m: 'cpu', label: 'CPU', color: M.cpu, fmt: fPct }, { m: 'mem', label: '内存', color: M.mem, fmt: fPct }] },
   { id: 'net', title: '网络', sheet: 'net', yMin: 0, yTick: shortBytes, series: [{ m: 'net.rx', label: '下行', color: M.io, fmt: F.rate }, { m: 'net.tx', label: '上行', color: M.io2, fmt: F.rate }] },
   { id: 'io', title: '磁盘读写', sheet: 'storage', yMin: 0, yTick: v => v + 'M', series: [{ m: 'diskio.r', label: '读取', color: M.io, fmt: fMBs }, { m: 'diskio.w', label: '写入', color: M.io2, fmt: fMBs }] },
   { id: 'temp', title: '温度', sheet: 'temp', yTick: v => v + '°', thresholds: () => [{ v: TH.tempWarn, lv: 'warn' }, { v: TH.tempCrit, lv: 'crit' }], series: [{ m: 'temp', label: 'CPU', color: M.temp, fmt: fDeg }, { m: 'temp_mb', label: '主板', color: M.temp2, fmt: fDeg }] },
-  { id: 'power', title: '整机功耗', sheet: 'power', yMin: 0, yTick: v => v + 'W', peak: true, series: [{ m: 'power', label: '功耗', color: M.pwr, fmt: fW }] },
+  { id: 'power', title: powerTrendTitle, sheet: 'power', yMin: 0, yTick: v => v + 'W', peak: true, series: [{ m: 'power', label: '功耗', color: M.pwr, fmt: fW }] },
   { id: 'fan', title: '风扇转速', sheet: 'temp', yMin: 0, yTick: v => String(v), series: [{ m: 'fan_avg', label: '平均转速', color: M.fan, fmt: fRpm }] },
 ];
 const chartOpt = (d, extra) => Object.assign({ series: d.series, yMin: d.yMin, yMax: d.yMax, yTick: d.yTick, peak: d.peak, thresholds: d.thresholds, empty: emptyFor(d.series[0].m) }, extra);
@@ -35,23 +41,25 @@ defineModule({
   id: 'trends', page: 'overview', kicker: 'TRENDS', title: '趋势', dek: '历史记录与实时数据，指针悬停可对齐所有图表',
   actions: m => (m.seg = makeSeg(RANGES, UI.range, v => { UI.range = v; saveUI(); m.load(); }, 'sm')),
   build(body, m) {
-    body.innerHTML = `<div class="grid g-2">${TREND_DEFS.map(d => `<div class="card chart-card"><div class="chart-head"><button class="chart-title link-like" data-sheet="${d.sheet}" type="button">${d.title}</button><div class="chart-legend" data-ref="leg-${d.id}"></div></div><div data-ref="ch-${d.id}"></div></div>`).join('')}</div><p class="hist-status faint" data-ref="hs"></p>`;
+    body.innerHTML = `<div class="grid g-2">${TREND_DEFS.map(d => `<div class="card chart-card"><div class="chart-head"><button class="chart-title link-like" data-sheet="${d.sheet}" type="button" data-ref="title-${d.id}">${typeof d.title === 'function' ? d.title() : d.title}</button><div class="chart-legend" data-ref="leg-${d.id}"></div></div><div data-ref="ch-${d.id}"></div></div>`).join('')}</div><p class="hist-status faint" data-ref="hs"></p>`;
     const x = collect(body); m.x = x;
     m.charts = TREND_DEFS.map(d => ({ d, c: new LineChart(x['ch-' + d.id], chartOpt(d, { group: 'trend', legend: x['leg-' + d.id] })) }));
     m.keys = [...new Set(TREND_DEFS.flatMap(d => d.series.map(s => s.m)))];
     m.load = async () => {
       const range = UI.range;
+      const seq = m.loadSeq = (m.loadSeq || 0) + 1;
       const res = await fetchSeries(m.keys, range);
-      if (range !== UI.range) return;
+      if (range !== UI.range || seq !== m.loadSeq) return;
       m.res = res; m.range = range; m.drawAt = 0; m.draw(true); m.insight();
     };
     m.draw = force => {
       if (!m.res) return;
       const now = Date.now();
       if (!force && m.range === '6h' && now - m.drawAt < 30000) return;
-      if (!force && !['10m', '1h', '6h'].includes(m.range)) return;
+      const powerOnly = !force && !['10m', '1h', '6h'].includes(m.range);
       m.drawAt = now;
-      m.charts.forEach(({ d, c }) => c.setData(d.series.map(se => seriesOf(m.res, se.m, m.range)), RANGE_SEC[m.range]));
+      m.charts.forEach(({ d, c }) => { if (!powerOnly || d.id === 'power') c.setData(d.series.map(se => seriesOf(m.res, se.m, m.range)), RANGE_SEC[m.range]); });
+      setText(x['title-power'], powerTrendTitle());
     };
     m.insight = () => {
       const h = seriesOf(m.res, 'cpu', m.range);

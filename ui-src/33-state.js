@@ -307,17 +307,18 @@ const Poll = {
 };
 /** 历史缓存：metric|range → {at, data}，60 秒内复用；同一请求在途时合并 */
 const Hist = {
-  c: {}, inflight: {},
+  c: {}, inflight: {}, epoch: 0,
   async get(metric, range, maxAge = 60000) {
     const k = metric + '|' + range, c = this.c[k];
     if (c && Date.now() - c.at < maxAge) return c.data;
     if (this.inflight[k]) return this.inflight[k];
-    const p = API.get(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`).then(d => { this.c[k] = { at: Date.now(), data: d }; return d; }).finally(() => { delete this.inflight[k]; });
+    const epoch = this.epoch;
+    const p = API.get(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`).then(d => { if (this.epoch === epoch) this.c[k] = { at: Date.now(), data: d }; return d; }).finally(() => { if (this.inflight[k] === p) delete this.inflight[k]; });
     this.inflight[k] = p;
     return p;
   },
   peek(metric, range) { const c = this.c[metric + '|' + range]; return c ? c.data : null; },
-  clear() { this.c = {}; },
+  clear() { this.c = {}; this.inflight = {}; this.epoch++; },
 };
 /** 实时缓冲与历史拼接：只追加比历史最后一点更新的实时点 */
 function mergeLive(hist, live) {

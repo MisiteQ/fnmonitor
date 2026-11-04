@@ -2292,17 +2292,18 @@ for (const k in this.jobs) { const j = this.jobs[k]; const ev = typeof j.every =
 runAll(names) { names.forEach(n => this.run(n)); },
 };
 const Hist = {
-c: {}, inflight: {},
+c: {}, inflight: {}, epoch: 0,
 async get(metric, range, maxAge = 60000) {
 const k = metric + '|' + range, c = this.c[k];
 if (c && Date.now() - c.at < maxAge) return c.data;
 if (this.inflight[k]) return this.inflight[k];
-const p = API.get(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`).then(d => { this.c[k] = { at: Date.now(), data: d }; return d; }).finally(() => { delete this.inflight[k]; });
+const epoch = this.epoch;
+const p = API.get(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`).then(d => { if (this.epoch === epoch) this.c[k] = { at: Date.now(), data: d }; return d; }).finally(() => { if (this.inflight[k] === p) delete this.inflight[k]; });
 this.inflight[k] = p;
 return p;
 },
 peek(metric, range) { const c = this.c[metric + '|' + range]; return c ? c.data : null; },
-clear() { this.c = {}; },
+clear() { this.c = {}; this.inflight = {}; this.epoch++; },
 };
 function mergeLive(hist, live) {
 const out = (hist || []).slice(); const lastT = out.length ? out[out.length - 1][0] : 0;
@@ -2748,6 +2749,11 @@ return res;
 }
 function seriesOf(res, key, range) {
 const [b, f] = SERIES_SRC[key] || [key, 'points'], d = res && res[b], pts = (d && d[f]) || [];
+if (key === 'power') {
+const since = Math.max(+(d && d.since || 0), +(S.cfg && S.cfg.power_trend_since || 0));
+const cut = range === 'all' ? since : Math.max(since, Date.now() / 1000 - RANGE_SEC[range]);
+return mergeLive(pts, S.live.power).filter(p => p[0] >= cut);
+}
 if (!['10m', '1h', '6h'].includes(range) || !LIVE_OF[key]) return pts;
 const cut = Date.now() / 1000 - RANGE_SEC[range];
 return mergeLive(pts, S.live[LIVE_OF[key]]).filter(p => p[0] >= cut);
@@ -2759,12 +2765,13 @@ if (key === 'fan_avg' && !((o.sensors || {}).fans || []).length) return '未检�
 if (key === 'power' && !pwrOk(o)) return '功耗不可用';
 return `暂无数据 · 后台每 ${histIv()} 秒记录一条历史，稍后自动出现`;
 };
+const powerTrendTitle = () => S.cfg && +S.cfg.power_use_ups ? 'UPS 输出功率' : '整机功耗';
 const TREND_DEFS = [
 { id: 'cpumem', title: 'CPU 与内存', sheet: 'cpu', yMin: 0, yMax: 100, yTick: v => v + '%', peak: true, thresholds: () => [{ v: TH.cpuWarn, lv: 'warn' }, { v: TH.cpuCrit, lv: 'crit' }], series: [{ m: 'cpu', label: 'CPU', color: M.cpu, fmt: fPct }, { m: 'mem', label: '内存', color: M.mem, fmt: fPct }] },
 { id: 'net', title: '网络', sheet: 'net', yMin: 0, yTick: shortBytes, series: [{ m: 'net.rx', label: '下行', color: M.io, fmt: F.rate }, { m: 'net.tx', label: '上行', color: M.io2, fmt: F.rate }] },
 { id: 'io', title: '磁盘读写', sheet: 'storage', yMin: 0, yTick: v => v + 'M', series: [{ m: 'diskio.r', label: '读取', color: M.io, fmt: fMBs }, { m: 'diskio.w', label: '写入', color: M.io2, fmt: fMBs }] },
 { id: 'temp', title: '温度', sheet: 'temp', yTick: v => v + '°', thresholds: () => [{ v: TH.tempWarn, lv: 'warn' }, { v: TH.tempCrit, lv: 'crit' }], series: [{ m: 'temp', label: 'CPU', color: M.temp, fmt: fDeg }, { m: 'temp_mb', label: '主板', color: M.temp2, fmt: fDeg }] },
-{ id: 'power', title: '整机功耗', sheet: 'power', yMin: 0, yTick: v => v + 'W', peak: true, series: [{ m: 'power', label: '功耗', color: M.pwr, fmt: fW }] },
+{ id: 'power', title: powerTrendTitle, sheet: 'power', yMin: 0, yTick: v => v + 'W', peak: true, series: [{ m: 'power', label: '功耗', color: M.pwr, fmt: fW }] },
 { id: 'fan', title: '风扇转速', sheet: 'temp', yMin: 0, yTick: v => String(v), series: [{ m: 'fan_avg', label: '平均转速', color: M.fan, fmt: fRpm }] },
 ];
 const chartOpt = (d, extra) => Object.assign({ series: d.series, yMin: d.yMin, yMax: d.yMax, yTick: d.yTick, peak: d.peak, thresholds: d.thresholds, empty: emptyFor(d.series[0].m) }, extra);
@@ -2772,23 +2779,25 @@ defineModule({
 id: 'trends', page: 'overview', kicker: 'TRENDS', title: '趋势', dek: '历史记录与实时数据，指针悬停可对齐所有图表',
 actions: m => (m.seg = makeSeg(RANGES, UI.range, v => { UI.range = v; saveUI(); m.load(); }, 'sm')),
 build(body, m) {
-body.innerHTML = `<div class="grid g-2">${TREND_DEFS.map(d => `<div class="card chart-card"><div class="chart-head"><button class="chart-title link-like" data-sheet="${d.sheet}" type="button">${d.title}</button><div class="chart-legend" data-ref="leg-${d.id}"></div></div><div data-ref="ch-${d.id}"></div></div>`).join('')}</div><p class="hist-status faint" data-ref="hs"></p>`;
+body.innerHTML = `<div class="grid g-2">${TREND_DEFS.map(d => `<div class="card chart-card"><div class="chart-head"><button class="chart-title link-like" data-sheet="${d.sheet}" type="button" data-ref="title-${d.id}">${typeof d.title === 'function' ? d.title() : d.title}</button><div class="chart-legend" data-ref="leg-${d.id}"></div></div><div data-ref="ch-${d.id}"></div></div>`).join('')}</div><p class="hist-status faint" data-ref="hs"></p>`;
 const x = collect(body); m.x = x;
 m.charts = TREND_DEFS.map(d => ({ d, c: new LineChart(x['ch-' + d.id], chartOpt(d, { group: 'trend', legend: x['leg-' + d.id] })) }));
 m.keys = [...new Set(TREND_DEFS.flatMap(d => d.series.map(s => s.m)))];
 m.load = async () => {
 const range = UI.range;
+const seq = m.loadSeq = (m.loadSeq || 0) + 1;
 const res = await fetchSeries(m.keys, range);
-if (range !== UI.range) return;
+if (range !== UI.range || seq !== m.loadSeq) return;
 m.res = res; m.range = range; m.drawAt = 0; m.draw(true); m.insight();
 };
 m.draw = force => {
 if (!m.res) return;
 const now = Date.now();
 if (!force && m.range === '6h' && now - m.drawAt < 30000) return;
-if (!force && !['10m', '1h', '6h'].includes(m.range)) return;
+const powerOnly = !force && !['10m', '1h', '6h'].includes(m.range);
 m.drawAt = now;
-m.charts.forEach(({ d, c }) => c.setData(d.series.map(se => seriesOf(m.res, se.m, m.range)), RANGE_SEC[m.range]));
+m.charts.forEach(({ d, c }) => { if (!powerOnly || d.id === 'power') c.setData(d.series.map(se => seriesOf(m.res, se.m, m.range)), RANGE_SEC[m.range]); });
+setText(x['title-power'], powerTrendTitle());
 };
 m.insight = () => {
 const h = seriesOf(m.res, 'cpu', m.range);
@@ -3325,16 +3334,16 @@ function sheetCharts(ctx, body, defs) {
 const wrap = mount(`<div><div class="sheet-seg" data-ref="cseg"></div><div data-ref="clist" style="display:grid;gap:12px"></div></div>`);
 body.append(wrap);
 const charts = defs.map(d => {
-const card = mount(`<div class="card chart-card"><div class="chart-head"><div class="chart-title">${d.title}</div><div class="chart-legend" data-ref="cleg"></div></div><div data-ref="cch"></div></div>`);
+const card = mount(`<div class="card chart-card"><div class="chart-head"><div class="chart-title" data-ref="ctitle">${typeof d.title === 'function' ? d.title() : d.title}</div><div class="chart-legend" data-ref="cleg"></div></div><div data-ref="cch"></div></div>`);
 wrap._r.clist.append(card);
 const c = new LineChart(card._r.cch, chartOpt(d, { legend: card._r.cleg, group: 'sheet', height: 180 }));
-ctx.charts.push(c); return { d, c };
+ctx.charts.push(c); return { d, c, title: card._r.ctitle };
 });
 const keys = [...new Set(defs.flatMap(d => d.series.map(s => s.m)))];
-const draw = () => charts.forEach(({ d, c }) => c.setData(d.series.map(se => { const pts = seriesOf(ctx.res, se.m, ctx.range); return d.tf ? d.tf(pts) : pts; }), RANGE_SEC[ctx.range]));
-const load = async r => { ctx.range = r; const res = await fetchSeries(keys, r); if (ctx.range !== r || sheetCtx !== ctx) return; ctx.res = res; draw(); };
+const draw = () => charts.forEach(({ d, c, title }) => { if (typeof d.title === 'function') setText(title, d.title()); c.setData(d.series.map(se => { const pts = seriesOf(ctx.res, se.m, ctx.range); return d.tf ? d.tf(pts) : pts; }), RANGE_SEC[ctx.range]); });
+const load = async r => { ctx.range = r; const seq = ctx.loadSeq = (ctx.loadSeq || 0) + 1; const res = await fetchSeries(keys, r); if (ctx.range !== r || sheetCtx !== ctx || seq !== ctx.loadSeq) return; ctx.res = res; draw(); };
 wrap._r.cseg.append(makeSeg(RANGES, UI.range, load, 'sm'));
-ctx.chartTick = () => { if (ctx.res && ['10m', '1h'].includes(ctx.range)) draw(); };
+ctx.chartTick = () => { if (ctx.res && (['10m', '1h'].includes(ctx.range) || keys.includes('power'))) draw(); };
 ctx.chartReload = () => load(ctx.range);
 ctx.range = UI.range; load(UI.range);
 }
@@ -3604,7 +3613,7 @@ icon: 'bolt', title: () => '能耗', sub: o => pwrOk(o) ? '来源：' + (SRC_TXT
 build(b, arg, ctx) {
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">实时功耗</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">W</span></div></div><div style="text-align:right"><div class="eyebrow">口径</div><b class="tnum" data-ref="src"></b></div></div>
 <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
-sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
+sheetCharts(ctx, b, [TREND_DEFS[4], { title: '当前来源累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
 b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
 <div class="note info">${ic('info')}<span>仅当 UPS 只给本机供电时，才适合用其输出功率替代整机计算。开启后，实时功率和后续历史使用 UPS 读数，电量与电费沿用功率历史积分；断连时暂停记录，不回退估算。切换前历史不重算。UPS 输出侧电费估算不含 UPS 自身损耗与充电耗电。未启用 UPS 时，优先使用 iDRAC 实测；否则用 RAPL 读数加部件估算，或按 TDP 与负载估算。</span></div>`);
 const x = collect(b);
@@ -4201,6 +4210,12 @@ const stripSecrets = c => { const o = Object.assign({}, c || {}); SECRET_KEYS.fo
 const pwSet = () => !!(S.cfg && (S.cfg.auth_password_set != null ? S.cfg.auth_password_set : S.cfg.auth_has_password));
 const authOn = () => !!(S.cfg && +S.cfg.auth_enabled);
 const inIframe = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+let upsDevices = null;
+async function refreshUpsDevices() {
+try { upsDevices = await API.get('/api/ups/devices'); }
+catch (e) { upsDevices = { ok: false, devices: [], error: '设备列表读取失败' }; }
+syncSettings();
+}
 function flashRow(row) { if (!row) return; row.classList.remove('saved'); void row.offsetWidth; row.classList.add('saved'); }
 async function loadConfig() {
 const j = await API.get('/api/config');
@@ -4216,6 +4231,14 @@ if (j.config) Object.assign(S.cfg, stripSecrets(j.config));
 Object.keys(data).forEach(k => { if (!SECRET_KEYS.includes(k) && S.cfg[k] === undefined) S.cfg[k] = data[k]; });
 flashRow(row); if (!quiet) toast(j.note ? `已保存 · ${label}。${j.note}` : `已保存 · ${label}`, { key: 'save', ms: j.note ? 9000 : 2400 });
 applyConfig(); syncSettings();
+if ('power_use_ups' in data || 'power_ups_name' in data) {
+Hist.clear(); S.live.power = [];
+if (MODS.trends) MODS.trends.res = null;
+Poll.run('overview'); Poll.run('pstats');
+if (MODS.trends && MODS.trends.load) MODS.trends.load();
+if (sheetCtx && sheetCtx.chartReload) sheetCtx.chartReload();
+if ('power_use_ups' in data) refreshUpsDevices();
+}
 return j;
 } catch (e) {
 toast(`保存失败 · ${label}：${String(e.message).slice(0, 80)}`, { icon: 'alert', ms: 5000 });
@@ -4261,6 +4284,22 @@ b.onclick = () => { const nv = b.getAttribute('aria-checked') !== 'true'; b.setA
 row.classList.add('inline'); b.sync(); return b;
 }
 if (it.type === 'seg') { const s = makeSeg(it.options, it.get(), v => it.set(v, row), 'sm'); s.sync = () => { const v = it.get(); if (String(v) !== String(s.value)) s.set(v); }; return s; }
+if (it.type === 'ups-select') {
+const el = mount(`<span class="txt-ctl"><select class="textfield" aria-label="${esc(it.label)}"></select><button class="btn ghost" type="button">刷新</button></span>`);
+const select = el.querySelector('select'), refresh = el.querySelector('button');
+el.sync = () => {
+const current = String(it.get() || '');
+const devices = (upsDevices && upsDevices.devices) || [];
+const options = [['', '自动选择（仅一台 UPS）'], ...devices.map(d => [d.name, d.model ? `${d.name}（${d.model}）` : d.name])];
+if (current && !devices.some(d => d.name === current)) options.push([current, `${current}（当前未发现）`]);
+select.innerHTML = options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('');
+select.value = current;
+refresh.disabled = !!(upsDevices && upsDevices.loading);
+};
+select.onchange = () => { if (select.value !== String(it.get() || '')) it.set(select.value, row); };
+refresh.onclick = () => refreshUpsDevices();
+el.sync(); return el;
+}
 if (it.type === 'number') return numField(it, row);
 if (it.type === 'text') {
 const el = mount(`<span class="txt-ctl"><input class="textfield ${it.mono ? 'mono' : ''}" placeholder="${esc(it.placeholder || '')}" aria-label="${esc(it.label)}" spellcheck="false"><button class="btn" type="button" data-ref="save">保存</button>${it.cancel ? '<button class="btn ghost" type="button" data-ref="cancel" hidden>取消</button>' : ''}</span>`);
@@ -4339,7 +4378,7 @@ cfgToggle('monthly_summary_enabled', '上月汇总', { hint: () => `在总览底
 { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '选择功率来源、设置电价与整机估算参数。', items: [
 cfgItem('power_rate_yuan', '电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh' }),
 cfgToggle('power_use_ups', '用 UPS 输出功率计算整机用电', { hint: '仅在 UPS 只给本机供电时开启。后续功率历史改用 UPS 输出；断连暂停记录。电费为输出侧估算，不含 UPS 自身损耗；旧历史不重算。' }),
-cfgItem('power_ups_name', 'NUT UPS 名称', 'text', { placeholder: '留空自动选择唯一 UPS', hint: '可通过 upsc -l 查看；多台 UPS 时必须填写名称。只读取本机 NUT。' }),
+cfgItem('power_ups_name', 'NUT UPS 设备', 'ups-select', { hint: () => upsDevices && !upsDevices.ok ? esc(upsDevices.error || '设备列表读取失败') : upsDevices && !upsDevices.devices.length ? '未发现本机 NUT UPS；可以刷新重试' : '只读取本机 NUT；有多台设备时请选择具体 UPS。' }),
 cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
 cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
 cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
@@ -5617,6 +5656,7 @@ function onPageChange(p) {
 if (p === 'docker') Poll.runAll(['docker', 'ports', 'apps']);
 if (p === 'vms') Poll.run('vms');
 if (p === 'overview') Poll.runAll(['overview', 'diskhealth']);
+if (p === 'settings') refreshUpsDevices();
 }
 function globalRefresh() {
 const b = $('#btnRefresh'); b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 800);

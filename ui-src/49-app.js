@@ -143,6 +143,7 @@ function onPageChange(p) {
   if (p === 'docker') Poll.runAll(['docker', 'ports', 'apps']);
   if (p === 'vms') Poll.run('vms');
   if (p === 'overview') Poll.runAll(['overview', 'diskhealth']);
+  if (p === 'settings') refreshUpsDevices();
 }
 function globalRefresh() {
   const b = $('#btnRefresh'); b.classList.add('spinning'); setTimeout(() => b.classList.remove('spinning'), 800);
