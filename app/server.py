@@ -9799,7 +9799,6 @@ class Collector(threading.Thread):
         self._last_power = {"ok": False}
         self._last_power_ts = 0.0
         self._last_ups_power = {"ok": False, "source": "ups"}
-        self._last_ups_power_ts = 0.0
         # iDRAC：配置每 30 秒看一次（改了立刻生效），数据只读后台 Poller 的缓存
         self._idrac_cfg = {}
         self._idrac_cfg_ts = 0.0
@@ -10042,7 +10041,7 @@ class Collector(threading.Thread):
                     temps["disks"].append({"name": "阵列 " + str(_p.get("loc")),
                                            "temp": _p.get("temp")})
         snapshot["temp"] = temps
-        # ---- 实时功耗（每 10 秒）：可选 UPS 输出，否则 iDRAC > RAPL > 估算 ----
+        # ---- 实时功耗：UPS 随采集周期更新，否则 iDRAC > RAPL > 估算 ----
         # 必须在采集线程统一给出快照值：「实时功耗」与「功耗统计」两个面板都读这里，
         # 否则 RAPL 不可用的机器（多数 AMD/ARM）会出现面板显示 0W/不可用、
         # 而趋势图却有估算数据的自相矛盾。
@@ -10052,10 +10051,10 @@ class Collector(threading.Thread):
         # 仅 2-3W，且通常没有 DRAM 域），不等于整机功耗。整机 total = package
         # + dram + 主板等固定底座(power_base_w) + 活动硬盘数 * 单盘功耗，休眠盘不计。
         try:
-            if not _skip("power") and now - self._last_ups_power_ts >= 10:
+            ups_enabled = bool(int(self.config.get("power_use_ups", 0) or 0))
+            if not _skip("power") and ups_enabled:
                 self._last_ups_power = read_ups_output_power(self.config.get("power_ups_name", ""))
-                self._last_ups_power_ts = now
-            if not _skip("power") and now - self._last_power_ts >= 10:
+            if not _skip("power") and (ups_enabled or now - self._last_power_ts >= 10):
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
                 # 与旧行为一致，明确 standby 的盘才剔除
                 disks_active = sum(1 for d in (self._last_disks_detail or [])
@@ -10063,7 +10062,7 @@ class Collector(threading.Thread):
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
                 disks_w = round(disks_active * disk_w_unit, 2)
                 idr = self._idrac_fast()
-                if bool(int(self.config.get("power_use_ups", 0) or 0)):
+                if ups_enabled:
                     # 选定 UPS 后不静默回退估算值，避免历史 kWh 混入另一来源。
                     self._last_power = dict(self._last_ups_power)
                 elif idr and _nz(idr.get("power_watts")) is not None:
@@ -12339,7 +12338,6 @@ class MonitorApp:
         self._overview_bytes = b""
         if "power_use_ups" in updates or "power_ups_name" in updates:
             self.collector._last_power_ts = 0.0
-            self.collector._last_ups_power_ts = 0.0
             self._power_stats_cache = None
             self._hist_cache.clear()
         open_mode_changed = False
