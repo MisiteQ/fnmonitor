@@ -198,6 +198,29 @@ dd .diag-link { margin: 0; height: 24px; }
   .idrac-disks .dr > span:nth-child(3), .idrac-disks .dr > span:nth-child(4) { display: none; }
 }
 
+/* ---- UPS 电源实时状态 ---- */
+.up-live:empty { display: none; }
+.up-live { border-top: 1px solid var(--line); margin-top: var(--s2); padding-top: var(--s3); }
+.up-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-bottom: var(--s2); }
+.up-head .up-dev { font-weight: 600; color: var(--ink-1); }
+.up-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 4px 12px; }
+.up-cell { padding: 4px 6px; border-radius: 5px; background: color-mix(in srgb, var(--ink-1) 4%, transparent); }
+.up-cell .lbl { font-size: 11px; color: var(--ink-3); margin-bottom: 1px; }
+.up-cell .val { font-size: 16px; font-weight: 600; color: var(--ink-1); font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 3px; }
+.up-cell .val small { font-size: 11px; font-weight: 400; color: var(--ink-3); }
+.up-evs { display: flex; flex-wrap: wrap; gap: 6px; }
+.up-evs .btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.up-evs .btn[aria-pressed="true"]::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+/* ---- details/adv 折叠区（UPS 告警设置） ---- */
+.adv { list-style: none; padding: 8px 0 0; }
+.adv::-webkit-details-marker { display: none; }
+.adv summary.set-sub { cursor: pointer; user-select: none; position: relative; padding-left: 18px; }
+.adv summary.set-sub::before { /* 用伪元素做三角 + 竖条，和 ::marker 无关 */ content: ""; position: absolute; left: 0; top: 50%; width: 8px; height: 8px; border-left: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: translateY(-70%) rotate(-45deg); transition: transform .2s; background: none; border-radius: 0; }
+.adv summary.set-sub::after { content: ""; position: absolute; left: 12px; top: 50%; width: 3px; height: 13px; border-radius: 2px; background: var(--d-p); transform: translateY(-50%); }
+.adv[open] summary.set-sub::before { transform: translateY(-30%) rotate(-135deg); }
+.adv > div > .set-row:first-child { border-top: 1px solid var(--line); }
+
 /* 设置 → 版块显示 */
 .set-sub { display: flex; align-items: center; gap: 6px; margin: 12px 0 4px; color: var(--ink-2); font-size: 12.5px; font-weight: 700; letter-spacing: .01em; }
 .set-sub::before { content: ""; flex: none; width: 3px; height: 13px; border-radius: 2px; background: var(--d-p); }

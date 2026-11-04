@@ -157,6 +157,7 @@ const SET_SCHEMA = [
   { id: 'monitor', title: '事件监控', icon: 'eye', desc: 'fnOS 80+ 种系统事件实时推送（主日志库 / 备份 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP），经事件模板化后走既有推送出口；硬盘巡检的开关、间隔、结果推送与已忽略的提醒也在这里。', custom: renderMonitor },
   { id: 'notify', title: '通知设置', icon: 'bell', desc: '事件推送、硬盘巡检告警、阈值警告与定时报告都走这里配置的渠道；支持多渠道同时推送，测试也各测各的。', custom: renderNotify },
   { id: 'idrac', title: 'iDRAC', icon: 'server', desc: '戴尔服务器带外管理：直连 iDRAC 读风扇转速、温度、功耗与硬件日志（只读，不改服务器任何设置）。', custom: renderIdrac },
+  { id: 'ups', title: 'UPS 电源', icon: 'plug', desc: '通过 NUT（upsc）只读读取 UPS 实时状态：输入/输出电压、输出功率（输出电压 × 电流）、负载、电量、剩余续航；市电中断/恢复/过载/低电量等边沿事件推送到已配置的通知渠道。', custom: renderUps },
   { id: 'look', title: '外观', icon: 'palette', items: [
     uiItem('theme', '外观模式', 'seg', { options: [['light', '浅色'], ['dark', '深色'], ['auto', '跟随系统']] }),
     { k: 'colorspec', label: '色彩规范', type: 'colorspec', wide: true, hint: '概览安静、分析丰富：颜色按层级分工，紧急程度覆盖一切' },
@@ -1122,6 +1123,193 @@ function renderIdrac(card) {
   });
   sync();
 }
+/** UPS 电源：NUT upsc 只读采集 Phase 1（开关 + UPS 名称 + 基础告警事件）。 */
+function renderUps(card) {
+  const { collect, setText: _setTxt, esc } = (() => {
+    function collect(el) { const f = {}; el.querySelectorAll('[data-ref]').forEach(n => f[n.dataset.ref] = n); return f; }
+    return { collect, setText: (el, t) => { if (el) el.textContent = t; },
+             esc: s => String(s != null ? s : '').replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;'})[c]) };
+  })();
+  card.innerHTML = `
+    <div class="note info notify-note">${ic('plug')}<span><b>只读</b>：通过 NUT（upsc）读取 UPS 实时状态，不会写入 UPS 任何设置。需要飞牛「UPS 电源管理」启用（系统装 nut-client 包）。输出功率 = 输出电压 × 输出电流。</span></div>
+    <div class="set-row inline"><div><div class="lbl">UPS 电源采集</div><div class="hint" data-ref="hOn"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swOn"></button></div></div>
+    <div class="set-row"><div><div class="lbl">UPS 名称</div><div class="hint">upsc -l 列出的实例名；留空自动选第一台</div></div><div class="ctl" style="display:flex;gap:6px">
+      <select class="textfield" data-ref="name" style="min-width:200px"></select>
+      <button class="btn sm" type="button" data-ref="refresh">${ic('refresh')} 重新扫描</button>
+    </div></div>
+    <div class="set-row inline"><div><div class="lbl">采集间隔</div><div class="hint">upsc 单次 0.1–1 秒；最快 3 秒、最慢 60 秒</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="3" max="60" data-ref="interval" style="width:72px"><span class="faint">秒</span></div></div>
+    <details class="adv" hidden><summary class="set-sub" style="cursor:pointer">告警设置（事件推送 / 去抖 / 限流）</summary>
+      <div style="padding:10px 0 2px 0;display:flex;flex-direction:column;gap:12px">
+        <div class="set-row inline"><div><div class="lbl">告警事件推送</div><div class="hint">边沿事件（市电中断/恢复等）走已配置的通知渠道；关闭后事件只记不推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swNotif"></button></div></div>
+        <div class="set-row"><div><div class="lbl">告警事件选择</div><div class="hint">默认全选；取消勾选后对应事件即使发生也不推送</div></div><div class="ctl"><div class="up-evs" data-ref="evs"></div></div></div>
+        <div class="set-row inline"><div><div class="lbl">同类事件去抖</div><div class="hint">同一事件多少秒内只发一次（防反复掉线）；0 = 不去抖</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="0" max="3600" data-ref="debounce" style="width:72px"><span class="faint">秒</span></div></div>
+        <div class="set-row inline"><div><div class="lbl">每分钟上限</div><div class="hint">UPS 状态剧烈跳变时限流</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="1" max="60" data-ref="maxMin" style="width:72px"><span class="faint">条</span></div></div>
+      </div>
+    </details>
+    <div class="set-row"><div class="ctl" style="gap:8px"><button class="btn primary" type="button" data-ref="save">保存设置</button><span class="hint" data-ref="hMsg"></span></div></div>
+    <div class="up-live" data-ref="live"></div>
+  `;
+  const x = collect(card);
+  // ⚠️ 数据源对象（必须在事件绑定之前声明）
+  const f = { enabled: 0, ups_name: '', poll_interval: 5, notify_enabled: 1,
+              notify_debounce_s: 60, notify_max_per_min: 8, notify_events: [] };
+  let cfg = null, upscNames = [], evSel = new Set();
+
+  // --- 控件事件绑定（先绑再 load）---
+  x.swOn.addEventListener('click', () => { f.enabled = f.enabled ? 0 : 1; x.swOn.setAttribute('aria-checked', String(!!f.enabled)); });
+  x.swNotif.addEventListener('click', () => { f.notify_enabled = f.notify_enabled ? 0 : 1; x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled)); });
+  x.name.addEventListener('change', () => { f.ups_name = x.name.value; });
+  x.interval.addEventListener('input', () => { f.poll_interval = Math.max(3, Math.min(60, +x.interval.value || 5)); });
+  x.debounce.addEventListener('input', () => { f.notify_debounce_s = Math.max(0, Math.min(3600, +x.debounce.value || 0)); });
+  x.maxMin.addEventListener('input', () => { f.notify_max_per_min = Math.max(1, Math.min(60, +x.maxMin.value || 8)); });
+
+  // --- 事件选择 chip ---
+  function paintEvs() {
+    const choices = (cfg && cfg.choices) || ['DEVICE_LOST','DEVICE_BACK','POWER_LOSS','POWER_RESTORE','LOW_BATTERY','REPLACE_BATTERY','OVERLOAD','ALARM','FORCED_SHUTDOWN'];
+    const meta = (cfg && cfg.events_meta) || {};
+    x.evs.innerHTML = choices.map(c => {
+      const m = meta[c] || { label: c, level: 'info' };
+      const on = evSel.has(c);
+      return `<button class="btn sm" type="button" data-ev="${c}" aria-pressed="${on}" title="${esc(m.label)}">${esc(m.label)}</button>`;
+    }).join('');
+  }
+  x.evs.addEventListener('click', e => {
+    const b = e.target.closest('[data-ev]'); if (!b) return;
+    evSel.has(b.dataset.ev) ? evSel.delete(b.dataset.ev) : evSel.add(b.dataset.ev);
+    paintEvs();
+  });
+
+  // --- 实时状态 ---
+  let liveTimer = null;
+  function renderLive() {
+    API.get('/api/ups').then(d => {
+      if (!d || d.state === 'off') {
+        x.live.innerHTML = `<div class="note warn"><b>UPS 未启用</b>——开启上面的开关即可开始采集。<span class="faint">upsc 路径：${esc((d && d.upsc) || '未找到')}</span></div>`;
+        return;
+      }
+      if (!d.ok && d.stale && d.error) {
+        x.live.innerHTML = `<div class="note crit"><b>UPS 连接异常</b>：${esc(d.error)}${d.hint ? `<div class="hint">${esc(d.hint)}</div>` : ''}</div>`;
+        return;
+      }
+      const lv = d.live || {}, dv = d.device || {}, labels = lv.labels || [];
+      const cls = lv.st & 4 ? 'crit' : (lv.st & 1024 || lv.st & 64 ? 'warn' : 'ok');
+      const fld = (v, u, deci=0) => v != null ? `<b>${Number(v).toFixed(deci)}</b><small>${u}</small>` : '<b class="faint">—</b>';
+      const grid = [
+        ['输入电压', fld(lv.in_v, ' V', 1)], ['输出电压', fld(lv.out_v, ' V', 1)],
+        ['输出电流', fld(lv.out_a, ' A', 2)], ['输出功率', fld(lv.out_w, ' W', 1)],
+        ['负载', fld(lv.load, '%', 0)], ['电量', fld(lv.chg, '%', 0)],
+        ['剩余续航', lv.rt ? `<b>${Math.round(lv.rt/60)}</b><small>分钟</small>` : '<b class="faint">—</b>'],
+        ['电池电压', fld(lv.bat_v, ' V', 2)], ['电池温度', fld(lv.temp, ' ℃', 1)],
+        ['输入频率', fld(lv.in_hz, ' Hz', 1)],
+      ];
+      x.live.innerHTML = `
+        <div class="up-head">
+          <span class="up-dev">${esc((dv.mfr ? dv.mfr + ' ' : '') + (dv.model || dv.name || 'UPS'))}</span>
+          ${labels.length ? `<span class="pill ${cls}">${labels.map(esc).join(' · ')}</span>` : ''}
+          <span class="faint" style="margin-left:auto">${new Date(d.ts * 1000).toLocaleTimeString()}</span>
+        </div>
+        <div class="up-grid">${grid.map(([k, v]) => `<div class="up-cell"><div class="lbl">${k}</div><div class="val">${v}</div></div>`).join('')}</div>`;
+    }).catch(e => {
+      x.live.innerHTML = `<div class="note crit">读取 UPS 状态失败：${esc(String(e.message || e).slice(0, 100))}</div>`;
+    });
+  }
+
+  // --- 同步（cfg → f → DOM）---
+  function sync() {
+    if (!cfg) return;
+    // 数据层
+    f.enabled = cfg.enabled ? 1 : 0;
+    f.poll_interval = cfg.poll_interval || 5;
+    f.notify_enabled = cfg.notify_enabled ? 1 : 0;
+    f.notify_debounce_s = cfg.notify_debounce_s != null ? cfg.notify_debounce_s : 60;
+    f.notify_max_per_min = cfg.notify_max_per_min != null ? cfg.notify_max_per_min : 8;
+    f.ups_name = cfg.ups_name || '';
+    evSel = new Set(cfg.notify_events || []);
+    paintEvs();
+    // DOM 层：开关 aria-checked
+    x.swOn.setAttribute('aria-checked', String(!!f.enabled));
+    x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled));
+    // DOM 层：输入框 value
+    x.interval.value = f.poll_interval;
+    x.debounce.value = f.notify_debounce_s;
+    x.maxMin.value = f.notify_max_per_min;
+    // DOM 层：下拉框
+    x.name.innerHTML = `<option value="">自动（第一台）</option>` +
+      (upscNames.map(n => `<option value="${esc(n)}" ${n === f.ups_name ? 'selected' : ''}>${esc(n)}</option>`).join(''));
+    // 状态提示
+    const msg = !cfg.upsc
+      ? '⚠️ 未找到 upsc 命令 — 请启用飞牛「UPS 电源管理」'
+      : f.enabled ? '已启用' : '关闭：不采集 UPS 状态';
+    _setTxt(x.hOn, msg);
+    // 实时状态
+    if (f.enabled) {
+      renderLive();
+      if (liveTimer) clearInterval(liveTimer);
+      liveTimer = setInterval(renderLive, Math.max(3000, f.poll_interval * 1000));
+    } else {
+      if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+      x.live.innerHTML = `<div class="note warn"><b>UPS 未启用</b>——开启开关后自动开始采集。upsc：${esc(cfg.upsc || '未找到')}</div>`;
+    }
+  }
+
+  // --- 加载 ---
+  async function load() {
+    try {
+      const d = await API.get('/api/ups');
+      cfg = d.config || d || {};
+      if (cfg.choices) evSel = new Set(cfg.notify_events || []);
+    } catch (e) {
+      _setTxt(x.hMsg, '读取配置失败');
+      return;
+    }
+    try {
+      const lst = await API.get('/api/ups/list');
+      upscNames = lst.ups_list || [];
+    } catch (e) {}
+    sync();
+  }
+
+  // --- 保存 ---
+  async function doSave() {
+    const body = {
+      enabled: +f.enabled,
+      ups_name: x.name.value || '',        // 用户可能还没 change，读当前 value 最保险
+      poll_interval: +f.poll_interval || 5,
+      notify_enabled: +f.notify_enabled,
+      notify_events: [...evSel],
+      notify_debounce_s: +f.notify_debounce_s || 0,
+      notify_max_per_min: +f.notify_max_per_min || 8,
+    };
+    x.save.disabled = true;
+    try {
+      const j = await API.post('/api/ups/save', body);
+      if (!j.ok) throw new Error(j.error || '保存失败');
+      cfg = j.config || cfg;
+      toast(j.message || 'UPS 设置已保存', { key: 'ups-save' });
+      sync();
+    } catch (e) {
+      toast('保存失败：' + String(e.message || e).slice(0, 80), { icon: 'alert', ms: 5000 });
+    } finally { x.save.disabled = false; }
+  }
+
+  // --- 按钮事件 ---
+  x.save.addEventListener('click', doSave);
+  x.refresh.addEventListener('click', async () => {
+    x.refresh.disabled = true; x.refresh.textContent = '扫描中…';
+    try {
+      const lst = await API.get('/api/ups/list');
+      upscNames = lst.ups_list || [];
+      cfg = cfg || {};
+      sync();
+      if (!lst.ok) _setTxt(x.hMsg, lst.hint || lst.error);
+      else toast(`发现 ${upscNames.length} 台 UPS`, { icon: 'check', ms: 3000 });
+    } catch (e) { toast('扫描失败：' + String(e.message || e).slice(0, 60), { icon: 'alert' }); }
+    finally { x.refresh.disabled = false; x.refresh.innerHTML = `${ic('refresh')} 重新扫描`; }
+  });
+
+  // 初始化
+  load();
+}
 async function doLogout() {
   try { await API.post('/api/auth/logout', {}); } catch (e) { /* 仍然跳转 */ }
   location.href = loginURL();
@@ -1233,12 +1421,21 @@ function buildSettings() {
   if (settingsBuilt) return; settingsBuilt = true;
   const nav = $('#setNav'), main = $('#setMain');
   SET_SCHEMA.forEach(g => {
+    try {
     nav.insertAdjacentHTML('beforeend', `<a href="#/settings" data-g="${g.id}">${ic(g.icon)}${g.title}</a>`);
     const grp = mount(`<section class="set-group" id="set-${g.id}"><h3>${g.title}</h3><p>${g.desc || ''}</p><div class="card set-card"></div></section>`);
     const card = grp.querySelector('.set-card');
-    if (g.custom) { g.custom(card); if (g.id === 'about' || g.id === 'update') card.classList.remove('set-card'); }
-    else g.items.forEach(it => card.append(setRow(it)));
+    try {
+      if (g.custom) { g.custom(card); if (g.id === 'about' || g.id === 'update') card.classList.remove('set-card'); }
+      else g.items.forEach(it => card.append(setRow(it)));
+    } catch (e) {
+      console.error('[settings] 渲染分组 %s 失败:', g.id, e);
+      card.innerHTML = `<div class="note crit">分组「${esc(g.title)}」渲染异常：${esc(String(e.message || e).slice(0, 120))}</div>`;
+    }
     main.append(grp);
+    } catch (e) {
+      console.error('[settings] 创建分组 %s 容器失败:', g.id, e);
+    }
   });
   const links = $$('a', nav), groups = $$('.set-group', main);
   let navLock = 0, navTick = false;

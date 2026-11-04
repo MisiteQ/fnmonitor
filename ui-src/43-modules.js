@@ -135,8 +135,70 @@ defineModule({
 });
 
 /* ---------------------------------------------------------------------
-   07 NETWORK — 网口实时速率 + /api/traffic 统计 + 速率历史积分
+   06b UPS — /api/ups（实时）+ /api/history/ups_out_w（曲线）
    --------------------------------------------------------------------- */
+const UPS_RANGE_LINES = [
+  { id: 'ups_out_w', label: '输出功率', unit: 'W', color: 'var(--e-coral)' },
+  { id: 'ups_out_v', label: '输出电压', unit: 'V', color: 'var(--e-teal)' },
+  { id: 'ups_chg', label: '电量', unit: '%', color: 'var(--e-blue)' },
+  { id: 'ups_load', label: '负载', unit: '%', color: 'var(--d-p)' },
+  { id: 'ups_bat_v', label: '电池电压', unit: 'V', color: 'var(--fill-2)' },
+];
+defineModule({
+  id: 'ups', page: 'overview', dc: 'io', kicker: 'UPS', title: 'UPS 电源', dek: '输入/输出电压、输出功率、负载、电量、续航',
+  actions: () => detailBtn('ups'),
+  build(body, m) {
+    body.innerHTML = `<div class="ups">
+      <div class="card pad tap" data-sheet="ups" tabindex="0" role="button">
+        <div class="label">UPS 状态<span class="pill" style="margin-left:auto" data-ref="stPill"></span></div>
+        <div class="dnum huge" style="margin-top:18px"><span class="dm" data-ref="outW"></span><span class="unit">W</span></div>
+        <div class="sub" style="margin-top:6px" data-ref="sub">未检测到 UPS</div>
+        <div class="chart-mini" style="margin-top:20px;height:56px" data-ref="mini"></div>
+      </div>
+      <div class="stat-cells">
+        <div class="stat-cell"><div class="eyebrow">输出电压</div><div class="dnum"><span class="dm" data-ref="outV"></span><span class="unit">V</span></div><div class="sub" data-ref="outLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow">电量</div><div class="dnum"><span class="dm" data-ref="chg"></span><span class="unit">%</span></div><div class="sub" data-ref="chgLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow">负载</div><div class="dnum"><span class="dm" data-ref="load"></span><span class="unit">%</span></div><div class="sub" data-ref="loadLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow">续航</div><div class="dnum"><span class="dm" data-ref="rt"></span><span class="unit">分</span></div><div class="sub" data-ref="rtLbl"></div></div>
+      </div>
+    </div>`;
+    m.x = collect(body);
+  },
+  async update(o, m) {
+    const x = m.x;
+    if (!m.lastUpsTs || Date.now() - m.lastUpsTs > 5000) {
+      m.lastUpsTs = Date.now();
+      try { m.upsSnap = await API.get('/api/ups'); } catch (e) { m.upsSnap = null; }
+    }
+    const d = m.upsSnap;
+    if (!d || !d.ok || d.state === 'off') {
+      dot(x.outW).set(null); dot(x.outV).set(null); dot(x.chg).set(null); dot(x.load).set(null); dot(x.rt).set(null);
+      setText(x.stPill, d && d.upsc ? 'UPS 未启用' : '未检测到 UPS');
+      setText(x.sub, d && d.upsc ? '开关未开启' : '需启用飞牛「UPS 电源管理」安装 nut-client');
+      setText(x.outLbl, ''); setText(x.chgLbl, ''); setText(x.loadLbl, ''); setText(x.rtLbl, '');
+      return;
+    }
+    const lv = d.live || {}, dv = d.device || {};
+    const labels = lv.labels || [];
+    const cls = lv.st & 4 ? 'crit' : (lv.st & 1024 || lv.st & 64 ? 'warn' : 'ok');
+    setHTML(x.stPill, `<span class="pill ${cls}">${labels.map(esc).join(' · ') || '市电正常'}</span>`);
+    dnum(x.outW, lv.out_w, F.int);
+    setText(x.sub, `${esc((dv.mfr || '') + (dv.model ? ' ' + dv.model : dv.name || 'UPS'))} · 输入 ${lv.in_v != null ? F.d1(lv.in_v) + ' V' : '--'}`);
+    dnum(x.outV, lv.out_v, F.d1); setText(x.outLbl, lv.out_a != null ? `电流 ${F.d1(lv.out_a)} A` : '');
+    dnum(x.chg, lv.chg, F.int); setText(x.chgLbl, lv.bat_v != null ? `电池 ${F.d1(lv.bat_v)} V` : '');
+    dnum(x.load, lv.load, F.int); setText(x.loadLbl, '额定容量 ' + (dv.va || '--'));
+    dnum(x.rt, lv.rt ? Math.round(lv.rt / 60) : null, F.int);
+    setText(x.rtLbl, lv.temp != null ? `电池 ${F.d1(lv.temp)} ℃` : '');
+    // 小曲线：输出功率历史
+    try {
+      const h = await Hist.get('ups_out_w', 'all', 600000).catch(() => null);
+      const pts = (h && h.points) || [];
+      if (!m.miniChart && pts.length) m.miniChart = new MiniSparkline(x.mini, { color: 'var(--e-coral)', yMin: 0 });
+      if (m.miniChart) { m.miniChart.setData(pts.map(p => [p[0], p[1]])); x.mini.hidden = false; }
+      else x.mini.hidden = true;
+    } catch (e) { x.mini.hidden = true; }
+  },
+});
 const ipOf = (o, iface) => { const r = ((o.system || {}).ips || []).find(p => p.iface === iface); return r ? (r.ipv4 || [])[0] || (r.ipv6 || [])[0] || '' : ''; };
 const speedOf = (o, iface) => { const r = (((o.hardware || {}).net) || []).find(p => p.name === iface); return r && +r.speed_mbps > 0 ? +r.speed_mbps : 0; };
 const speedTxt = mb => mb >= 1000 ? (mb / 1000 >= 10 ? Math.round(mb / 1000) : +(mb / 1000).toFixed(1)) + ' GbE' : mb + ' Mb/s';
