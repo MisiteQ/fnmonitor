@@ -28,6 +28,13 @@ REPO = os.path.dirname(TESTS_DIR)
 SERVER_PY = os.path.join(REPO, "app", "server.py")
 GOLDEN = os.path.join(TESTS_DIR, "golden", "shapes.json")
 
+# 确保 tests/ 和 repo/ 在 sys.path —— 让 CI 上 discover 模式能正确 import
+# fnm_support 本身 + 让 app/server.py 内部 import app/utils/* 能 resolve
+if TESTS_DIR not in sys.path:
+    sys.path.insert(0, TESTS_DIR)
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
 IS_LINUX = sys.platform.startswith("linux")
 BENCH = os.environ.get("FNM_BENCH") == "1"
 SLOW = os.environ.get("FNM_SLOW") == "1"
