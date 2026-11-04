@@ -16,6 +16,7 @@
    "data_dir_actual": "str",
    "disk_scan_enabled": "number",
    "disk_scan_interval_h": "number",
+   "disk_scan_notify": "number",
    "disk_standby_protect": "number",
    "ec_fan_probe": "number",
    "history_interval": "number",
@@ -31,6 +32,7 @@
    "power_rate_yuan": "number",
    "power_tdp_w": "number",
    "retention_days": "number",
+   "threshold_notify": "number",
    "traffic_exclude_bridge": "number",
    "ui_file": "str",
    "update_autocheck": "number",
@@ -76,8 +78,7 @@
   "available": "bool",
   "containers": "list",
   "error": "str",
-  "images": "number",
-  "sampled_at": "number"
+  "images": "number"
  },
  "/api/history?metric=cpu&range=1h": {
   "metric": "str",
@@ -139,6 +140,7 @@
    "data_dir": "str",
    "disk_scan_enabled": "number",
    "disk_scan_interval_h": "number",
+   "disk_scan_notify": "number",
    "disk_standby_protect": "number",
    "ec_fan_probe": "number",
    "history_interval": "number",
@@ -152,6 +154,7 @@
    "power_rate_yuan": "number",
    "power_tdp_w": "number",
    "retention_days": "number",
+   "threshold_notify": "number",
    "traffic_exclude_bridge": "number",
    "update_autocheck": "number",
    "update_autodownload": "number",
