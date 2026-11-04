@@ -67,7 +67,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "power_use_ups": 0, "power_ups_name": "", "power_trend_since": 0, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "power_use_ups": 0, "power_ups_name": "", "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -10763,14 +10763,6 @@ class MonitorApp:
         self.data_dir = data_dir
         self._cfg_dir = cfg_dir or data_dir  # 配置（config.json）固定写默认目录，data_dir 只存数据文件
         self.config = config
-        # Upgrades from versions without source boundaries cannot identify old UPS samples.
-        # Start a new segment once and persist it so restarts do not reset the trend again.
-        if bool(int(config.get("power_use_ups", 0) or 0)) and not config.get("power_trend_since"):
-            config["power_trend_since"] = time.time()
-            try:
-                self._update_config_file({"power_trend_since": config["power_trend_since"]})
-            except OSError:
-                pass
         self.host = host
         self.port = port
         self.updater = UpdateManager(data_dir)  # 在线更新（须先于 Collector 创建）
@@ -11747,8 +11739,7 @@ class MonitorApp:
             return {"metric": "", "range": range_, "points": []}
         if range_ not in self._RANGE_SECONDS:
             range_ = "1h"
-        since = float(self.config.get("power_trend_since") or 0) if metric == "power" else 0
-        key = (metric, range_, since)
+        key = (metric, range_)
         now = time.time()
         cached = self._hist_cache.get(key)
         if cached and now - cached[0] < 25:
@@ -11769,8 +11760,7 @@ class MonitorApp:
             return self.api_ctr_history(range_)
         if metric == "diskio":
             return self.api_diskio_history(range_)
-        since = float(self.config.get("power_trend_since") or 0) if metric == "power" else 0
-        rows = self.collector.db.query_series(metric, seconds, span=self._span(seconds), since=since)
+        rows = self.collector.db.query_series(metric, seconds, span=self._span(seconds))
         # 实时兜底：历史为空或最新点过旧时，附加当前实时值，保证趋势图始终有数据
         now = time.time()
         latest_ts = rows[-1][0] if rows else 0
@@ -11781,12 +11771,10 @@ class MonitorApp:
             power = snap.get("power") or {}
             right_source = (metric != "power" or
                             (power.get("source") == "ups") == bool(int(self.config.get("power_use_ups", 0) or 0)))
-            if val is not None and live_ts >= since and right_source and live_ts > latest_ts:
+            if val is not None and right_source and live_ts > latest_ts:
                 rows = list(rows) + [(live_ts, val)]
         result = {"metric": metric, "range": range_,
                   "points": [[t, round(v, 2) if isinstance(v, float) else v] for t, v in rows]}
-        if metric == "power":
-            result["since"] = since
         return result
 
     def _live_value(self, metric, snap):
@@ -12310,12 +12298,6 @@ class MonitorApp:
             if name and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
                 return {"ok": False, "error": "UPS 名称只能包含字母、数字、点、下划线和短横线"}, 200, None
             updates["power_ups_name"] = name
-        next_ups = bool(int(updates.get("power_use_ups", self.config.get("power_use_ups", 0)) or 0))
-        source_changed = (next_ups != bool(int(self.config.get("power_use_ups", 0) or 0)) or
-                          (next_ups and "power_ups_name" in updates and
-                           updates["power_ups_name"] != self.config.get("power_ups_name", "")))
-        if source_changed:
-            updates["power_trend_since"] = time.time()
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -12359,8 +12341,7 @@ class MonitorApp:
             self.collector._last_power_ts = 0.0
             self.collector._last_ups_power_ts = 0.0
             self._power_stats_cache = None
-            if source_changed:
-                self._hist_cache.clear()
+            self._hist_cache.clear()
         open_mode_changed = False
         new_mode = str(updates.get("open_mode", "")).lower()
         if new_mode in ("iframe", "url"):
@@ -13484,12 +13465,6 @@ def load_config(data_dir):
             cfg["disk_scan_interval_h"] = int(user["disk_scan_interval_h"])
         except Exception:
             pass
-    try:
-        since = float(user.get("power_trend_since") or 0)
-        if math.isfinite(since) and 0 <= since <= time.time() + 60:
-            cfg["power_trend_since"] = since
-    except (TypeError, ValueError):
-        pass
     for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
               "power_rate_yuan", "power_base_w"):
         if k in user:

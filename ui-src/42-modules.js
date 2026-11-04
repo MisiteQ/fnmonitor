@@ -12,8 +12,7 @@ async function fetchSeries(keys, range) {
 function seriesOf(res, key, range) {
   const [b, f] = SERIES_SRC[key] || [key, 'points'], d = res && res[b], pts = (d && d[f]) || [];
   if (key === 'power') {
-    const since = Math.max(+(d && d.since || 0), +(S.cfg && S.cfg.power_trend_since || 0));
-    const cut = range === 'all' ? since : Math.max(since, Date.now() / 1000 - RANGE_SEC[range]);
+    const cut = range === 'all' ? 0 : Date.now() / 1000 - RANGE_SEC[range];
     return mergeLive(pts, S.live.power).filter(p => p[0] >= cut);
   }
   if (!['10m', '1h', '6h'].includes(range) || !LIVE_OF[key]) return pts;
@@ -27,7 +26,7 @@ const emptyFor = key => () => {
   if (key === 'power' && !pwrOk(o)) return '功耗不可用';
   return `暂无数据 · 后台每 ${histIv()} 秒记录一条历史，稍后自动出现`;
 };
-const powerTrendTitle = () => S.cfg && +S.cfg.power_use_ups ? 'UPS 输出功率' : '整机功耗';
+const powerTrendTitle = () => '功耗趋势';
 const TREND_DEFS = [
   { id: 'cpumem', title: 'CPU 与内存', sheet: 'cpu', yMin: 0, yMax: 100, yTick: v => v + '%', peak: true, thresholds: () => [{ v: TH.cpuWarn, lv: 'warn' }, { v: TH.cpuCrit, lv: 'crit' }], series: [{ m: 'cpu', label: 'CPU', color: M.cpu, fmt: fPct }, { m: 'mem', label: '内存', color: M.mem, fmt: fPct }] },
   { id: 'net', title: '网络', sheet: 'net', yMin: 0, yTick: shortBytes, series: [{ m: 'net.rx', label: '下行', color: M.io, fmt: F.rate }, { m: 'net.tx', label: '上行', color: M.io2, fmt: F.rate }] },

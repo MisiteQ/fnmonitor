@@ -2750,8 +2750,7 @@ return res;
 function seriesOf(res, key, range) {
 const [b, f] = SERIES_SRC[key] || [key, 'points'], d = res && res[b], pts = (d && d[f]) || [];
 if (key === 'power') {
-const since = Math.max(+(d && d.since || 0), +(S.cfg && S.cfg.power_trend_since || 0));
-const cut = range === 'all' ? since : Math.max(since, Date.now() / 1000 - RANGE_SEC[range]);
+const cut = range === 'all' ? 0 : Date.now() / 1000 - RANGE_SEC[range];
 return mergeLive(pts, S.live.power).filter(p => p[0] >= cut);
 }
 if (!['10m', '1h', '6h'].includes(range) || !LIVE_OF[key]) return pts;
@@ -2765,7 +2764,7 @@ if (key === 'fan_avg' && !((o.sensors || {}).fans || []).length) return '未检�
 if (key === 'power' && !pwrOk(o)) return '功耗不可用';
 return `暂无数据 · 后台每 ${histIv()} 秒记录一条历史，稍后自动出现`;
 };
-const powerTrendTitle = () => S.cfg && +S.cfg.power_use_ups ? 'UPS 输出功率' : '整机功耗';
+const powerTrendTitle = () => '功耗趋势';
 const TREND_DEFS = [
 { id: 'cpumem', title: 'CPU 与内存', sheet: 'cpu', yMin: 0, yMax: 100, yTick: v => v + '%', peak: true, thresholds: () => [{ v: TH.cpuWarn, lv: 'warn' }, { v: TH.cpuCrit, lv: 'crit' }], series: [{ m: 'cpu', label: 'CPU', color: M.cpu, fmt: fPct }, { m: 'mem', label: '内存', color: M.mem, fmt: fPct }] },
 { id: 'net', title: '网络', sheet: 'net', yMin: 0, yTick: shortBytes, series: [{ m: 'net.rx', label: '下行', color: M.io, fmt: F.rate }, { m: 'net.tx', label: '上行', color: M.io2, fmt: F.rate }] },
@@ -3613,7 +3612,7 @@ icon: 'bolt', title: () => '能耗', sub: o => pwrOk(o) ? '来源：' + (SRC_TXT
 build(b, arg, ctx) {
 b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">实时功耗</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">W</span></div></div><div style="text-align:right"><div class="eyebrow">口径</div><b class="tnum" data-ref="src"></b></div></div>
 <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
-sheetCharts(ctx, b, [TREND_DEFS[4], { title: '当前来源累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
+sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
 b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
 <div class="note info">${ic('info')}<span>仅当 UPS 只给本机供电时，才适合用其输出功率替代整机计算。开启后，实时功率和后续历史使用 UPS 读数，电量与电费沿用功率历史积分；断连时暂停记录，不回退估算。切换前历史不重算。UPS 输出侧电费估算不含 UPS 自身损耗与充电耗电。未启用 UPS 时，优先使用 iDRAC 实测；否则用 RAPL 读数加部件估算，或按 TDP 与负载估算。</span></div>`);
 const x = collect(b);

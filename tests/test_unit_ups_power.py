@@ -72,7 +72,7 @@ class UpsOutputPowerTest(unittest.TestCase):
         self.assertEqual(cfg["power_ups_name"], "2340161")
         self.assertEqual(srv.DEFAULT_CONFIG["power_use_ups"], 0)
 
-    def test_switch_starts_new_trend_without_deleting_energy_history(self):
+    def test_switch_keeps_existing_power_trend_and_energy_history(self):
         with tempfile.TemporaryDirectory() as path:
             cfg = dict(srv.DEFAULT_CONFIG, update_autocheck=0, disk_standby_protect=0)
             app = srv.MonitorApp(path, cfg, cfg_dir=path)
@@ -82,35 +82,29 @@ class UpsOutputPowerTest(unittest.TestCase):
             result, status, _ = app.api_config_save({"power_use_ups": 1})
             self.assertTrue(result["ok"])
             self.assertEqual(status, 200)
-            self.assertGreater(cfg["power_trend_since"], now - 1)
-            self.assertEqual(app.api_history("power", "1h")["points"], [])
+            self.assertEqual([p[1] for p in app.api_history("power", "1h")["points"]], [100, 30])
             self.assertEqual(app.collector.db.energy_kwh("power", 3600, default_dt=60), before)
             app.collector.db.write([(time.time(), "power", 25)])
             app._hist_cache.clear()
             self.assertEqual(app.api_history("power", "1h")["points"][-1][1], 25)
             energy_after_sample = app.collector.db.energy_kwh("power", 3600, default_dt=60)
             loaded = srv.load_config(path)
-            self.assertEqual(loaded["power_trend_since"], cfg["power_trend_since"])
-            first_since = cfg["power_trend_since"]
+            self.assertEqual(loaded["power_use_ups"], 1)
             self.assertTrue(app.api_config_save({"power_ups_name": "2340161"})[0]["ok"])
-            self.assertGreater(cfg["power_trend_since"], first_since)
-            self.assertEqual(app.api_history("power", "1h")["points"], [])
-            second_since = cfg["power_trend_since"]
+            self.assertEqual([p[1] for p in app.api_history("power", "1h")["points"]], [100, 30, 25])
             self.assertTrue(app.api_config_save({"power_use_ups": 0})[0]["ok"])
-            self.assertGreater(cfg["power_trend_since"], second_since)
-            self.assertEqual(app.api_history("power", "1h")["points"], [])
+            self.assertEqual([p[1] for p in app.api_history("power", "1h")["points"]], [100, 30, 25])
             self.assertEqual(app.collector.db.energy_kwh("power", 3600, default_dt=60), energy_after_sample)
 
-    def test_upgrade_with_enabled_ups_starts_one_persistent_segment(self):
+    def test_upgrade_ignores_old_trend_cutoff(self):
         with tempfile.TemporaryDirectory() as path:
             with open(os.path.join(path, "config.json"), "w", encoding="utf-8") as f:
-                json.dump({"power_use_ups": 1}, f)
+                json.dump({"power_use_ups": 1, "power_trend_since": time.time()}, f)
             cfg = srv.load_config(path)
+            self.assertNotIn("power_trend_since", cfg)
             app = srv.MonitorApp(path, cfg, cfg_dir=path)
-            first_since = app.config["power_trend_since"]
-            self.assertGreater(first_since, 0)
-            reloaded = srv.load_config(path)
-            self.assertEqual(reloaded["power_trend_since"], first_since)
+            app.collector.db.write([(time.time() - 120, "power", 35)])
+            self.assertEqual(app.api_history("power", "1h")["points"][0][1], 35)
 
 
 if __name__ == "__main__":

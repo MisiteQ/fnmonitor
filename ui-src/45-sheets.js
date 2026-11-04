@@ -300,7 +300,7 @@ const SHEETS = {
     build(b, arg, ctx) {
       b.innerHTML = `<div class="sheet-hero"><div><div class="eyebrow">实时功耗</div><div class="dnum"><span class="dm" data-ref="v"></span><span class="unit">W</span></div></div><div style="text-align:right"><div class="eyebrow">口径</div><b class="tnum" data-ref="src"></b></div></div>
         <div class="card pad" data-dc="pwr"><div class="stack" style="height:12px" data-ref="st"></div><div class="legend" data-ref="leg"></div></div><div data-ref="parts"></div>`;
-      sheetCharts(ctx, b, [TREND_DEFS[4], { title: '当前来源累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
+      sheetCharts(ctx, b, [TREND_DEFS[4], { title: '累计用电（所选范围）', yMin: 0, yTick: v => v >= 10 ? F.kwh(v) : v >= 0.1 ? v.toFixed(2) : v.toFixed(3), series: [{ m: 'power', label: '累计', color: M.pwr, fmt: v => [F.kwh(v), 'kWh'] }], tf: cumKwh }]);
       b.insertAdjacentHTML('beforeend', `${sec('用电与电费', '<span class="faint" data-ref="rate"></span>')}<div data-ref="cost"></div>${sec('估算参数', '<button class="link-btn" type="button" data-goset="power">去设置</button>')}<div data-ref="est"></div>
         <div class="note info">${ic('info')}<span>仅当 UPS 只给本机供电时，才适合用其输出功率替代整机计算。开启后，实时功率和后续历史使用 UPS 读数，电量与电费沿用功率历史积分；断连时暂停记录，不回退估算。切换前历史不重算。UPS 输出侧电费估算不含 UPS 自身损耗与充电耗电。未启用 UPS 时，优先使用 iDRAC 实测；否则用 RAPL 读数加部件估算，或按 TDP 与负载估算。</span></div>`);
       const x = collect(b);
