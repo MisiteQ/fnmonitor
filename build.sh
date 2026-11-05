@@ -8,13 +8,18 @@
 set -e
 cd "$(dirname "$0")"
 
-echo "[1/4] 生成应用图标..."
+echo "[1/5] 从 ui-src 重建前端..."
+# app/www/index.html 是 ui-src 的生成产物，直接改它会导致 CI 的
+# 「index.html 与 ui-src 不一致」检查失败；打包前强制重建，避免产物漂移。
+sh tools/build_ui.sh
+
+echo "[2/5] 生成应用图标..."
 python3 make_icon.py
 
 # 清理 Python 字节码缓存：fnpack 会打包 app/ 下全部文件，__pycache__ 一旦残留（本地跑过服务/测试）就会混入 fpk
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-echo "[2/4] 检查 fnpack..."
+echo "[3/5] 检查 fnpack..."
 if [ -x ./fnpack ]; then
     FNPACK=./fnpack
 elif command -v fnpack >/dev/null 2>&1; then
@@ -26,7 +31,7 @@ else
     exit 1
 fi
 
-echo "[3/4] 读取 manifest 版本号..."
+echo "[4/5] 读取 manifest 版本号..."
 VERSION=$(sed -n 's/^version=//p' manifest | head -1 | tr -d '[:space:]')
 if [ -z "$VERSION" ]; then
     echo "错误：无法从 manifest 解析 version"
@@ -39,7 +44,7 @@ trap 'cp -f "$TMP_MANIFEST" manifest 2>/dev/null || true' EXIT
 TMP_MANIFEST=$(mktemp)
 cp manifest "$TMP_MANIFEST"
 
-echo "[4/4] 分别打包 x86 / arm ..."
+echo "[5/5] 分别打包 x86 / arm ..."
 for plat in x86 arm; do
     sed "s/^platform=.*/platform=$plat/" "$TMP_MANIFEST" > manifest
     "$FNPACK" build
