@@ -163,6 +163,33 @@ def _ts_to_str(ts: Any) -> str:
 
 # ---------- 各库的 row → (event_type, event_data) handler ----------
 
+def _trim_row_meta(row: Dict[str, Any]) -> Dict[str, Any]:
+    """影视行 → 聚合汇总需要的作品 / 季 / 集信息。
+
+    剧集（Episode）的 parent 是季、季的 parent 才是剧；轮询 SQL 已经把
+    两级父节点标题带进来（parent_title / root_title），这里只做兜底。
+    """
+    typ = str(row.get("type") or "")
+    title = str(row.get("title") or "").strip()
+    try:
+        season = int(row.get("season_number") or row.get("parent_season") or 0)
+    except (TypeError, ValueError):
+        season = 0
+    try:
+        episode = int(row.get("episode_number") or 0)
+    except (TypeError, ValueError):
+        episode = 0
+    parent = str(row.get("parent_title") or "").strip()
+    root = str(row.get("root_title") or "").strip()
+    if typ == "Episode":
+        work = root or parent
+    elif typ == "Season":
+        work = parent or root
+    else:
+        work = title
+    return {"work": work, "season": season, "episode": episode}
+
+
 def _trimmedia_handler(row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
     """trimmedia.db 的 item 表：影视资源入库。
     真实字段：guid / type / title / path / parent_guid / create_time(ms) / fetch_status。
@@ -170,12 +197,14 @@ def _trimmedia_handler(row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any
     title = str(row.get("title") or "").strip()
     if not title:
         return None
-    return "TRIM_RESOURCE_ADDED", {
+    data = {
         "title": title,
         "type": str(row.get("type") or ""),
         "path": str(row.get("path") or ""),
         "_source": "trimmedia",
     }
+    data.update(_trim_row_meta(row))
+    return "TRIM_RESOURCE_ADDED", data
 
 
 def _trim_scrape_handler(row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -187,11 +216,13 @@ def _trim_scrape_handler(row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, A
         status = 0
     if not title or status <= 0:
         return None
-    return "TRIM_SCRAPE_SUCCESS", {
+    data = {
         "title": title,
         "type": str(row.get("type") or ""),
         "_source": "trimmedia",
     }
+    data.update(_trim_row_meta(row))
+    return "TRIM_SCRAPE_SUCCESS", data
 
 
 def _trim_user_handler(row: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -349,10 +380,14 @@ class MultiSourcePoller:
         self.register(
             "trim_add", db_path, table_name, _trimmedia_handler,
             select_sql=(
-                "SELECT guid, type, title, path, parent_guid, season_number, "
-                "episode_number, fetch_status, create_time, update_time FROM item "
-                "WHERE create_time > ? AND type IN ('Movie', 'TV', 'Season', 'Episode', 'Video') "
-                "ORDER BY create_time ASC LIMIT 200"
+                "SELECT i.guid, i.type, i.title, i.path, i.parent_guid, "
+                "i.season_number, i.episode_number, i.fetch_status, i.create_time, i.update_time, "
+                "s.title AS parent_title, s.season_number AS parent_season, "
+                "t.title AS root_title "
+                "FROM item i LEFT JOIN item s ON s.guid = i.parent_guid "
+                "LEFT JOIN item t ON t.guid = s.parent_guid "
+                "WHERE i.create_time > ? AND i.type IN ('Movie', 'TV', 'Season', 'Episode', 'Video') "
+                "ORDER BY i.create_time ASC LIMIT 200"
             ),
             baseline_sql="SELECT COALESCE(MAX(create_time), 0) FROM item",
             cursor_field="create_time",
@@ -360,10 +395,15 @@ class MultiSourcePoller:
         self.register(
             "trim_scrape", db_path, table_name, _trim_scrape_handler,
             select_sql=(
-                "SELECT guid, type, title, fetch_status, create_time, update_time FROM item "
-                "WHERE update_time > ? AND fetch_status > 0 "
-                "AND type IN ('Movie', 'TV', 'Episode', 'Video') "
-                "ORDER BY update_time ASC LIMIT 200"
+                "SELECT i.guid, i.type, i.title, i.fetch_status, i.create_time, i.update_time, "
+                "i.season_number, i.episode_number, "
+                "s.title AS parent_title, s.season_number AS parent_season, "
+                "t.title AS root_title "
+                "FROM item i LEFT JOIN item s ON s.guid = i.parent_guid "
+                "LEFT JOIN item t ON t.guid = s.parent_guid "
+                "WHERE i.update_time > ? AND i.fetch_status > 0 "
+                "AND i.type IN ('Movie', 'TV', 'Episode', 'Video') "
+                "ORDER BY i.update_time ASC LIMIT 200"
             ),
             baseline_sql="SELECT COALESCE(MAX(update_time), 0) FROM item",
             cursor_field="update_time",

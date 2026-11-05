@@ -100,7 +100,7 @@ def _read_manifest_version():
             pass
     return ""
 
-VERSION = _read_manifest_version() or "2.41.0"   # manifest 不可读时回退（须与 manifest 同步）
+VERSION = _read_manifest_version() or "2.41.1"   # manifest 不可读时回退（须与 manifest 同步）
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
@@ -4653,11 +4653,14 @@ def _notify_flush_dnd(cfg):
             return None
         items = list(_NOTIFY_DND_BUFFER)
         _NOTIFY_DND_BUFFER.clear()
-    # 汇总：取第一条的标题前缀 + 各条正文合并
-    lines = []
+    # 汇总：标题 + 每条消息一行（时间 + 标题），正文只作兜底，避免拼出超长消息
+    lines = ["勿扰时段（%s–%s）共缓存 %d 条消息"
+             % (cfg.get("notify_dnd_start") or "23:00",
+                cfg.get("notify_dnd_end") or "08:00", len(items)), ""]
     for sub, bod, ts in items:
         t = time.strftime("%H:%M", time.localtime(ts))
-        lines.append("[%s] %s" % (t, bod or sub))
+        text = (sub or "").strip() or (bod or "").split("\n", 1)[0].strip() or "通知"
+        lines.append("[%s] %s" % (t, text))
     subject = "勿扰时段汇总（%d 条）" % len(items)
     body = "\n".join(lines)
     subject, body = _notify_apply_global(cfg, subject, body)
@@ -4673,6 +4676,22 @@ def _notify_flush_dnd(cfg):
     except Exception:
         pass
     return ok_all, res
+
+
+def notify_dnd_watch_tick(data_dir):
+    """勿扰时段结束后的兜底汇总。
+
+    原实现只在「下一次有消息要发」时才把缓冲刷出去，如果凌晨没有新事件，
+    整晚缓存的告警就一直压着不送。这里由定时线程每 15 秒检查一次，
+    只要已离开勿扰时段且缓冲区非空，就立即汇总成一条消息发送。
+    """
+    cfg = notify_load(data_dir)
+    if _notify_in_dnd(cfg):
+        return None
+    with _NOTIFY_DND_LOCK:
+        if not _NOTIFY_DND_BUFFER:
+            return None
+    return _notify_flush_dnd(cfg)
 
 
 def _notify_send_all_raw(cfg, subject, body):
@@ -4711,9 +4730,9 @@ def notify_send_all(cfg, subject, body, skip_minimal=False):
     if _notify_in_dnd(cfg):
         with _NOTIFY_DND_LOCK:
             _NOTIFY_DND_BUFFER.append((subject, body, time.time()))
-        # 限制缓冲区大小，避免无限增长
-        if len(_NOTIFY_DND_BUFFER) > 100:
-            _NOTIFY_DND_BUFFER.pop(0)
+            # 限制缓冲区大小，避免无限增长
+            if len(_NOTIFY_DND_BUFFER) > 100:
+                _NOTIFY_DND_BUFFER.pop(0)
         return True, {"dnd": True}
     ok_all, res = _notify_send_all_raw(cfg, subject, body)
     # 写入推送历史（异常不影响主流程，db_path 未初始化时 record 内部是空操作）
@@ -12074,6 +12093,13 @@ class MonitorApp:
         mon.setdefault("ssh_open_remind_minutes", 30)
         mon.setdefault("wan_ip_poll_interval", 600)
         mon.setdefault("source_enabled", {})
+        # 推送聚合：同类事件合并 / 磁盘唤醒休眠合并 / 影视音乐静默汇总
+        mon.setdefault("aggregate_enabled", False)
+        mon.setdefault("aggregate_window", 30)
+        mon.setdefault("disk_aggregate_enabled", True)
+        mon.setdefault("disk_aggregate_window", 60)
+        mon.setdefault("media_aggregate_enabled", True)
+        mon.setdefault("media_silence_window", 60)
         # 空路径自动填默认值/探测值，但只对「配置里从未出现过」的键做探测：
         # 用户把路径清空后保存（键存在且为空串）必须保持为空，否则一刷新地址又被填回去，
         # 看起来「删不掉」。想临时停用某个数据源请用右侧开关，而不是删路径。
@@ -12179,6 +12205,13 @@ class MonitorApp:
             "wan_ip_poll_interval": max(60, int(_pick("wan_ip_poll_interval") or 600)),
             "ignore_ssh_loopback": bool(_pick("ignore_ssh_loopback", False)),
             "ignore_ssh_lan": bool(_pick("ignore_ssh_lan", False)),
+            # 推送聚合（与 event_aggregator 同名字段）
+            "aggregate_enabled": bool(_pick("aggregate_enabled", False)),
+            "aggregate_window": max(5, min(3600, int(_pick("aggregate_window") or 30))),
+            "disk_aggregate_enabled": bool(_pick("disk_aggregate_enabled", True)),
+            "disk_aggregate_window": max(5, min(3600, int(_pick("disk_aggregate_window") or 60))),
+            "media_aggregate_enabled": bool(_pick("media_aggregate_enabled", True)),
+            "media_silence_window": max(10, min(600, int(_pick("media_silence_window") or 60))),
         }
         cfg["monitor"] = mon_new
         try:
@@ -14563,6 +14596,17 @@ def main():
                       sum(1 for v in _monitor_runtime.status().get("pollers", {}).values() if v))
             except Exception as _mr_start_e:
                 print("[fnmonitor] fnOS 日志事件监控启动失败（不影响主流程）：%s" % _mr_start_e)
+
+    # ── 勿扰结束自动汇总：不依赖「下一条推送」触发 ──────────────────────
+    def _dnd_watch_loop():
+        while True:
+            time.sleep(15)
+            try:
+                notify_dnd_watch_tick(app.collector.data_dir)
+            except Exception as _dnd_e:
+                print("[fnmonitor] 勿扰汇总检查异常（忽略）：%s" % _dnd_e)
+
+    threading.Thread(target=_dnd_watch_loop, name="NotifyDndWatch", daemon=True).start()
 
     def shutdown(sig, frame):
         app.collector.stop()

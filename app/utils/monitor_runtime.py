@@ -21,6 +21,7 @@ from utils.backup_db_poller import BackupDBPoller
 from utils.media_photo_music_poller import MultiSourcePoller
 from utils.docker_events_poller import DockerEventsPoller
 from utils.ssh_wan_pollers import SshJournalPoller, SshOpenWatch, WanIpMonitor
+from utils.event_aggregator import EventAggregator
 
 
 # monitor 配置字段 → 说明：
@@ -75,6 +76,8 @@ class MonitorRuntime:
         # 表现为「事情已经发生，推送却晚到十几秒」。
         self._push_q: "queue.Queue" = queue.Queue(maxsize=300)
         self._push_thread: Optional[threading.Thread] = None
+        # 同类事件聚合：影视/音乐静默汇总、磁盘唤醒/休眠合并、全局同类合并
+        self._agg = EventAggregator(self._on_aggregated, cfg=self.cfg)
         # 轮询器实例
         self.db_log: Optional[DBLogPoller] = None
         self.backup: Optional[BackupDBPoller] = None
@@ -87,7 +90,7 @@ class MonitorRuntime:
 
     # ---------- 事件统一处理：event_type + event_data → 推送 ----------
     def _on_event(self, event_type: str, event_data: Dict[str, Any]) -> None:
-        """所有轮询器拿到事件后都走这里：formatter → notify_fn。"""
+        """所有轮询器拿到事件后都走这里：白名单 → 去重 → 聚合 / 即时推送。"""
         # 白名单检查：空列表 = 一条都不推送（与「清空」按钮语义一致）
         monitor_events = self.cfg.get("monitor_events")
         if monitor_events is None:
@@ -113,7 +116,15 @@ class MonitorRuntime:
                 if len(self._dedup) > 200:
                     cutoff = now - self._dedup_window
                     self._dedup = {k: v for k, v in self._dedup.items() if v >= cutoff}
-        # 格式化
+        # 聚合开关打开时先把同类事件收进缓冲，静默/窗口到期后再合成一条推送
+        if self._agg.add(event_type, event_data):
+            print("[fnmonitor][monitor] 事件进入聚合缓冲：%s（当前待汇总 %d）"
+                  % (event_type, self._agg.pending()))
+            return
+        self._emit(event_type, event_data)
+
+    def _emit(self, event_type: str, event_data: Dict[str, Any]) -> None:
+        """格式化后入推送队列（单条事件 / 聚合汇总共用）。"""
         msg = event_formatter.build_message(event_type, event_data)
         if msg is None:
             print("[fnmonitor][monitor] 事件无格式化模板，跳过：%s" % event_type)
@@ -127,6 +138,14 @@ class MonitorRuntime:
             self._push_q.put_nowait((title, body, event_type))
         except queue.Full:
             print("[fnmonitor][monitor] 推送队列已满，丢弃事件：%s" % event_type)
+
+    def _on_aggregated(self, title: str, body: str, event_type: str) -> None:
+        """聚合器到期回调：汇总已是成品 (title, body)，直接入推送队列。"""
+        print("[fnmonitor][monitor] 聚合汇总推送：%s（%s）" % (title, event_type))
+        try:
+            self._push_q.put_nowait((title, body, event_type))
+        except queue.Full:
+            print("[fnmonitor][monitor] 推送队列已满，丢弃汇总：%s" % event_type)
 
     def _push_loop(self) -> None:
         """独立发送线程：串行消费队列，网络慢也只影响发送节奏，不影响采集。"""
@@ -159,6 +178,9 @@ class MonitorRuntime:
         with self._lock:
             self._stop_unlocked()   # ← 内部调用走不加锁版本，避免自死锁
         self._ensure_push_thread()
+        # 聚合配置随 monitor cfg 一起更新（保存设置后 runtime 会重建）
+        self._agg.configure(self.cfg)
+        self._agg.start()
 
         poll_interval = max(3, int(self.cfg.get("poll_interval") or 5))
         monitor_events = self.cfg.get("monitor_events") or []
@@ -283,6 +305,11 @@ class MonitorRuntime:
             stopping.append(t)
         for t in stopping:
             t.join(timeout=6)
+        # 停止聚合器：把还没到期的缓冲立刻合成推送，避免升级重启丢事件
+        try:
+            self._agg.stop(flush=True)
+        except Exception:
+            pass
         if self._push_thread is not None:
             try:
                 self._push_q.put(None, timeout=0.2)
@@ -308,6 +335,18 @@ class MonitorRuntime:
     def status(self) -> Dict[str, Any]:
         """返回各轮询器运行状态（供 Web 接口查询）。"""
         out: Dict[str, Any] = {"started": self._started, "pollers": {}}
+        try:
+            out["aggregate"] = {
+                "enabled": bool(self._agg.aggregate_enabled),
+                "window": self._agg.aggregate_window,
+                "disk_enabled": bool(self._agg.disk_enabled),
+                "disk_window": self._agg.disk_window,
+                "media_enabled": bool(self._agg.media_enabled),
+                "media_silence": self._agg.media_silence,
+                "pending": self._agg.pending(),
+            }
+        except Exception:
+            out["aggregate"] = {}
         for attr, label in [
             ("db_log", "主日志库"),
             ("backup", "备份任务库"),

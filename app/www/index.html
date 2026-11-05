@@ -3870,6 +3870,15 @@ ${sec('轮询器')}
 <div class="set-row inline"><div><div class="lbl">忽略 SSH 回环</div><div class="hint">本机 127.0.0.1 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-loop" aria-checked="true" aria-label="忽略 SSH 回环"></button></div></div>
 <div class="set-row inline"><div><div class="lbl">忽略 SSH 局域网</div><div class="hint">内网 IP 的连接不计入</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-ssh-lan" aria-checked="false" aria-label="忽略 SSH 局域网"></button></div></div>
 </div>
+${sec('推送聚合', '<span class="faint">批量操作会集中产生大量同类事件；开启后按窗口 / 静默期合成一条。登录、安全、存储故障、资源告警、UPS、备份结果等事件始终即时推送</span>')}
+<div class="card pad" style="padding-top:6px;padding-bottom:6px">
+<div class="set-row inline"><div><div class="lbl">同类事件合并推送</div><div class="hint">文件删除 / 应用启停 / Docker / 相册 / 音乐收藏等同类事件在窗口内合并（需先在「事件类型」里勾选对应事件）</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-agg" aria-checked="false" aria-label="同类事件合并推送"></button></div></div>
+<div class="set-row"><div><div class="lbl">合并窗口</div><div class="hint">窗口内发生的同类事件合成一条推送，5–3600 秒</div></div><div class="ctl"><input type="number" id="mm-agg-win" class="textfield mono" min="5" max="3600" value="30" style="width:86px" aria-label="同类事件合并窗口（秒）"><span class="faint">秒</span></div></div>
+<div class="set-row inline"><div><div class="lbl">磁盘唤醒 / 休眠合并</div><div class="hint">同一窗口内的磁盘唤醒（或休眠）事件合并为一条</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-disk-agg" aria-checked="true" aria-label="磁盘唤醒休眠合并"></button></div></div>
+<div class="set-row"><div><div class="lbl">磁盘合并窗口</div><div class="hint">磁盘唤醒 / 休眠的合并时间窗口，5–3600 秒</div></div><div class="ctl"><input type="number" id="mm-disk-win" class="textfield mono" min="5" max="3600" value="60" style="width:86px" aria-label="磁盘合并窗口（秒）"><span class="faint">秒</span></div></div>
+<div class="set-row inline"><div><div class="lbl">影视 / 音乐静默汇总</div><div class="hint">入库、刮削、曲目入库 / 移出连续静默后合成一条「本轮汇总」；收藏与加入歌单默认即时推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" id="mm-media-agg" aria-checked="true" aria-label="影视音乐静默汇总"></button></div></div>
+<div class="set-row"><div><div class="lbl">静默判定</div><div class="hint">连续多少秒没有新记录后合成汇总，10–600 秒</div></div><div class="ctl"><input type="number" id="mm-media-sil" class="textfield mono" min="10" max="600" value="60" style="width:86px" aria-label="影视音乐静默秒数"><span class="faint">秒</span></div></div>
+</div>
 ${sec('事件类型', '<span class="faint" id="mm-selected-count"></span>')}
 <div class="card pad">
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -3930,6 +3939,12 @@ enable_wan_ip: swOn('#mm-en-wan'),
 wan_ip_poll_interval: parseInt($b('#mm-wan-int').value) || 600,
 ignore_ssh_loopback: swOn('#mm-ssh-loop'),
 ignore_ssh_lan: swOn('#mm-ssh-lan'),
+aggregate_enabled: swOn('#mm-agg'),
+aggregate_window: parseInt($b('#mm-agg-win').value) || 30,
+disk_aggregate_enabled: swOn('#mm-disk-agg'),
+disk_aggregate_window: parseInt($b('#mm-disk-win').value) || 60,
+media_aggregate_enabled: swOn('#mm-media-agg'),
+media_silence_window: parseInt($b('#mm-media-sil').value) || 60,
 };
 setText($b('#mm-msg'), '保存中…');
 const r = await API.post('/api/monitor/save', payload);
@@ -4022,6 +4037,12 @@ setSw('#mm-en-wan', cfg.enable_wan_ip !== false);
 if (cfg.wan_ip_poll_interval) $b('#mm-wan-int').value = cfg.wan_ip_poll_interval;
 setSw('#mm-ssh-loop', cfg.ignore_ssh_loopback !== false);
 setSw('#mm-ssh-lan', !!cfg.ignore_ssh_lan);
+setSw('#mm-agg', !!cfg.aggregate_enabled);
+if (cfg.aggregate_window) $b('#mm-agg-win').value = cfg.aggregate_window;
+setSw('#mm-disk-agg', cfg.disk_aggregate_enabled !== false);
+if (cfg.disk_aggregate_window) $b('#mm-disk-win').value = cfg.disk_aggregate_window;
+setSw('#mm-media-agg', cfg.media_aggregate_enabled !== false);
+if (cfg.media_silence_window) $b('#mm-media-sil').value = cfg.media_silence_window;
 const selected = new Set(
 Array.isArray(cfg.monitor_events) ? cfg.monitor_events : defaults
 );
