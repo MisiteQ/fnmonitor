@@ -10,12 +10,22 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
+# 探测可用的 Python 解释器：优先 py 启动器，其次 python3，最后 python（排除 WindowsApps 占位符）
+$pyExe = $null
+$pyCmd = Get-Command py -ErrorAction SilentlyContinue
+if ($pyCmd) { $pyExe = $pyCmd.Source }
+if (-not $pyExe) {
+    foreach ($cand in @("python3", "python")) {
+        $c = Get-Command $cand -ErrorAction SilentlyContinue
+        if ($c -and $c.Source -notlike "*WindowsApps*") { $pyExe = $c.Source; break }
+    }
+}
+
 Write-Host "[1/5] 从 ui-src 重建前端..." -ForegroundColor Cyan
 # app/www/index.html 是 ui-src 的生成产物，直接改它会导致 CI 的
 # 「index.html 与 ui-src 不一致」检查失败；打包前强制重建，避免产物漂移。
 $sh = Get-Command sh -ErrorAction SilentlyContinue
-$py3 = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $py3 -and $sh) {
+if (-not $pyExe -and $sh) {
     $py = Get-Command python -ErrorAction SilentlyContinue
     if ($py -and $py.Source -notlike "*WindowsApps*") {
         # Windows 通常只有 python.exe，这里临时造一个 python3 供 build_ui.sh 调用
@@ -24,18 +34,22 @@ if (-not $py3 -and $sh) {
         Copy-Item $py.Source (Join-Path $shim "python3.exe") -Force
         $env:PYTHONHOME = Split-Path $py.Source -Parent
         $env:PATH = "$shim;" + $env:PATH
-        $py3 = Get-Command python3 -ErrorAction SilentlyContinue
+        $pyExe = (Get-Command python3 -ErrorAction SilentlyContinue).Source
     }
 }
-if ($sh -and $py3) {
+if ($sh -and $pyExe) {
     & $sh.Source tools/build_ui.sh
     if ($LASTEXITCODE -ne 0) { throw "前端构建失败：请检查 ui-src/ 后重试" }
+} elseif ($pyExe) {
+    # 无 sh 的 Windows 环境：直接用等价的 Python 构建脚本
+    & $pyExe tools/build_ui_win.py
+    if ($LASTEXITCODE -ne 0) { throw "前端构建失败：请检查 ui-src/ 后重试" }
 } else {
-    Write-Host "  未找到 sh/python3，跳过前端重建；请确认 app/www/index.html 与 ui-src 一致" -ForegroundColor Yellow
+    Write-Host "  未找到 sh/python，跳过前端重建；请确认 app/www/index.html 与 ui-src 一致" -ForegroundColor Yellow
 }
 
 Write-Host "[2/5] 生成应用图标..." -ForegroundColor Cyan
-if ($py3) { & $py3.Source make_icon.py } else { python make_icon.py }
+if ($pyExe) { & $pyExe make_icon.py } else { python make_icon.py }
 if ($LASTEXITCODE -ne 0) { throw "图标生成失败：请检查 Python 环境" }
 
 # 清理 Python 字节码缓存：fnpack 会打包 app/ 下全部文件，__pycache__ 一旦残留（本地跑过服务/测试）就会混入 fpk
