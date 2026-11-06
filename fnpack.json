@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.3/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.4/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.41.4": {
+                    "changelog": "v2.41.4 版本号回退值清理<br>① 移除后端硬编码的版本回退值：版本号唯一数据源为 manifest，读取不到时按「未知版本」处理，不再因回退值停留在旧版本而误报「发现新版本」<br>② 清理 manifest 更新日志里误粘的 changelog= 前缀",
+                    "updated_at": "2026-11-06",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.4/fnmonitor-2.41.4-x86.fpk",
+                            "sha256": "1065c4d6f47862d8e01210c1f1e5cbc83896cd208ab799f881d4f77be12c26d9",
+                            "size": 711933
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.4/fnmonitor-2.41.4-arm.fpk",
+                            "sha256": "6848e27e87cbbc1a5303ce3e390feff4b29802d19828f367101ff7f0d04dde84",
+                            "size": 711931
+                        }
+                    }
+                },
                 "2.41.3": {
                     "changelog": "v2.41.3 设置页整体窄窗口自适应<br><br>① 设置页所有「标签 + 右侧控件」行改为按卡片宽度自动换行：卡片变窄时控件整组换到下一行，标签不再被挤成单字竖排<br>② 修复「软件更新」卡片版本信息被按钮组挤成竖排：图标与版本信息占一行，按钮组放不下时整组换行<br>③ 「忽略提醒」行同样自适应；设置行内的输入框在窄卡片中不再溢出",
                     "updated_at": "2026-11-06",
