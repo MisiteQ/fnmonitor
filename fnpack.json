@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.1/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.2/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.41.2": {
+                    "changelog": "v2.41.2 设置页登录口令模块窄窗口自适应修复<br><br>① 修复窗口变窄时「修改口令」一行的标题与提示被挤成单字竖排的问题：该行改为标签在上、控件在下的堆叠布局<br>② 两个口令输入框改为弹性等宽，空间不足时自动换行，不再溢出卡片<br>③ 「保存口令」按钮与口令强度条作为一组右对齐，右边缘与输入框严格对齐",
+                    "updated_at": "2026-11-06",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.2/fnmonitor-2.41.2-x86.fpk",
+                            "sha256": "495351eac81cfea59e0b6687bd197fafac38cca676f5b638e87b6a98672d6a1c",
+                            "size": 711433
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.2/fnmonitor-2.41.2-arm.fpk",
+                            "sha256": "f986de9dddc9438f8c49e2e5c6f1d57d7a3a2b4ee6d391d4c490aa58eebe9990",
+                            "size": 711428
+                        }
+                    }
+                },
                 "2.41.1": {
                     "changelog": "v2.41.1 推送聚合 · 勿扰时段汇总补发 · 影视音乐静默汇总<br><br>① 同类事件合并推送：新增总开关，文件删除 / 应用启停 / Docker / 相册 / 音乐收藏等同类事件在窗口内合并为一条；登录、安全、存储故障、资源告警、UPS、备份结果等关键事件始终即时送达<br>② 磁盘唤醒 / 休眠合并：同一时间窗内的磁盘唤醒（或休眠）事件合并为一条「磁盘唤醒（N 块）」<br>③ 勿扰时段结束后自动汇总：缓存消息不再依赖「下一条推送」触发，时段一结束即合成一条「勿扰时段汇总」补发<br>④ 影视处理本轮汇总：入库与刮削记录连续 60 秒静默后合成一条，同一资源去重，电视剧按作品 + 季展示单集；沿用原有两项事件勾选<br>⑤ 音乐库变更汇总：曲目入库 / 移出库静默 60 秒后汇总；收藏与加入歌单仍即时推送，开启全局合并后随批次发送",
                     "updated_at": "2026-11-05",

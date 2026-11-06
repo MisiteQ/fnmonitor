@@ -50,7 +50,13 @@
 .test-msg { font-size: var(--fs-xs); color: var(--ink-3); white-space: nowrap; }
 .set-row.inline .ctl { flex-wrap: wrap; row-gap: 8px; }
 @media (max-width: 560px) { .test-msg { display: none; } }
-.pw-ctl { flex-wrap: wrap; }
+/* 口令区：输入框平分整行，强度条与按钮作为一组靠右 */
+.set-row .ctl.pw-ctl { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 520px; gap: 10px; }
+.pw-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.pw-fields .textfield { flex: 1 1 180px; width: auto; min-width: 140px; max-width: 100%; }
+.pw-foot { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
+.pw-foot .pw-meter { flex: 0 0 auto; width: 120px; }
+.pw-foot .btn { flex: none; }
 .update-card .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .update-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; }
 .upd-msg { grid-column: 1 / -1; }
