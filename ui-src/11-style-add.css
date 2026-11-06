@@ -59,7 +59,7 @@
 .pw-foot .btn { flex: none; }
 .update-card .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .update-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; }
-.upd-msg { grid-column: 1 / -1; }
+.upd-msg { flex: 1 1 100%; }
 .upd-rows { padding: 0 var(--s6); }
 .about-credit { margin-top: 14px !important; line-height: 1.8; }
 .about a:not(.btn) { color: var(--ink-1); text-decoration: underline; text-underline-offset: 2px; }
@@ -133,7 +133,11 @@ dd .diag-link { margin: 0; height: 24px; }
 
 /* ---- 忽略提醒 ---- */
 .pill.btn.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--ink-2); }
-.ig-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+/* 忽略提醒行：图标 + 文案 + 操作，卡片变窄时操作按钮换行而不是把文案挤成竖排 */
+.ig-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.ig-row > span:first-child { flex: none; }
+.ig-row > div:not(.ctl) { flex: 1 1 160px; min-width: 0; }
+.ig-row > .ctl { flex: 0 0 auto; margin-left: auto; }
 .ig-row .ig-meta { font-size: var(--fs-xs); color: var(--ink-3); margin-top: 2px; }
 .ig-row .ig-state { font-size: var(--fs-xs); font-weight: 600; }
 .ig-row .ig-state.on { color: var(--warn); } .ig-row .ig-state.gone { color: var(--ink-3); }
