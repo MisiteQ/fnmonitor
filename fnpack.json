@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.2/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.3/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.41.3": {
+                    "changelog": "v2.41.3 设置页整体窄窗口自适应<br><br>① 设置页所有「标签 + 右侧控件」行改为按卡片宽度自动换行：卡片变窄时控件整组换到下一行，标签不再被挤成单字竖排<br>② 修复「软件更新」卡片版本信息被按钮组挤成竖排：图标与版本信息占一行，按钮组放不下时整组换行<br>③ 「忽略提醒」行同样自适应；设置行内的输入框在窄卡片中不再溢出",
+                    "updated_at": "2026-11-06",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.3/fnmonitor-2.41.3-x86.fpk",
+                            "sha256": "200020f2e71224a76d068c1fa0f7410a827daf802c2a02afe1c150c63970fe30",
+                            "size": 711700
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.3/fnmonitor-2.41.3-arm.fpk",
+                            "sha256": "395ec9ba6f90e8e2f0c68369ea20d8a9f006297e412e6a14e866a5cb71adbcb8",
+                            "size": 711699
+                        }
+                    }
+                },
                 "2.41.2": {
                     "changelog": "v2.41.2 设置页登录口令模块窄窗口自适应修复<br><br>① 修复窗口变窄时「修改口令」一行的标题与提示被挤成单字竖排的问题：该行改为标签在上、控件在下的堆叠布局<br>② 两个口令输入框改为弹性等宽，空间不足时自动换行，不再溢出卡片<br>③ 「保存口令」按钮与口令强度条作为一组右对齐，右边缘与输入框严格对齐",
                     "updated_at": "2026-11-06",
