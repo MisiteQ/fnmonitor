@@ -3586,7 +3586,7 @@ const paintSmart = () => {
 const dd = disksOf(S.o).find(z => z.name === a); if (!dd) return;
 const slp = isSleep(dd), sd = smartDetailOf(a), sas = !!(sd && sd.scsi);
 const val = k => (sd && sd[k] != null ? sd[k] : dd[k]);
-const temp = (sd && sd.temp_c != null) ? sd.temp_c : dd.temp;
+const temp = ok(dd.temp) ? dd.temp : (sd && sd.temp_c); // 与告警同源，SMART 缓存仅作缺失时兜底
 const num = v => ok(v) ? esc(Number(v).toLocaleString()) : '<span class="faint">—</span>';
 const flag = v => (+v > 0 ? 'warn' : true);
 let rows = [['整体评估', dd.health ? esc(/PASS/i.test(dd.health) ? '通过' : dd.health) : '<span class="faint">未读取到</span>',

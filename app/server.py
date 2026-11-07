@@ -7763,9 +7763,14 @@ def read_temps(with_disks=True):
                     temps["disks"].append({"name": blk, "temp": cached})
                 continue
             temp = None
-            hwdir = os.path.join("/sys/block", blk, "device", "hwmon")
+            devdir = os.path.join("/sys/block", blk, "device")
+            hwdir = os.path.join(devdir, "hwmon")
+            if not os.path.isdir(hwdir):
+                hwdir = devdir  # NVMe 的 hwmonN 直接挂在控制器目录下
             if os.path.isdir(hwdir):
                 for hw in sorted(os.listdir(hwdir)):
+                    if not hw.startswith("hwmon"):
+                        continue
                     tfile = os.path.join(hwdir, hw, "temp1_input")
                     if os.path.isfile(tfile):
                         t = read_int_file(tfile)
@@ -7777,8 +7782,10 @@ def read_temps(with_disks=True):
                 tnow = time.time()
                 if tnow - _DISK_TEMP_TS.get(blk, 0.0) <= _DISK_TEMP_TTL:
                     temp = _DISK_TEMP_CACHE.get(blk)
-                else:
-                    temp = smartctl_temp(blk)
+                    if temp:
+                        temps["disks"].append({"name": blk, "temp": temp})
+                    continue  # 复用缓存不推进实际读取时间，否则持续采集会让缓存永不过期
+                temp = smartctl_temp(blk)
             if temp:
                 _DISK_TEMP_CACHE[blk] = temp
                 _DISK_TEMP_TS[blk] = time.time()
