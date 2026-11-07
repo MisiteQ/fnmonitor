@@ -7,6 +7,8 @@ SAS 盘的 smartctl 输出字段名与 ATA/NVMe 完全不同（`Serial number` �
 
 纯 fixture（不需要真实 SAS 盘）。测试通过 mock run_cmd 喂入 smartctl 文本。
 """
+import os
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -272,6 +274,56 @@ class SmartctlTempTest(unittest.TestCase):
 
     def test_unknown_format_returns_none(self):
         self.assertIsNone(self._temp("no temperature here"))
+
+    def test_temperature_cache_expires_during_regular_collection(self):
+        with mock.patch.dict(srv._DISK_TEMP_CACHE, {}, clear=True), \
+                mock.patch.dict(srv._DISK_TEMP_TS, {}, clear=True), \
+                mock.patch.object(srv.os.path, "isdir", return_value=False), \
+                mock.patch.object(srv.os, "listdir", return_value=["nvme0n1"]), \
+                mock.patch.object(srv, "disk_power_states", return_value={"nvme0n1": "active/idle"}), \
+                mock.patch.object(srv.time, "time") as clock, \
+                mock.patch.object(srv, "run_cmd") as cmd:
+            for elapsed in range(0, int(srv._DISK_TEMP_TTL) + 21, 10):
+                clock.return_value = 1000.0 + elapsed
+                cmd.return_value = ("Temperature: %d Celsius\n" % (56 if elapsed == 0 else 55), 0)
+                expected = 56 if elapsed <= srv._DISK_TEMP_TTL else 55
+                self.assertEqual(srv.read_temps()["disks"], [{"name": "nvme0n1", "temp": expected}])
+            self.assertEqual(cmd.call_count, 2)
+
+    def test_hwmon_layouts_update_without_smartctl_and_skip_standby(self):
+        listdir, isdir, isfile = os.listdir, os.path.isdir, os.path.isfile
+        read_int = srv.read_int_file
+        states = {"sda": "active/idle", "nvme0n1": "active/idle"}
+        with tempfile.TemporaryDirectory() as root:
+            paths = {
+                "sda": root + "/sys/block/sda/device/hwmon/hwmon2/temp1_input",
+                "nvme0n1": root + "/sys/block/nvme0n1/device/hwmon3/temp1_input",
+            }
+            for path in paths.values():
+                os.makedirs(os.path.dirname(path))
+                with open(path, "w") as f:
+                    f.write("56000")
+            with mock.patch.dict(srv._DISK_TEMP_CACHE, {}, clear=True), \
+                    mock.patch.dict(srv._DISK_TEMP_TS, {}, clear=True), \
+                    mock.patch.object(srv.os, "listdir", side_effect=lambda p: listdir(root + p)), \
+                    mock.patch.object(srv.os.path, "isdir", side_effect=lambda p: isdir(root + p)), \
+                    mock.patch.object(srv.os.path, "isfile", side_effect=lambda p: isfile(root + p)), \
+                    mock.patch.object(srv, "read_int_file", side_effect=lambda p: read_int(root + p)) as reads, \
+                    mock.patch.object(srv, "disk_power_states", return_value=states), \
+                    mock.patch.object(srv, "smartctl_temp", return_value=None) as smart:
+                self.assertEqual({d["name"]: d["temp"] for d in srv.read_temps()["disks"]},
+                                 {"sda": 56.0, "nvme0n1": 56.0})
+                for path in paths.values():
+                    with open(path, "w") as f:
+                        f.write("55000")
+                self.assertEqual({d["name"]: d["temp"] for d in srv.read_temps()["disks"]},
+                                 {"sda": 55.0, "nvme0n1": 55.0})
+                states.update({"sda": "standby", "nvme0n1": "standby"})
+                reads.reset_mock()
+                self.assertEqual({d["name"]: d["temp"] for d in srv.read_temps()["disks"]},
+                                 {"sda": 55.0, "nvme0n1": 55.0})
+                reads.assert_not_called()
+                smart.assert_not_called()
 
 
 if __name__ == "__main__":
