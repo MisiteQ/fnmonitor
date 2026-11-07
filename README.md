@@ -97,6 +97,7 @@ make_icon.py            应用图标生成（不覆盖已有图标）
 - 飞牛 fnOS 与 [FnDepot](https://github.com/EWEDLCM/FnDepot)
 - 特别感谢 **[iqiuzixuan](https://github.com/iqiuzixuan)**：fnmonitor迎来了他的神，感谢iqiuzixuan为本项目贡献了全新界面与设计体系、虚拟机（QEMU/KVM）监控页、后端安全加固，以及回归测试套件与 GitHub Actions CI（上游 PR [#8](https://github.com/MisiteQ/fnmonitor/pull/8) / [#9](https://github.com/MisiteQ/fnmonitor/pull/9) / [#10](https://github.com/MisiteQ/fnmonitor/pull/10) / [#12](https://github.com/MisiteQ/fnmonitor/pull/12)）
 - 感谢 **[ttkl9559-cell](https://github.com/ttkl9559-cell)**：贡献 SAS/SCSI 硬盘 SMART 解析（增长缺陷表、不可纠正错误计数）、硬盘后台巡检与邮件/Server酱告警、iDRAC Redfish 带外监控（PR [#17](https://github.com/MisiteQ/fnmonitor/pull/17) / [#18](https://github.com/MisiteQ/fnmonitor/pull/18) / [#19](https://github.com/MisiteQ/fnmonitor/pull/19)）
+- 感谢 **[mhduiy](https://github.com/mhduiy)**：修复主页硬盘温度不刷新与 SMART 温度显示不一致问题——定位并修正温度缓存命中后仍续期导致温度永不重读、兼容 NVMe hwmon 目录布局，并统一同盘温度显示口径（PR [#26](https://github.com/MisiteQ/fnmonitor/pull/26)）
 - 感谢 **[Sunanang](https://github.com/Sunanang)** 及其项目 **[FNMessageBots](https://github.com/Sunanang/FNMessageBots)**：本项目通知推送系统与定时报告的多平台通知架构思路参考了 FNMessageBots 的日志推送实现
 
 ## 📋 版本历史
