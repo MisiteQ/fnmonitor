@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.4/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.5/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.41.5": {
+                    "changelog": "v2.41.5 硬盘温度自动更新修复（贡献者 mhduiy）<br>① 温度缓存可正常过期：命中缓存不再刷新时间戳，90 秒 TTL 到期后真正重读，温度不再自首次读取后永久冻结<br>② NVMe 温度直读修复：兼容 hwmonN 直接挂在控制器目录的布局，不再全部退化为 smartctl 读取<br>③ 同盘温度口径统一：SMART 明细表优先使用与主页、告警同源的总览温度，消除同一块盘显示 55℃ / 56℃ 的不一致",
+                    "updated_at": "2026-11-07",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.5/fnmonitor-2.41.5-x86.fpk",
+                            "sha256": "dd13b84b8e069829eb99a15e01a13fc71915cf33acc71ccb346df42253c01e11",
+                            "size": 712298
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.5/fnmonitor-2.41.5-arm.fpk",
+                            "sha256": "9bc8487a27f4c303e00900f1c3898f8053a0921c64381936b0f050afa910b03d",
+                            "size": 712296
+                        }
+                    }
+                },
                 "2.41.4": {
                     "changelog": "v2.41.4 版本号回退值清理<br>① 移除后端硬编码的版本回退值：版本号唯一数据源为 manifest，读取不到时按「未知版本」处理，不再因回退值停留在旧版本而误报「发现新版本」<br>② 清理 manifest 更新日志里误粘的 changelog= 前缀",
                     "updated_at": "2026-11-06",
