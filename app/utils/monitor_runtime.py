@@ -71,6 +71,9 @@ class MonitorRuntime:
         self._dedup_lock = threading.Lock()
         self._dedup: Dict[str, float] = {}
         self._dedup_window = int(self.cfg.get("dedup_window") or 300)
+        # 日志节流：轮询器每轮都会命中「未勾选的事件」，逐条打印会把日志刷满
+        self._log_lock = threading.Lock()
+        self._log_ts: Dict[str, float] = {}
         # 推送队列：采集线程只负责入队，HTTP 推送交给独立线程。
         # 之前是在轮询线程里同步发 HTTP，一个渠道慢 / 失败就会把后续事件全堵住，
         # 表现为「事情已经发生，推送却晚到十几秒」。
@@ -89,6 +92,20 @@ class MonitorRuntime:
         self._ensure_push_thread()
 
     # ---------- 事件统一处理：event_type + event_data → 推送 ----------
+    _LOG_INTERVAL = 600  # 同类提示最多 10 分钟一条，避免轮询器把日志刷满
+
+    def _log_throttled(self, key: str, msg: str) -> None:
+        """按 key 节流打印：轮询每轮都会重复命中的提示只保留首条（及每 10 分钟一条）。"""
+        now = time.time()
+        with self._log_lock:
+            if now - self._log_ts.get(key, 0.0) < self._LOG_INTERVAL:
+                return
+            self._log_ts[key] = now
+            if len(self._log_ts) > 200:
+                cutoff = now - self._LOG_INTERVAL
+                self._log_ts = {k: v for k, v in self._log_ts.items() if v >= cutoff}
+        print(msg)
+
     def _on_event(self, event_type: str, event_data: Dict[str, Any]) -> None:
         """所有轮询器拿到事件后都走这里：白名单 → 去重 → 聚合 / 即时推送。"""
         # 白名单检查：空列表 = 一条都不推送（与「清空」按钮语义一致）
@@ -98,8 +115,9 @@ class MonitorRuntime:
         allowed = {str(x) for x in monitor_events}
         if event_type not in allowed and "VM" not in str(event_type).upper():
             # 动态 VM 事件（CREATE_VM / START_VM 等）放行，其余按白名单丢弃
-            print("[fnmonitor][monitor] 事件被白名单丢弃：%s（已选 %d 项）"
-                  % (event_type, len(allowed)))
+            self._log_throttled("drop:%s" % event_type,
+                                "[fnmonitor][monitor] 事件被白名单丢弃：%s（已选 %d 项，同类提示 10 分钟内只打一条）"
+                                % (event_type, len(allowed)))
             return
         # 同一次登录/断开可能被主日志库与 SSH journal 各抓一遍，
         # 按「类型+用户+IP」去重，_dedup_window 时间窗内的重复事件只推一次
@@ -110,7 +128,8 @@ class MonitorRuntime:
             fp = "%s|%s|%s" % (event_type, user, ip)
             with self._dedup_lock:
                 if now - self._dedup.get(fp, 0) < self._dedup_window:
-                    print("[fnmonitor][monitor] 重复事件已跳过：%s %s@%s" % (event_type, user, ip))
+                    self._log_throttled("dedup:%s" % fp,
+                                        "[fnmonitor][monitor] 重复事件已跳过：%s %s@%s" % (event_type, user, ip))
                     return
                 self._dedup[fp] = now
                 if len(self._dedup) > 200:

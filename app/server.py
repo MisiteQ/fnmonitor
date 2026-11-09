@@ -1490,7 +1490,13 @@ def get_rapl_power():
 
     返回 {"package": w, "core": w, "uncore": w, "dram": w, "ok": bool, "total": w}；
     RAPL 不可用（非 Intel / 内核未挂载）时返回 {"ok": False}。
-    函数内两次读数差分（间隔 0.25s），不依赖跨请求状态，可安全放进缓存。
+    函数内两次读数差分（间隔 1 秒），不依赖跨请求状态，可安全放进缓存。
+
+    注意：powercap 的 energy_uj 刷新粒度通常就是 1 秒，用 0.25s 窗口时两次读数
+    可能落在同一个刷新周期内 → 差值为 0，或跨周期时读到「整整 1 秒的能量 ÷ 0.25s」，
+    功耗会虚高成 4 倍（issue #28 实测 RAPL 65W / 估算 17W）。这里固定 1 秒窗口，
+    并用 monotonic 实测间隔；若所有域在窗口内都没有增量，再等一个窗口重测，
+    仍无增量则判定粒度更粗、直接回退估算，绝不用短窗口除整周期能量。
     """
     base = _RAPL_BASE
     if not os.path.isdir(os.path.join(base, "intel-rapl:0")):
@@ -1513,15 +1519,33 @@ def get_rapl_power():
     e1 = sample()
     if not e1:
         return {"ok": False}
-    time.sleep(0.25)
+    t0 = time.monotonic()
+    time.sleep(1.0)
     e2 = sample()
-    watts = {}
-    for k in ("package", "core", "uncore", "dram"):
-        if k in e1 and k in e2:
-            diff = e2[k] - e1[k]
-            if diff < 0:  # 计数器回绕
-                diff += _rapl_energy_max(paths[k])
-            watts[k] = round(diff / 0.25 / 1e6, 2)
+    dt = max(0.5, time.monotonic() - t0)
+
+    def _watts(a, b, window):
+        out = {}
+        for k in ("package", "core", "uncore", "dram"):
+            if k in a and k in b:
+                diff = b[k] - a[k]
+                if diff < 0:  # 计数器回绕
+                    diff += _rapl_energy_max(paths[k])
+                out[k] = diff / window / 1e6
+        return out
+
+    watts = _watts(e1, e2, dt)
+    if watts and all(v == 0 for v in watts.values()):
+        # 1 秒窗口内所有域都没有增量：刷新粒度更粗（部分服务器/虚拟化平台），
+        # 再等一个窗口；仍无增量就放弃 RAPL（回退估算），而不是返回 0W。
+        t0 = time.monotonic()
+        time.sleep(1.0)
+        e3 = sample()
+        dt = max(0.5, time.monotonic() - t0)
+        watts = _watts(e2, e3, dt)
+        if all(v == 0 for v in watts.values()):
+            return {"ok": False}
+    watts = {k: round(v, 2) for k, v in watts.items()}
     if not watts or "package" not in watts:
         return {"ok": False}
     # 注意：package（封装）域本身已包含 core（核心/PP0）与 uncore（非核心/PP1），
@@ -1531,6 +1555,99 @@ def get_rapl_power():
     watts["ok"] = True
     watts["total"] = round(total, 2)
     return watts
+
+
+# 单盘典型功耗：机械盘按设置值（默认 8W），固态/闪存盘固定按 2.5W 计。
+# 以前所有盘都乘同一个值，全闪 NAS 的硬盘功耗会被高估数倍（issue #28）。
+_SSD_TYPICAL_W = 2.5
+_ROTATIONAL_CACHE = {}
+
+
+def start_thread_watchdog():
+    """后台线程 CPU 看门狗（issue #28）。
+
+    每 30 秒按 /proc/self/task/<tid>/stat 统计各线程 CPU 占用；同一线程连续 3 次
+    超过 80% 单核时，把线程名与调用栈打印到应用日志。只诊断、不杀线程，
+    避免误伤正常的长耗时采集。没有 /proc 的平台直接跳过。
+    """
+    if not os.path.isdir("/proc/self/task"):
+        return None
+
+    def _read_cpu():
+        out = {}
+        try:
+            tids = os.listdir("/proc/self/task")
+        except OSError:
+            return out
+        for tid in tids:
+            try:
+                with open("/proc/self/task/%s/stat" % tid, "r") as f:
+                    raw = f.read()
+                # 第 14/15 字段是 utime/stime；comm 里可能有空格与括号，从最后一个 ')' 切
+                fields = raw[raw.rindex(")") + 2:].split()
+                out[tid] = int(fields[11]) + int(fields[12])
+            except Exception:
+                continue
+        return out
+
+    def _thread_name(tid):
+        try:
+            with open("/proc/self/task/%s/comm" % tid, "r") as f:
+                return f.read().strip()
+        except Exception:
+            return "?"
+
+    def _run():
+        hz = float(os.sysconf("SC_CLK_TCK")) if hasattr(os, "sysconf") else 100.0
+        prev, prev_t = _read_cpu(), time.monotonic()
+        hot = {}
+        while True:
+            time.sleep(30)
+            cur = _read_cpu()
+            now = time.monotonic()
+            dt, prev_t = now - prev_t, now
+            if dt <= 0:
+                prev = cur
+                continue
+            frames = sys._current_frames()
+            for tid, tick in cur.items():
+                pct = (tick - prev.get(tid, tick)) / hz / dt * 100.0
+                if pct < 80.0:
+                    hot.pop(tid, None)
+                    continue
+                hot[tid] = hot.get(tid, 0) + 1
+                if hot[tid] < 3:
+                    continue
+                hot[tid] = 0
+                frame = frames.get(int(tid))
+                stack = "".join(traceback.format_stack(frame)[-8:]) if frame else "(无栈)"
+                print("[fnmonitor][watchdog] 线程 %s (TID %s) 持续占用 %.0f%% CPU，栈：\n%s"
+                      % (_thread_name(tid), tid, pct, stack))
+                sys.stdout.flush()
+            prev = cur
+
+    t = threading.Thread(target=_run, name="fnm-watchdog", daemon=True)
+    t.start()
+    return t
+
+
+def disk_is_ssd(name):
+    """按 /sys/block/<dev>/queue/rotational 判断是否固态（0=SSD，1=HDD）。
+    NVMe 一律算固态；读不到（权限/无此盘）按机械盘处理，与旧行为一致。"""
+    if not name:
+        return False
+    if str(name).startswith("nvme"):
+        return True
+    cached = _ROTATIONAL_CACHE.get(name)
+    if cached is not None:
+        return cached
+    try:
+        with open("/sys/block/%s/queue/rotational" % name, "r") as f:
+            ssd = f.read().strip() == "0"
+    except Exception:
+        return False
+    _ROTATIONAL_CACHE[name] = ssd
+    return ssd
 
 
 # ===================== 功耗估算模型（RAPL 不可用时回退） =====================
@@ -10435,11 +10552,14 @@ class Collector(threading.Thread):
         try:
             if not _skip("power") and now - self._last_power_ts >= 10:
                 # 活动硬盘数：硬盘详情每 60 秒标注 state；未知(unknown)按活动计，
-                # 与旧行为一致，明确 standby 的盘才剔除
-                disks_active = sum(1 for d in (self._last_disks_detail or [])
-                                   if d.get("state") != "standby")
+                # 与旧行为一致，明确 standby 的盘才剔除。固态与机械单盘功耗差距大，
+                # 按介质分别累计（全闪机器不再按机械盘 8W/块 高估）。
+                _live_disks = [d for d in (self._last_disks_detail or [])
+                               if d.get("state") != "standby"]
+                disks_active = len(_live_disks)
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
-                disks_w = round(disks_active * disk_w_unit, 2)
+                disks_w = round(sum(_SSD_TYPICAL_W if disk_is_ssd(d.get("name")) else disk_w_unit
+                                    for d in _live_disks), 2)
                 idr = self._idrac_fast()
                 if idr and _nz(idr.get("power_watts")) is not None:
                     self._last_power = {
@@ -10472,7 +10592,7 @@ class Collector(threading.Thread):
                             est_w = estimate_power(
                                 cpu_percent, disks_active, nics_active,
                                 float(self.config.get("power_tdp_w", 65)),
-                                disk_w_unit,
+                                (disks_w / disks_active) if disks_active else disk_w_unit,
                                 float(self.config.get("power_nic_fixed_w", 5)),
                             )
                             self._last_power = {"ok": True, "total": est_w, "source": "estimated",
@@ -11539,7 +11659,9 @@ class MonitorApp:
                 if path == "/api/monitor/diagnostics":
                     # 权限探测：把 monitor cfg 里的数据源路径都扫一遍
                     if _MONITOR_RUNTIME_AVAILABLE and _access_diag_mod is not None:
-                        _mc = config.get("monitor") or {}
+                        # monitor 配置单独存于 monitor.json，不在 app.config 里；
+                        # 这里曾写成未定义的 config，导致该接口 100% NameError（issue #28）
+                        _mc = (load_config(app._cfg_dir) or {}).get("monitor") or {}
                         try:
                             self._json(_access_diag_mod.run_all(
                                 logger_db_path=_mc.get("logger_db_path", ""),
@@ -12237,7 +12359,7 @@ class MonitorApp:
                     self.restart_monitor_runtime(mon_new)
                 elif self._monitor_runtime is not None:
                     # 停止同样放后台：关监控后立刻返回「已关闭」，不让保存按钮等待线程退出
-                    threading.Thread(target=self._monitor_runtime.stop, daemon=True).start()
+                    threading.Thread(target=self._monitor_runtime.stop, name="MonitorStop", daemon=True).start()
                     print("[fnmonitor] 日志事件监控已关闭，轮询器正在后台停止")
             except Exception as exc:
                 print("[fnmonitor] monitor runtime 启停异常：%s" % exc)
@@ -14409,7 +14531,8 @@ class BoundedHTTPServerMixin:
                 pass
             self.shutdown_request(request)
             return
-        t = threading.Thread(target=self._slot_run, args=(request, client_address, ip), daemon=True)
+        t = threading.Thread(target=self._slot_run, args=(request, client_address, ip),
+                             name="http-%s" % ip, daemon=True)
         try:
             t.start()
         except Exception:
@@ -14627,6 +14750,9 @@ def main():
                 print("[fnmonitor] 勿扰汇总检查异常（忽略）：%s" % _dnd_e)
 
     threading.Thread(target=_dnd_watch_loop, name="NotifyDndWatch", daemon=True).start()
+
+    # 线程 CPU 看门狗：长期占满单核时把线程名与栈打进日志（issue #28）
+    start_thread_watchdog()
 
     def shutdown(sig, frame):
         app.collector.stop()

@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.0/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.1/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.1": {
+                    "changelog": "v2.42.1 后台线程单核 100% 治理 · 功耗读数校准 · 诊断接口修复<br>① 新增线程 CPU 看门狗：每 30 秒扫描各线程占用，同一线程连续 3 次 >80% 单核时把线程名与调用栈写入日志，定位「某后台线程独占单核」不再靠猜；补齐 HTTP 工作线程、MonitorStop 等未命名线程<br>② 功耗读数不再虚高约 4 倍：RAPL energy_uj 实际刷新粒度约 1 秒，原 0.25 秒差分窗口会把 1 秒能量当 0.25 秒计算；现改为 1 秒窗口 + monotonic 实测时长，无增量时重测一次，仍无数据则回退 TDP 估算<br>③ 硬盘功耗按介质计算：通过 /sys/block/*/queue/rotational 与 NVMe 前缀识别 SSD / HDD，全闪机器不再按每块 8W 机械盘估算<br>④ 修复 /api/monitor/diagnostics 必现 NameError：改为读取 monitor.json 的 monitor 段，诊断信息可正常返回<br>⑤ 日志去噪：「事件被白名单丢弃」「重复事件已跳过」等每轮必现提示改为同类 10 分钟一条",
+                    "updated_at": "2026-11-09",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.1/fnmonitor-2.42.1-x86.fpk",
+                            "sha256": "9b2671edc828c178c2d808f474e8caf83ac616d9a8410662ef387444cada5067",
+                            "size": 721931
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.1/fnmonitor-2.42.1-arm.fpk",
+                            "sha256": "e5daaeae90317def6cf1a9d13726fb63c4d0fe1b3e37ee646b6eca8e80943e1e",
+                            "size": 721932
+                        }
+                    }
+                },
                 "2.42.0": {
                     "changelog": "v2.42.0 UPS 识别加固与常见品牌适配<br>① 修复 fnOS 中正常工作的 UPS 在 fnmonitor 识别不到：upsc 改为多目标探测（设置中的 NUT 主机/端口 → /etc/nut/upsd.conf 回环 LISTEN → 127.0.0.1:3493 → localhost），兼容自定义端口与非默认配置<br>② 修复实例名解析错误：upsc -L 的「name: 描述」不再把描述当成实例名<br>③ 首页不再把采集失败误显示为「UPS 未启用」，改为显示真实错误与处理提示<br>④ 新增瓦力方程 / APC / 伊顿 / CyberPower / 山特 / 科士达 / 雷迪司 / Tripp Lite / 维谛 / 台达 / 易事特 / 科华 / 华为 / 正泰 / 德力西 / 奥普森等品牌识别，适配 HID、Megatec Q1 与三相 UPS 变量别名<br>⑤ 修复市电切换瞬间 0V 帧清空全部读数<br>⑥ 设置页新增 NUT 主机/端口与「识别诊断」：upsc 路径、目标探测、upsd 监听、ups.conf 实例与驱动、USB VID:PID 与处理建议",
                     "updated_at": "2026-11-09",
