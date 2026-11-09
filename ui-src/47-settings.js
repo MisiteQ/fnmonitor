@@ -1138,8 +1138,12 @@ function renderUps(card) {
       <button class="btn sm" type="button" data-ref="refresh">${ic('refresh')} 重新扫描</button>
     </div></div>
     <div class="set-row inline"><div><div class="lbl">采集间隔</div><div class="hint">upsc 单次 0.1–1 秒；最快 3 秒、最慢 60 秒</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="3" max="60" data-ref="interval" style="width:72px"><span class="faint">秒</span></div></div>
-    <details class="adv" hidden><summary class="set-sub" style="cursor:pointer">告警设置（事件推送 / 去抖 / 限流）</summary>
+    <details class="adv" hidden><summary class="set-sub" style="cursor:pointer">高级设置（NUT 连接 / 告警推送）</summary>
       <div style="padding:10px 0 2px 0;display:flex;flex-direction:column;gap:12px">
+        <div class="set-row"><div><div class="lbl">NUT 地址 / 端口</div><div class="hint">留空自动探测（用户配置 → /etc/nut/upsd.conf → 127.0.0.1:3493）；跨机监控或自定义 upsd 时填写</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center">
+          <input class="textfield mono" type="text" placeholder="自动" data-ref="nutHost" style="width:140px">
+          <input class="textfield mono" type="number" min="0" max="65535" placeholder="3493" data-ref="nutPort" style="width:90px">
+        </div></div>
         <div class="set-row inline"><div><div class="lbl">告警事件推送</div><div class="hint">边沿事件（市电中断/恢复等）走已配置的通知渠道；关闭后事件只记不推送</div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="true" data-ref="swNotif"></button></div></div>
         <div class="set-row"><div><div class="lbl">告警事件选择</div><div class="hint">默认全选；取消勾选后对应事件即使发生也不推送</div></div><div class="ctl"><div class="up-evs" data-ref="evs"></div></div></div>
         <div class="set-row inline"><div><div class="lbl">同类事件去抖</div><div class="hint">同一事件多少秒内只发一次（防反复掉线）；0 = 不去抖</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="0" max="3600" data-ref="debounce" style="width:72px"><span class="faint">秒</span></div></div>
@@ -1148,10 +1152,11 @@ function renderUps(card) {
     </details>
     <div class="set-row"><div class="ctl" style="gap:8px"><button class="btn primary" type="button" data-ref="save">保存设置</button><span class="hint" data-ref="hMsg"></span></div></div>
     <div class="up-live" data-ref="live"></div>
+    <div data-ref="diag" style="margin-top:10px"></div>
   `;
   const x = collect(card);
   // ⚠️ 数据源对象（必须在事件绑定之前声明）
-  const f = { enabled: 0, ups_name: '', poll_interval: 5, notify_enabled: 1,
+  const f = { enabled: 0, ups_name: '', nut_host: '', nut_port: 0, poll_interval: 5, notify_enabled: 1,
               notify_debounce_s: 60, notify_max_per_min: 8, notify_events: [] };
   let cfg = null, upscNames = [], evSel = new Set();
 
@@ -1159,6 +1164,8 @@ function renderUps(card) {
   x.swOn.addEventListener('click', () => { f.enabled = f.enabled ? 0 : 1; x.swOn.setAttribute('aria-checked', String(!!f.enabled)); });
   x.swNotif.addEventListener('click', () => { f.notify_enabled = f.notify_enabled ? 0 : 1; x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled)); });
   x.name.addEventListener('change', () => { f.ups_name = x.name.value; });
+  x.nutHost.addEventListener('input', () => { f.nut_host = x.nutHost.value.trim(); });
+  x.nutPort.addEventListener('input', () => { f.nut_port = Math.max(0, Math.min(65535, +x.nutPort.value || 0)); });
   x.interval.addEventListener('input', () => { f.poll_interval = Math.max(3, Math.min(60, +x.interval.value || 5)); });
   x.debounce.addEventListener('input', () => { f.notify_debounce_s = Math.max(0, Math.min(3600, +x.debounce.value || 0)); });
   x.maxMin.addEventListener('input', () => { f.notify_max_per_min = Math.max(1, Math.min(60, +x.maxMin.value || 8)); });
@@ -1179,6 +1186,31 @@ function renderUps(card) {
     paintEvs();
   });
 
+  // --- 识别诊断 ---
+  function paintDiag(d) {
+    if (!d || !d.ok) { x.diag.innerHTML = (d && d.error) ? `<div class="note crit">${esc(d.error)}</div>` : ''; return; }
+    const tg = (d.targets || []).map(t => `<li>${esc(t.target)}：${t.ok ? ('连接正常' + (t.names && t.names.length ? '（' + t.names.map(esc).join(' / ') + '）' : '，无实例')) : esc(t.error || '失败')}</li>`).join('');
+    const usb = (d.usb || []).map(u => `<li>${esc(u.brand || u.mfr || 'USB 设备')} ${esc(u.product || '')} <span class="faint mono">${esc(u.vid)}:${esc(u.pid)}${u.hid ? ' · HID' : ''}</span></li>`).join('');
+    const sug = (d.suggestions || []).map(s => `<div class="hint">· ${esc(s)}</div>`).join('');
+    const cfgTxt = (d.ups_conf || []).map(c => `${c.name}（${c.driver || '?'}）`).join('、');
+    x.diag.innerHTML = `<div class="note warn"><div style="display:flex;align-items:center;gap:8px"><b>UPS 识别诊断</b><button class="btn sm" type="button" data-diag-close style="margin-left:auto">收起</button></div>
+      <div class="hint">upsc：${esc(d.upsc || '未找到')}${d.upsd_listen && d.upsd_listen.length ? ` · upsd 监听：${esc(d.upsd_listen.join('，'))}` : ''}${cfgTxt ? ` · 系统已配置：${esc(cfgTxt)}` : ''}</div>
+      ${tg ? `<div class="hint" style="margin-top:6px">NUT 连接</div><ul class="hint" style="margin:2px 0 0 16px">${tg}</ul>` : ''}
+      <div class="hint" style="margin-top:6px">系统 USB 上的疑似 UPS</div>
+      ${usb ? `<ul class="hint" style="margin:2px 0 0 16px">${usb}</ul>` : '<div class="hint">未在 /sys 发现疑似 UPS 的 USB 设备</div>'}
+      ${sug ? `<div style="margin-top:6px">${sug}</div>` : ''}
+    </div>`;
+  }
+  async function loadDiag() {
+    x.diag.innerHTML = '<div class="note info">正在诊断…</div>';
+    try { paintDiag(await API.get('/api/ups/diag')); }
+    catch (e) { x.diag.innerHTML = `<div class="note crit">诊断失败：${esc(String(e.message || e).slice(0, 100))}</div>`; }
+  }
+  x.diag.addEventListener('click', e => {
+    if (e.target.closest('[data-diag-close]')) x.diag.innerHTML = '';
+    else if (e.target.closest('[data-diag]')) loadDiag();
+  });
+
   // --- 实时状态 ---
   let liveTimer = null;
   function renderLive() {
@@ -1188,7 +1220,7 @@ function renderUps(card) {
         return;
       }
       if (!d.ok && d.stale && d.error) {
-        x.live.innerHTML = `<div class="note crit"><b>UPS 连接异常</b>：${esc(d.error)}${d.hint ? `<div class="hint">${esc(d.hint)}</div>` : ''}</div>`;
+        x.live.innerHTML = `<div class="note crit"><b>UPS 连接异常</b>：${esc(d.error)}${d.hint ? `<div class="hint">${esc(d.hint)}</div>` : ''}<div style="margin-top:6px"><button class="btn sm" type="button" data-diag>识别诊断</button></div></div>`;
         return;
       }
       const lv = d.live || {}, dv = d.device || {}, labels = lv.labels || [];
@@ -1202,9 +1234,11 @@ function renderUps(card) {
         ['电池电压', fld(lv.bat_v, ' V', 2)], ['电池温度', fld(lv.temp, ' ℃', 1)],
         ['输入频率', fld(lv.in_hz, ' Hz', 1)],
       ];
+      if (lv.out_va != null) grid.push(['视在功率', fld(lv.out_va, ' VA', 0)]);
+      const devName = (dv.brand || dv.mfr || '') + ' ' + (dv.model || dv.name || '');
       x.live.innerHTML = `
         <div class="up-head">
-          <span class="up-dev">${esc((dv.mfr ? dv.mfr + ' ' : '') + (dv.model || dv.name || 'UPS'))}</span>
+          <span class="up-dev">${esc(devName.trim() || 'UPS')}${dv.access ? `<small class="faint"> · ${esc(dv.access)}</small>` : ''}</span>
           ${labels.length ? `<span class="pill ${cls}">${labels.map(esc).join(' · ')}</span>` : ''}
           <span class="faint" style="margin-left:auto">${new Date(d.ts * 1000).toLocaleTimeString()}</span>
         </div>
@@ -1224,6 +1258,8 @@ function renderUps(card) {
     f.notify_debounce_s = cfg.notify_debounce_s != null ? cfg.notify_debounce_s : 60;
     f.notify_max_per_min = cfg.notify_max_per_min != null ? cfg.notify_max_per_min : 8;
     f.ups_name = cfg.ups_name || '';
+    f.nut_host = cfg.nut_host || '';
+    f.nut_port = cfg.nut_port || 0;
     evSel = new Set(cfg.notify_events || []);
     paintEvs();
     // DOM 层：开关 aria-checked
@@ -1231,6 +1267,8 @@ function renderUps(card) {
     x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled));
     // DOM 层：输入框 value
     x.interval.value = f.poll_interval;
+    x.nutHost.value = f.nut_host;
+    x.nutPort.value = f.nut_port || '';
     x.debounce.value = f.notify_debounce_s;
     x.maxMin.value = f.notify_max_per_min;
     // DOM 层：下拉框
@@ -1265,6 +1303,7 @@ function renderUps(card) {
     try {
       const lst = await API.get('/api/ups/list');
       upscNames = lst.ups_list || [];
+      if (!lst.ok) paintDiag(lst.diag || null);
     } catch (e) {}
     sync();
   }
@@ -1274,6 +1313,8 @@ function renderUps(card) {
     const body = {
       enabled: +f.enabled,
       ups_name: x.name.value || '',        // 用户可能还没 change，读当前 value 最保险
+      nut_host: x.nutHost.value.trim(),
+      nut_port: +x.nutPort.value || 0,
       poll_interval: +f.poll_interval || 5,
       notify_enabled: +f.notify_enabled,
       notify_events: [...evSel],
@@ -1301,8 +1342,8 @@ function renderUps(card) {
       upscNames = lst.ups_list || [];
       cfg = cfg || {};
       sync();
-      if (!lst.ok) _setTxt(x.hMsg, lst.hint || lst.error);
-      else toast(`发现 ${upscNames.length} 台 UPS`, { icon: 'check', ms: 3000 });
+      if (!lst.ok) { _setTxt(x.hMsg, lst.hint || lst.error); paintDiag(lst.diag || null); }
+      else { x.diag.innerHTML = ''; toast(`发现 ${upscNames.length} 台 UPS`, { icon: 'check', ms: 3000 }); }
     } catch (e) { toast('扫描失败：' + String(e.message || e).slice(0, 60), { icon: 'alert' }); }
     finally { x.refresh.disabled = false; x.refresh.innerHTML = `${ic('refresh')} 重新扫描`; }
   });

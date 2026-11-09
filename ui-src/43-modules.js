@@ -151,7 +151,7 @@ defineModule({
     body.innerHTML = `<div class="ups">
       <div class="card pad tap" data-sheet="ups" tabindex="0" role="button">
         <div class="label">UPS 状态<span class="pill" style="margin-left:auto" data-ref="stPill"></span></div>
-        <div class="dnum huge" style="margin-top:18px"><span class="dm" data-ref="outW"></span><span class="unit">W</span></div>
+        <div class="dnum huge" style="margin-top:18px"><span class="dm" data-ref="outW"></span><span class="unit" data-ref="outU">W</span></div>
         <div class="sub" style="margin-top:6px" data-ref="sub">未检测到 UPS</div>
         <div class="chart-mini" style="margin-top:20px;height:56px" data-ref="mini"></div>
       </div>
@@ -171,10 +171,18 @@ defineModule({
       try { m.upsSnap = await API.get('/api/ups'); } catch (e) { m.upsSnap = null; }
     }
     const d = m.upsSnap;
-    if (!d || !d.ok || d.state === 'off') {
+    if (!d || d.state === 'off') {
       dot(x.outW).set(null); dot(x.outV).set(null); dot(x.chg).set(null); dot(x.load).set(null); dot(x.rt).set(null);
       setText(x.stPill, d && d.upsc ? 'UPS 未启用' : '未检测到 UPS');
       setText(x.sub, d && d.upsc ? '开关未开启' : '需启用飞牛「UPS 电源管理」安装 nut-client');
+      setText(x.outLbl, ''); setText(x.chgLbl, ''); setText(x.loadLbl, ''); setText(x.rtLbl, '');
+      return;
+    }
+    if (!d.ok) {
+      // 已开启但采集失败：不能伪装成“未启用”，否则用户会以为模块没开
+      dot(x.outW).set(null); dot(x.outV).set(null); dot(x.chg).set(null); dot(x.load).set(null); dot(x.rt).set(null);
+      setHTML(x.stPill, '<span class="pill crit">UPS 连接异常</span>');
+      setText(x.sub, (d.error || '读取 UPS 失败') + (d.hint ? ' · ' + d.hint : ''));
       setText(x.outLbl, ''); setText(x.chgLbl, ''); setText(x.loadLbl, ''); setText(x.rtLbl, '');
       return;
     }
@@ -182,8 +190,9 @@ defineModule({
     const labels = lv.labels || [];
     const cls = lv.st & 4 ? 'crit' : (lv.st & 1024 || lv.st & 64 ? 'warn' : 'ok');
     setHTML(x.stPill, `<span class="pill ${cls}">${labels.map(esc).join(' · ') || '市电正常'}</span>`);
-    dnum(x.outW, lv.out_w, F.int);
-    setText(x.sub, `${esc((dv.mfr || '') + (dv.model ? ' ' + dv.model : dv.name || 'UPS'))} · 输入 ${lv.in_v != null ? F.d1(lv.in_v) + ' V' : '--'}`);
+    dnum(x.outW, lv.out_w != null ? lv.out_w : lv.out_va, F.int);
+    setText(x.outU, lv.out_w != null ? 'W' : (lv.out_va != null ? 'VA' : 'W'));
+    setText(x.sub, `${esc((dv.brand || dv.mfr || '') + (dv.model ? ' ' + dv.model : (dv.brand || dv.mfr ? '' : dv.name || 'UPS')))} · 输入 ${lv.in_v != null ? F.d1(lv.in_v) + ' V' : '--'}`);
     dnum(x.outV, lv.out_v, F.d1); setText(x.outLbl, lv.out_a != null ? `电流 ${F.d1(lv.out_a)} A` : '');
     dnum(x.chg, lv.chg, F.int); setText(x.chgLbl, lv.bat_v != null ? `电池 ${F.d1(lv.bat_v)} V` : '');
     dnum(x.load, lv.load, F.int); setText(x.loadLbl, '额定容量 ' + (dv.va || '--'));

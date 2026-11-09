@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.41.5/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.0/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.0": {
+                    "changelog": "v2.42.0 UPS 识别加固与常见品牌适配<br>① 修复 fnOS 中正常工作的 UPS 在 fnmonitor 识别不到：upsc 改为多目标探测（设置中的 NUT 主机/端口 → /etc/nut/upsd.conf 回环 LISTEN → 127.0.0.1:3493 → localhost），兼容自定义端口与非默认配置<br>② 修复实例名解析错误：upsc -L 的「name: 描述」不再把描述当成实例名<br>③ 首页不再把采集失败误显示为「UPS 未启用」，改为显示真实错误与处理提示<br>④ 新增瓦力方程 / APC / 伊顿 / CyberPower / 山特 / 科士达 / 雷迪司 / Tripp Lite / 维谛 / 台达 / 易事特 / 科华 / 华为 / 正泰 / 德力西 / 奥普森等品牌识别，适配 HID、Megatec Q1 与三相 UPS 变量别名<br>⑤ 修复市电切换瞬间 0V 帧清空全部读数<br>⑥ 设置页新增 NUT 主机/端口与「识别诊断」：upsc 路径、目标探测、upsd 监听、ups.conf 实例与驱动、USB VID:PID 与处理建议",
+                    "updated_at": "2026-11-09",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.0/fnmonitor-2.42.0-x86.fpk",
+                            "sha256": "1aaf3a5ba2b44911523db70a8dac9d939e845ec1c46c2532f49124b312ccfafb",
+                            "size": 719850
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.0/fnmonitor-2.42.0-arm.fpk",
+                            "sha256": "e135865d29cf45c98e269dde0bcc6f0350603c84727814010262450f1521531e",
+                            "size": 719841
+                        }
+                    }
+                },
                 "2.41.5": {
                     "changelog": "v2.41.5 硬盘温度自动更新修复（贡献者 mhduiy）<br>① 温度缓存可正常过期：命中缓存不再刷新时间戳，90 秒 TTL 到期后真正重读，温度不再自首次读取后永久冻结<br>② NVMe 温度直读修复：兼容 hwmonN 直接挂在控制器目录的布局，不再全部退化为 smartctl 读取<br>③ 同盘温度口径统一：SMART 明细表优先使用与主页、告警同源的总览温度，消除同一块盘显示 55℃ / 56℃ 的不一致",
                     "updated_at": "2026-11-07",

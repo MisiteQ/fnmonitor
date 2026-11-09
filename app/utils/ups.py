@@ -28,6 +28,56 @@ UPS_BIT_LB = 1 << 2  # 低电量
 UPS_BIT_RB = 1 << 3  # 需换电池
 UPS_BIT_OVER = 1 << 10  # 超载
 
+# 非标准状态词 → NUT 标准词（部分国产 UPS / 兼容驱动会吐这些写法）
+UPS_STATUS_ALIAS = {
+    "ONLINE": "OL", "NORMAL": "OL", "MAINS": "OL", "AC": "OL",
+    "ONBATT": "OB", "ONBATTERY": "OB", "BATT": "OB", "BATTERY": "OB",
+    "LOWBATT": "LB", "LOW_BATTERY": "LB",
+    "CHARGING": "CHRG", "DISCHARGING": "DISCHRG",
+    "OVERLOAD": "OVER",
+    "REPLACEBATT": "RB", "REPLACEBATTERY": "RB", "BATTREPLACE": "RB",
+    "ONBYPASS": "BYPASS",
+}
+
+# NUT 配置目录（发行版 / 源码编译两种常见布局）
+NUT_CONF_DIRS = ("/etc/nut", "/usr/local/ups/etc", "/usr/local/etc/nut")
+NUT_DEFAULT_PORT = 3493
+
+# 常见 UPS 品牌识别表：(关键词, 中文品牌, 常见接入方式)
+# 关键词小写；英文按单词边界匹配，中文按子串匹配
+UPS_VENDOR_TABLE = [
+    (("wallecube", "瓦力方程", "瓦力"), "瓦力方程 WalleCube", "usbhid-ups（APC HID 兼容）"),
+    (("american power conversion", "apc", "schneider electric", "施耐德"), "APC / 施耐德", "usbhid-ups"),
+    (("eaton", "mge", "powerware", "伊顿"), "伊顿 Eaton", "usbhid-ups"),
+    (("cyberpower", "cps"), "CyberPower", "usbhid-ups"),
+    (("santak", "山特", "tg-box"), "山特 SANTAK", "usbhid-ups / nutdrv_qx"),
+    (("kstar", "科士达"), "科士达 KSTAR", "usbhid-ups / nutdrv_qx"),
+    (("reddis", "雷迪司"), "雷迪司 REDDIS", "nutdrv_qx"),
+    (("tripplite", "tripp lite"), "Tripp Lite", "usbhid-ups"),
+    (("vertiv", "liebert", "emerson", "维谛", "艾默生"), "维谛 Vertiv", "usbhid-ups / snmp-ups"),
+    (("delta", "台达"), "台达 Delta", "usbhid-ups / nutdrv_qx"),
+    (("east", "易事特"), "易事特 EAST", "nutdrv_qx"),
+    (("kelong", "科华"), "科华 KELONG", "nutdrv_qx"),
+    (("huawei", "华为"), "华为 Huawei", "snmp-ups"),
+    (("chint", "正泰"), "正泰 CHINT", "nutdrv_qx"),
+    (("delixi", "德力西"), "德力西 DELIXI", "nutdrv_qx"),
+    (("aoposen", "奥普森", "opti"), "奥普森 OPTI", "nutdrv_qx"),
+    (("legrand", "罗格朗"), "罗格朗 Legrand", "usbhid-ups"),
+    (("ugreen", "绿联"), "绿联 UGREEN", "usbhid-ups"),
+    (("zspace", "极空间"), "极空间 ZSpace", "usbhid-ups"),
+]
+
+# 已知 UPS 相关 USB VID（设备字符串缺失时也能认个大概）
+USB_VENDOR_IDS = {
+    "051d": "APC / 施耐德",
+    "0463": "伊顿 Eaton / MGE",
+    "0764": "CyberPower",
+    "09ae": "Tripp Lite",
+    "0665": "Cypress 通用（山特 / 科士达 / 雷迪司等 Megatec 兼容）",
+    "10c4": "Silicon Labs 串口桥（Megatec 兼容 UPS）",
+    "04b4": "Cypress 串口桥（Megatec 兼容 UPS）",
+}
+
 # Phase 1 基础事件（Phase 2 可扩展）
 UPS_EVENT_META = {
     "DEVICE_LOST": ("UPS 通信中断", "crit"),
@@ -49,6 +99,8 @@ UPS_EVENT_CHOICES = [
 UPS_DEFAULT = {
     "enabled": 0,
     "ups_name": "",
+    "nut_host": "",
+    "nut_port": 0,
     "poll_interval": 5,
     "notify_enabled": 1,
     "notify_events": list(UPS_EVENT_CHOICES),
@@ -94,10 +146,222 @@ def _clean_text(s, maxlen=64):
     return s
 
 
+def _clean_ident(s, maxlen=64):
+    """型号/序列号：去掉引号与 N/A 之类的占位值。"""
+    s = str(s or "").strip().strip("'\"")
+    if s.lower() in ("n/a", "na", "unknown", "none", "null", "0", "-"):
+        return ""
+    return _clean_text(s, maxlen)
+
+
+def _vendor_match(text):
+    """按厂商/型号/驱动名识别品牌 → {brand, access} 或 None。"""
+    low = str(text or "").lower()
+    if not low:
+        return None
+    for kws, brand, access in UPS_VENDOR_TABLE:
+        for kw in kws:
+            if kw.isascii():
+                if re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", low):
+                    return {"brand": brand, "access": access}
+            elif kw in low:
+                return {"brand": brand, "access": access}
+    return None
+
+
+def _read_sys(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _nut_conf(name):
+    """返回第一个存在的 NUT 配置文件路径；没有返回空串。"""
+    for d in NUT_CONF_DIRS:
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def _parse_upsd_listen():
+    """解析 upsd.conf 的 LISTEN → [(host, port)]。"""
+    out = []
+    p = _nut_conf("upsd.conf")
+    if not p:
+        return out
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.split("#", 1)[0].strip()
+                parts = line.split()
+                if len(parts) < 2 or parts[0].upper() != "LISTEN":
+                    continue
+                host = parts[1].strip("'\"")
+                port = NUT_DEFAULT_PORT
+                if len(parts) > 2:
+                    try:
+                        port = int(parts[2].strip("'\""))
+                    except Exception:
+                        port = NUT_DEFAULT_PORT
+                out.append((host, port))
+    except Exception:
+        pass
+    return out
+
+
+def _parse_ups_conf():
+    """解析 ups.conf → [{name, driver, port, desc}]。"""
+    out = []
+    p = _nut_conf("ups.conf")
+    if not p:
+        return out
+    try:
+        cur = None
+        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                m = re.match(r"^\[([^\]]+)\]$", line)
+                if m:
+                    cur = {"name": m.group(1).strip(), "driver": "", "port": "", "desc": ""}
+                    out.append(cur)
+                    continue
+                if cur is None or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip().lower()
+                if k in cur:
+                    cur[k] = v.strip().strip("'\"")
+    except Exception:
+        pass
+    return out
+
+
+def _nut_targets(cfg=None):
+    """可能的 upsc 连接目标（host[:port]），按优先级去重。
+
+    先用户配置，再系统 upsd.conf 的 LISTEN，最后回环兜底。
+    """
+    cfg = cfg or {}
+    host = str(cfg.get("nut_host") or "").strip()
+    try:
+        port = int(cfg.get("nut_port") or 0)
+    except Exception:
+        port = 0
+    if host and host.count(":") == 1 and host.rsplit(":", 1)[-1].isdigit():
+        h, p = host.rsplit(":", 1)
+        host, port = h, port or int(p)
+    if host:
+        # 显式配置时只连它，避免悄悄回落到本机造成“看起来能识别但不是这台”的误解
+        return ["%s:%d" % (host, port or NUT_DEFAULT_PORT)]
+    cand = []
+    others = []
+    for h, p in _parse_upsd_listen():
+        if h in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            cand.append(("127.0.0.1" if h in ("0.0.0.0", "::1") else h, p))
+        elif h:
+            others.append((h, p))
+    cand.append(("127.0.0.1", NUT_DEFAULT_PORT))
+    cand.append(("localhost", 0))
+    cand.extend(others)
+    seen, out = set(), []
+    for h, p in cand:
+        tgt = ("%s:%d" % (h, p)) if p else h
+        if tgt not in seen:
+            seen.add(tgt)
+            out.append(tgt)
+    return out
+
+
+def _parse_upsc_list(out):
+    """解析 upsc -l 输出。
+
+    标准格式是一行一个实例名；部分 NUT 版本/第三方封装会带 “name: 描述”，
+    这里兼容取冒号前的名字。
+    """
+    names, seen = [], set()
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("error"):
+            continue
+        cand = line
+        if ":" in line:
+            head = line.split(":", 1)[0].strip()
+            if re.match(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$", head):
+                cand = head
+        cand = cand.strip()
+        if not cand:
+            continue
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$", cand):
+            parts = cand.split()
+            cand = parts[-1] if parts else ""
+            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$", cand):
+                continue
+        if cand not in seen:
+            seen.add(cand)
+            names.append(cand)
+    return names
+
+
+def _norm_status_words(status):
+    """把非标准状态词归一化，去重保序。"""
+    out = []
+    for w in str(status or "").upper().split():
+        w = UPS_STATUS_ALIAS.get(w, w)
+        if w not in out:
+            out.append(w)
+    return out
+
+
+def _usb_ups_scan(limit=12):
+    """/sys 扫描疑似 UPS 的 USB 设备（只读，用于识别诊断）。"""
+    base = "/sys/bus/usb/devices"
+    out = []
+    try:
+        entries = sorted(os.listdir(base))
+    except Exception:
+        return out
+    for e in entries:
+        d = os.path.join(base, e)
+        vid = _read_sys(os.path.join(d, "idVendor"))
+        pid = _read_sys(os.path.join(d, "idProduct"))
+        if not vid or not pid:
+            continue
+        mfr = _read_sys(os.path.join(d, "manufacturer"))
+        prod = _read_sys(os.path.join(d, "product"))
+        known_vid = USB_VENDOR_IDS.get(vid.lower(), "")
+        v = _vendor_match(" ".join((mfr, prod)))
+        looks = bool(v or known_vid) or re.search(
+            r"(?<![a-z0-9])(ups|power|battery|inverter)(?![a-z0-9])",
+            (mfr + " " + prod).lower()) is not None
+        if not looks:
+            continue
+        has_hid = False
+        try:
+            for iface in os.listdir(d):
+                if iface.startswith(e + ":") and \
+                        _read_sys(os.path.join(d, iface, "bInterfaceClass")) == "03":
+                    has_hid = True
+                    break
+        except Exception:
+            pass
+        out.append({
+            "bus_dev": e, "vid": vid, "pid": pid,
+            "mfr": mfr, "product": prod, "hid": has_hid,
+            "brand": (v or {}).get("brand") or known_vid,
+        })
+    return out[:limit]
+
+
 def _upsc_path():
     """upsc 真实路径；找不到返回空串。"""
     for p in ("/usr/bin/upsc", "/bin/upsc", "/usr/sbin/upsc",
-              "/sbin/upsc", "/usr/local/bin/upsc"):
+              "/sbin/upsc", "/usr/local/bin/upsc", "/usr/local/ups/bin/upsc",
+              "/usr/lib/nut/upsc"):
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     w = shutil.which("upsc")
@@ -154,6 +418,15 @@ def ups_normalize(data, base=None):
         cfg["enabled"] = _onoff(data["enabled"])
     if "ups_name" in data:
         cfg["ups_name"] = _clean_text(str(data.get("ups_name") or ""), 64)
+    if "nut_host" in data:
+        host = _clean_text(str(data.get("nut_host") or ""), 128)
+        cfg["nut_host"] = host if re.match(r"^[A-Za-z0-9_.:\[\]-]*$", host) else ""
+    if "nut_port" in data:
+        try:
+            n = int(float(data.get("nut_port") or 0))
+        except Exception:
+            n = 0
+        cfg["nut_port"] = max(0, min(65535, n))
     if "poll_interval" in data:
         try:
             n = int(float(data["poll_interval"]))
@@ -209,70 +482,92 @@ def _write_json(path, data):
 # ---------------------------------------------------------------------------
 # NUT 采集
 # ---------------------------------------------------------------------------
-def ups_list():
-    """发现 UPS 实例名。"""
+def ups_list(cfg=None):
+    """发现 UPS 实例名。
+
+    依次尝试：用户配置的 NUT 地址 → 系统 upsd.conf 的 LISTEN → 回环兜底。
+    兼容 “name: 描述” 形式的列表输出，避免把描述当实例名。
+    """
     exe = _upsc_path()
     if not exe:
         raise UpsError("no_nut", "未找到 upsc 命令",
                        "系统未安装 NUT；飞牛「UPS 电源管理」启用后即有")
-    rc, out, err = _run([exe, "-l"], timeout=8)
-    if rc != 0:
-        low = (err + out).lower()
-        if "connection refused" in low or "cannot connect" in low:
-            raise UpsError("no_nut", "连不上 NUT 服务（127.0.0.1:3493）",
-                           "nut-server 未运行；飞牛关掉 UPS 电源管理后 NUT 会随之停止")
-        raise UpsError("error", "upsc -l 失败：%s" % (err.strip() or out.strip())[:200])
-    names = []
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
+    errs, connected = [], False
+    for tgt in _nut_targets(cfg):
+        rc, out, err = _run([exe, "-l"] + ([tgt] if tgt else []), timeout=8)
+        if rc == 0:
+            connected = True
+            names = _parse_upsc_list(out)
+            if names:
+                return names
+            errs.append("%s：无实例" % (tgt or "默认"))
             continue
-        names.append(line.rsplit(":", 1)[-1].strip() if ":" in line else line)
-    names = [n for n in names if n]
-    if not names:
+        low = (err + out).lower()
+        if "connection refused" in low or "cannot connect" in low or "no route" in low:
+            errs.append("%s：连不上" % (tgt or "默认"))
+            continue
+        errs.append("%s：%s" % (tgt or "默认", (err.strip() or out.strip())[:100]))
+    if connected:
         raise UpsError("no_device", "NUT 在运行但未发现 UPS",
-                       "UPS 可能没接 USB 线，或驱动未启动")
-    return names
+                       "ups.conf 里没有可用实例；UPS 可能没接 USB 线，或驱动未启动")
+    conf = _parse_ups_conf()
+    if conf:
+        raise UpsError(
+            "no_nut", "连不上 NUT 服务（upsd 未监听）",
+            "系统已配置 UPS：%s；请确认飞牛「UPS 电源管理」已开启、nut-server 正在运行"
+            % "、".join(x["name"] for x in conf))
+    raise UpsError("no_nut", "连不上 NUT 服务（upsd 未监听）",
+                   "nut-server 未运行；飞牛关掉 UPS 电源管理后 NUT 会随之停止（%s）"
+                   % "；".join(errs)[:240])
 
 
 def ups_pick(cfg):
     """按配置优先，否则第一台。返回 (名称, 全部名称)。"""
-    names = ups_list()
+    names = ups_list(cfg)
     want = str((cfg or {}).get("ups_name") or "").strip()
     if want and want in names:
         return want, names
     return names[0], names
 
 
-def ups_read_vars(name):
+def ups_read_vars(name, cfg=None):
     """读全量变量。失败抛 UpsError。"""
     exe = _upsc_path()
     if not exe:
         raise UpsError("no_nut", "未找到 upsc 命令")
-    rc, out, err = _run([exe, name], timeout=8)
-    if rc != 0:
+    last = None
+    for tgt in _nut_targets(cfg):
+        arg = ("%s@%s" % (name, tgt)) if tgt else name
+        rc, out, err = _run([exe, arg], timeout=8)
+        if rc == 0:
+            data = {}
+            for line in out.splitlines():
+                line = line.rstrip()
+                if not line or ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                k = k.strip()
+                if not k or " " in k:
+                    continue
+                data[k] = v.strip()
+            if data:
+                return data
+            last = UpsError("error", "UPS 返回空数据")
+            continue
         low = (err + out).lower()
-        if "connection refused" in low:
-            raise UpsError("no_nut", "连不上 NUT 服务")
         if "data stale" in low or "driver not connected" in low:
             raise UpsError("stale", "驱动与 UPS 通信中断",
-                           "USB 线可能松动，或驱动进程已退出")
-        if "unknown ups" in low:
+                           "USB 线可能松动，或 nut-driver@%s 已退出（systemctl status "
+                           "nut-driver@%s / nutdrv_qx 驱动是否支持该型号）" % (name, name))
+        if "unknown ups" in low or "unknown upsname" in low:
             raise UpsError("no_device", "UPS 实例 %s 不存在" % name)
-        raise UpsError("error", "读取 UPS 失败：%s" % (err.strip() or out.strip())[:200])
-    data = {}
-    for line in out.splitlines():
-        line = line.rstrip()
-        if not line or ":" not in line:
+        if "access denied" in low or "username" in low or "invalid credentials" in low:
+            raise UpsError("error", "upsd 拒绝访问：%s" % (err.strip() or out.strip())[:160])
+        if "connection refused" in low or "cannot connect" in low or "no route" in low:
+            last = UpsError("no_nut", "连不上 NUT 服务")
             continue
-        k, v = line.split(":", 1)
-        k = k.strip()
-        if not k or " " in k:
-            continue
-        data[k] = v.strip()
-    if not data:
-        raise UpsError("error", "UPS 返回空数据")
-    return data
+        last = UpsError("error", "读取 UPS 失败：%s" % (err.strip() or out.strip())[:200])
+    raise last or UpsError("error", "读取 UPS 失败")
 
 
 def _decode_status(s):
@@ -284,48 +579,151 @@ def _decode_status(s):
     return mask
 
 
-def _status_labels(mask):
-    return [cn for code, cn, bit in UPS_STATUS_BITS if mask & bit]
+def _status_labels(mask, words=None):
+    labels = [cn for code, cn, bit in UPS_STATUS_BITS if mask & bit]
+    # 未识别的状态词原样带出，便于发现厂商私有状态（如 TEST / ECO）
+    known = {code for code, _cn, _bit in UPS_STATUS_BITS}
+    for w in (words or []):
+        if w not in known:
+            labels.append(w)
+    return labels
+
+
+def _pick(raw, *keys):
+    """按优先级取第一个非空变量值。"""
+    for k in keys:
+        v = raw.get(k)
+        if v is not None and str(v).strip() != "":
+            return v
+    return None
+
+
+def _pick_num(raw, *keys):
+    return _fnum(_pick(raw, *keys))
 
 
 def ups_build(name, raw):
-    """原始变量 → 快照（device + live）。"""
-    live = {"status": raw.get("ups.status", "")}
-    live["st"] = _decode_status(live["status"])
-    live["labels"] = _status_labels(live["st"])
-    live["in_v"] = _fnum(raw.get("input.voltage"))
-    live["in_hz"] = _fnum(raw.get("input.frequency"))
-    live["out_v"] = _fnum(raw.get("output.voltage"))
-    live["out_a"] = _fnum(raw.get("output.current"))
-    live["out_w"] = None  # Phase 1 核心：out_v × out_a = 输出功率
-    if live["out_v"] is not None and live["out_a"] is not None:
-        live["out_w"] = round(live["out_v"] * live["out_a"], 1)
-    live["out_hz"] = _fnum(raw.get("output.frequency"))
-    live["load"] = _fnum(raw.get("ups.load"))
-    live["rp"] = _fnum(raw.get("ups.realpower"))
-    live["chg"] = _fnum(raw.get("battery.charge"))
-    live["rt"] = _fnum(raw.get("battery.runtime"))
-    live["bat_v"] = _fnum(raw.get("battery.voltage"))
-    live["temp"] = _fnum(raw.get("battery.temperature"))
-    live["nominal_va"] = _fnum(raw.get("ups.power.nominal"))
+    """原始变量 → 快照（device + live）。
+
+    不同驱动（usbhid-ups / nutdrv_qx / blazer_usb / snmp-ups…）暴露的变量名不完全一致，
+    这里按别名表取值，尽量把三相机型、OEM 机型也映射到同一套字段。
+    """
+    status = raw.get("ups.status", "") or ""
+    words = _norm_status_words(status)
+    live = {"status": status, "st": _decode_status(" ".join(words))}
+    live["labels"] = _status_labels(live["st"], words)
+    live["in_v"] = _pick_num(raw, "input.voltage", "input.L1-N.voltage",
+                             "input.L1.voltage", "input.L2-N.voltage")
+    live["in_hz"] = _pick_num(raw, "input.frequency", "input.L1.frequency")
+    live["out_v"] = _pick_num(raw, "output.voltage", "output.L1-N.voltage",
+                              "output.L1.voltage")
+    live["out_a"] = _pick_num(raw, "output.current", "output.L1.current",
+                              "output.L1-N.current")
+    live["out_hz"] = _pick_num(raw, "output.frequency", "output.L1.frequency")
+    live["load"] = _pick_num(raw, "ups.load", "output.L1.power.percent",
+                             "output.power.percent", "ups.load.L1")
+    live["rp"] = _pick_num(raw, "ups.realpower", "output.realpower",
+                           "output.L1.realpower")
+    live["out_va"] = _pick_num(raw, "ups.power", "output.power", "output.L1.power")
+    live["chg"] = _pick_num(raw, "battery.charge", "ups.battery.charge",
+                            "battery.charge.level")
+    live["rt"] = _pick_num(raw, "battery.runtime", "ups.timer.runtime")
+    live["bat_v"] = _pick_num(raw, "battery.voltage", "battery.voltage.dc")
+    live["temp"] = _pick_num(raw, "battery.temperature", "ups.temperature",
+                             "ambient.temperature")
+    live["nominal_va"] = _pick_num(raw, "ups.power.nominal", "output.power.nominal")
     live["source"] = raw.get("input.source") or ""
 
-    # 市电切换瞬间 UPS 会吐 0，这种帧剔除
+    live["out_w"] = None
+    if live["out_v"] is not None and live["out_a"] is not None and live["out_v"] >= 50:
+        live["out_w"] = round(live["out_v"] * live["out_a"], 1)
+    elif live["rp"] is not None:
+        live["out_w"] = round(live["rp"], 1)
+
+    # 市电切换瞬间 UPS 会吐 0V：只剔除输出侧读数，输入/电量/负载仍是有效数据
     ov = live.get("out_v")
     live["valid"] = not (ov is not None and ov < 50)
     if not live["valid"]:
-        for k in ("in_v", "in_hz", "out_v", "out_a", "out_w", "out_hz", "load", "rp"):
+        for k in ("out_v", "out_a", "out_w", "out_hz"):
             live[k] = None
 
+    mfr = _clean_ident(_pick(raw, "device.mfr", "ups.mfr", "device.vendor",
+                             "device.manufacturer"))
+    model = _clean_ident(_pick(raw, "device.model", "ups.model", "device.modelname",
+                               "device.product"), 80)
+    serial = _clean_ident(_pick(raw, "device.serial", "ups.serial",
+                                "device.serialnumber"), 80)
+    driver = raw.get("driver.name") or raw.get("driver.version") or ""
+    v = _vendor_match(" ".join((mfr, model, driver)))
     device = {
         "name": name,
-        "mfr": raw.get("device.mfr") or raw.get("ups.mfr") or "",
-        "model": raw.get("device.model") or raw.get("ups.model") or "",
-        "serial": raw.get("device.serial") or raw.get("ups.serial") or "",
+        "mfr": mfr,
+        "model": model,
+        "serial": serial,
         "type": raw.get("ups.type") or "",
-        "driver": raw.get("driver.name") or "",
+        "driver": driver,
+        # 识别出的中文品牌 + 常见接入方式（未匹配时回落厂商名）
+        "brand": (v or {}).get("brand") or mfr,
+        "access": (v or {}).get("access") or "",
+        "va": live["nominal_va"],
     }
     return {"ts": int(time.time()), "device": device, "live": live}
+
+
+def ups_diag(cfg=None):
+    """识别诊断：upsc 探测结果 + NUT 配置 + USB 设备 + 处理建议（只读）。"""
+    cfg = cfg or {}
+    exe = _upsc_path()
+    ups_conf = _parse_ups_conf()
+    targets = []
+    reachable = False
+    names_any = []
+    if exe:
+        for tgt in _nut_targets(cfg):
+            rc, out, err = _run([exe, "-l"] + ([tgt] if tgt else []), timeout=6)
+            names = _parse_upsc_list(out) if rc == 0 else []
+            if rc == 0:
+                reachable = True
+            if names:
+                names_any.extend(x for x in names if x not in names_any)
+            targets.append({
+                "target": tgt or "默认（localhost）",
+                "ok": rc == 0, "names": names,
+                "error": "" if rc == 0 else ((err.strip() or out.strip())[:160]
+                                             or "rc=%d" % rc),
+            })
+    usb = _usb_ups_scan()
+    listen = ["%s %d" % (h, p) for h, p in _parse_upsd_listen()]
+
+    sug = []
+    if not exe:
+        sug.append("未找到 upsc：飞牛「系统设置 → 电源 → UPS」开启后系统会安装 nut-client；"
+                   "若系统 UPS 功能正常但本应用找不到命令，可通过应用日志反馈。")
+    else:
+        if usb:
+            for u in usb[:3]:
+                tag = ("%s %s" % (u["brand"], u["product"])).strip() or "USB 设备"
+                sug.append("检测到 USB UPS：%s（%s:%s%s）"
+                           % (tag, u["vid"], u["pid"], "，HID" if u["hid"] else ""))
+        if not reachable:
+            sug.append("NUT 服务（upsd）不可达：先用 SSH 执行 upsc -l 验证。"
+                       "若系统「UPS 电源管理」能显示 UPS 但这里连不上，说明该设备可能不是通过 "
+                       "NUT 暴露的（例如系统用自己的 HID 守护进程），可在下方填写 NUT 地址/端口再试。")
+        elif not names_any:
+            sug.append("upsd 已运行但没有可用实例：检查 /etc/nut/ups.conf 是否配置了 UPS，"
+                       "以及驱动是否启动（systemctl status nut-driver@<实例名>）。")
+        if usb and names_any:
+            sug.append("NUT 已有实例：%s；若读数为空，多半是驱动型号不匹配，"
+                       "可尝试 usbhid-ups（APC HID 类）或 nutdrv_qx（Megatec 类）并指定 vendorid/productid。"
+                       % "、".join(names_any))
+    return {
+        "upsc": exe,
+        "targets": targets,
+        "ups_conf": ups_conf,
+        "upsd_listen": listen,
+        "usb": usb,
+        "suggestions": sug[:4],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +959,7 @@ class UpsPoller(threading.Thread):
         try:
             name, names = ups_pick(cfg)
             self.ups_names = names
-            raw = ups_read_vars(name)
+            raw = ups_read_vars(name, cfg)
             snap = ups_build(name, raw)
         except UpsError as e:
             self._set_error(e.code, e.message, e.hint)
@@ -663,6 +1061,7 @@ def ups_public(cfg):
                           for k, v in UPS_EVENT_META.items()]
     out["choices"] = list(UPS_EVENT_CHOICES)
     out["upsc"] = _upsc_path()
+    out["nut_targets"] = _nut_targets(cfg)
     snap = ups_latest()
     out["nut_state"] = snap.get("state") or ("off" if not out.get("enabled") else "init")
     out["nut_error"] = snap.get("error") or ""

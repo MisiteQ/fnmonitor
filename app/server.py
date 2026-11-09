@@ -11586,6 +11586,9 @@ class MonitorApp:
                 if path == "/api/ups/list":
                     self._json(app.api_ups_list())
                     return
+                if path == "/api/ups/diag":
+                    self._json(app.api_ups_diag())
+                    return
                 if path == "/api/idrac/sel":
                     self._json(app.api_idrac_sel(qs))
                     return
@@ -12420,13 +12423,22 @@ class MonitorApp:
         exe = _ups_mod._upsc_path()
         if not exe:
             return {"ok": False, "error": "未找到 upsc 命令（需启用飞牛「UPS 电源管理」）",
-                    "upsc": "", "ups_list": []}
+                    "upsc": "", "ups_list": [], "diag": _ups_mod.ups_diag()}
+        cfg = _ups_mod.ups_load(self.data_dir)
         try:
-            names = _ups_mod.ups_list()
+            names = _ups_mod.ups_list(cfg)
         except _ups_mod.UpsError as e:
             return {"ok": False, "error": e.message, "hint": e.hint,
-                    "upsc": exe, "ups_list": []}
+                    "upsc": exe, "ups_list": [], "diag": _ups_mod.ups_diag(cfg)}
         return {"ok": True, "upsc": exe, "ups_list": list(names)}
+
+    def api_ups_diag(self):
+        """UPS 识别诊断（只读）：upsc 探测、NUT 配置、系统 USB 设备。"""
+        if not _UPS_AVAILABLE:
+            return {"ok": False, "error": "UPS 模块不可用"}
+        d = _ups_mod.ups_diag(_ups_mod.ups_load(self.data_dir))
+        d["ok"] = True
+        return d
 
     def api_idrac_refresh_static(self):
         """设置页「刷新固定信息」：后台重读一轮 CPU / 内存 / 阵列卡 / 盘 / 卷 / 固件。
