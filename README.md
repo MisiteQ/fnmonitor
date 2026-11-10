@@ -19,26 +19,26 @@
 
 | 总览 | 能耗 |
 |---|---|
-| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/overview.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/energy.png" width="420"> |
+| <img src="docs/screenshots/overview.png" width="420"> | <img src="docs/screenshots/energy.png" width="420"> |
 
 <details>
 <summary><b>更多界面</b>（点击展开）</summary>
 
 | 趋势 | 存储 |
 |---|---|
-| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/trends.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/storage.png" width="420"> |
+| <img src="docs/screenshots/trends.png" width="420"> | <img src="docs/screenshots/storage.png" width="420"> |
 
 | 处理器 · 内存 · 显卡 | 容器 |
 |---|---|
-| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/cpu-mem-gpu.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/containers.png" width="420"> |
+| <img src="docs/screenshots/cpu-mem-gpu.png" width="420"> | <img src="docs/screenshots/containers.png" width="420"> |
 
 | 虚拟机 | 内置应用 |
 |---|---|
-| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/vms.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/apps.png" width="420"> |
+| <img src="docs/screenshots/vms.png" width="420"> | <img src="docs/screenshots/apps.png" width="420"> |
 
 | 主机 | 设置 |
 |---|---|
-| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/host.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/settings.png" width="420"> |
+| <img src="docs/screenshots/host.png" width="420"> | <img src="docs/screenshots/settings.png" width="420"> |
 
 </details>
 
