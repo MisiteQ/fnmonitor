@@ -15,6 +15,33 @@
 - 运行身份：**root**（需访问 sysfs 风扇转速读取、docker.sock、virsh（libvirt）、smartctl 与 /proc 跨用户进程信息）
 - 相关项目：**[Q飞牛+](https://github.com/MisiteQ/qfnplus-ha)** —— 把 fnmonitor 数据接入 Home Assistant 的 HACS 集成（纯只读，60+ 实体：CPU/内存/磁盘 SMART/GPU/Docker/网卡流量/功耗用电等）
 
+## 🖼 界面预览
+
+| 总览 | 能耗 |
+|---|---|
+| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/overview.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/energy.png" width="420"> |
+
+<details>
+<summary><b>更多界面</b>（点击展开）</summary>
+
+| 趋势 | 存储 |
+|---|---|
+| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/trends.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/storage.png" width="420"> |
+
+| 处理器 · 内存 · 显卡 | 容器 |
+|---|---|
+| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/cpu-mem-gpu.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/containers.png" width="420"> |
+
+| 虚拟机 | 内置应用 |
+|---|---|
+| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/vms.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/apps.png" width="420"> |
+
+| 主机 | 设置 |
+|---|---|
+| <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/host.png" width="420"> | <img src="https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/docs/screenshots/settings.png" width="420"> |
+
+</details>
+
 ## ✨ 功能
 
 - **总览**：首页一句话结论与健康分、六项核心指标（CPU / 内存 / 存储 / 网络 / 温度 / 功耗）、时间·农历与天气；NAS 机箱前面板（盘位指示灯随读写闪烁、SMART 与休眠状态一眼可辨）、核心点阵与内存条、核显、温度 / 风扇 / 电压、实时功耗与用电电费、网络与容器流量、上月汇总、进程 TOP；点击任意卡片 / 硬盘 / 容器从右侧打开详情
