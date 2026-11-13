@@ -105,7 +105,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -135,6 +135,81 @@ def sanitize_thresholds(raw):
         if out[c] < out[w]:
             out[c] = out[w]
     return out
+
+
+# ---------------------------------------------------------------------------
+# 分时电价（峰谷）
+# ---------------------------------------------------------------------------
+# config.power_price_periods = [{"start": "08:00", "end": "11:00", "rate": 1.05}, ...]
+# 未覆盖的时段按 power_rate_yuan（基础电价）计费；start > end 表示跨零点。
+def _hhmm_minutes(v):
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", str(v or ""))
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    if h > 24 or mi > 59 or (h == 24 and mi):
+        return None
+    return h * 60 + mi
+
+
+def sanitize_price_periods(raw):
+    """校验/清洗分时电价时段：非法项直接丢弃，最多保留 12 段。"""
+    out = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        s, e = _hhmm_minutes(it.get("start")), _hhmm_minutes(it.get("end"))
+        try:
+            rate = float(it.get("rate"))
+        except Exception:
+            continue
+        if s is None or e is None or not math.isfinite(rate) or s == e:
+            continue
+        out.append({"start": "%02d:%02d" % (s // 60, s % 60),
+                    "end": "%02d:%02d" % (e // 60, e % 60),
+                    "rate": round(max(0.0, min(100.0, rate)), 4)})
+        if len(out) >= 12:
+            break
+    return out
+
+
+def period_rate(minute, periods, base_rate):
+    """按一天内的分钟数（0–1439）匹配分时电价，未命中返回基础电价。"""
+    for p in periods or []:
+        s, e = _hhmm_minutes(p.get("start")), _hhmm_minutes(p.get("end"))
+        if s is None or e is None or s == e:
+            continue
+        inside = (s <= minute < e) if s < e else (minute >= s or minute < e)
+        if inside:
+            try:
+                return float(p.get("rate") or 0.0)
+            except Exception:
+                return base_rate
+    return base_rate
+
+
+def price_rate_at(ts, periods, base_rate):
+    """某一时刻适用的电价（按本地时区匹配时段）。"""
+    lt = time.localtime(ts)
+    return period_rate(lt.tm_hour * 60 + lt.tm_min, periods, base_rate)
+
+
+def day_cost(day_kwh, hourly, periods, base_rate):
+    """一天的电费：24 个小时电量桶各按对应时段电价计费；桶外电量（升级前的历史）
+    按基础电价补齐，保证历史数据仍能算出电费。"""
+    if day_kwh is None:
+        return None
+    cost, covered = 0.0, 0.0
+    for h in range(24):
+        v = hourly.get(h)
+        if v is None:
+            continue
+        covered += v
+        cost += v * period_rate(h * 60, periods, base_rate)
+    rest = (day_kwh or 0.0) - covered
+    if rest > 1e-9:
+        cost += rest * base_rate
+    return round(cost, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -5692,10 +5767,11 @@ def _report_power_stats(db, app_config):
         month_sec = now - datetime.datetime(d0.year, d0.month, 1).timestamp()
         hist_dt = int((app_config or {}).get("history_interval", 60) or 60)
         rate = float((app_config or {}).get("power_rate_yuan", 0.6) or 0.6)
-        today_kwh = db.energy_kwh("power", today_sec, default_dt=hist_dt)
-        month_kwh = db.energy_kwh("power", month_sec, default_dt=hist_dt)
+        periods = sanitize_price_periods((app_config or {}).get("power_price_periods"))
+        today_kwh, today_yuan = db.energy_cost(today_sec, periods, rate, default_dt=hist_dt)
+        month_kwh, month_yuan = db.energy_cost(month_sec, periods, rate, default_dt=hist_dt)
         return {"today_kwh": round(today_kwh, 4), "month_kwh": round(month_kwh, 4),
-                "today_yuan": round(today_kwh * rate, 2), "month_yuan": round(month_kwh * rate, 2)}
+                "today_yuan": round(today_yuan, 2), "month_yuan": round(month_yuan, 2)}
     except Exception:
         return {}
 
@@ -9815,6 +9891,45 @@ class History:
         self._memo(key, val)
         return val
 
+    def energy_cost(self, seconds, periods=None, base_rate=0.6, default_dt=60):
+        """区间能耗与电费：功率按采样间隔积分，电费按每个采样所在时刻的分时电价累加。
+        返回 (kWh, 元)。分时时段为空时等价于 kWh × 基础电价。"""
+        key = ("ekwh", int((time.time() - seconds) / 60))
+        if self._asleep():
+            v = self._memo(key, None)
+            return v if isinstance(v, tuple) else (0.0, 0.0)
+        cutoff = time.time() - seconds
+        try:
+            conn = self._connect()
+            try:
+                pr = conn.execute("SELECT ts, value FROM metrics WHERE metric='power' AND ts<? "
+                                  "ORDER BY ts DESC LIMIT 1", (cutoff,)).fetchone()
+                rows = conn.execute("SELECT ts, value FROM metrics WHERE metric='power' AND ts>=? "
+                                    "ORDER BY ts", (cutoff,)).fetchall()
+            finally:
+                conn.close()
+        except Exception:
+            return 0.0, 0.0
+        if not rows:
+            return 0.0, 0.0
+        ts_list = ([pr[0]] if pr else []) + [t for t, _ in rows]
+        dts = sorted(ts_list[i + 1] - ts_list[i] for i in range(len(ts_list) - 1)
+                     if ts_list[i + 1] > ts_list[i])
+        med = dts[len(dts) // 2] if dts else float(default_dt)
+        cap = 3.0 * max(med, float(default_dt or 0))
+        last = pr[0] if pr else None
+        kwh, cost = 0.0, 0.0
+        for t, v in rows:
+            gap = (t - last) if last is not None else None
+            dt = gap if (gap is not None and 0 < gap <= cap) else med
+            last = t
+            e = (v or 0.0) * dt / 3600000.0
+            kwh += e
+            cost += e * price_rate_at(t, periods, base_rate)
+        out = (round(kwh, 4), round(cost, 4))
+        self._memo(key, out)
+        return out
+
     def export_net(self, seconds):
         """导出网卡上下行历史 (ts, metric, value)。seconds=0 表示全部（走索引范围条件）。"""
         if self._asleep():
@@ -10118,7 +10233,9 @@ class History:
                 dt = gap if (gap is not None and 0 < gap <= cap) else med
                 last = t
                 day = dk(t)
-                add(day, "kwh", (v or 0.0) * dt / 3600000.0)
+                e = (v or 0.0) * dt / 3600000.0
+                add(day, "kwh", e)
+                add(day, "kwh@%02d" % time.localtime(t).tm_hour, e)   # 分时电价用的小时桶
                 add(day, "power_s", dt)
         # CPU 占用：日均 / 峰值
         for t, v in rows("cpu"):
@@ -13243,6 +13360,8 @@ class MonitorApp:
                         updates[k] = max(0.0, min(500.0, fv))
                 except Exception:
                     pass
+        if "power_price_periods" in data:
+            updates["power_price_periods"] = sanitize_price_periods(data.get("power_price_periods"))
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -13446,25 +13565,26 @@ class MonitorApp:
         month_start = datetime.datetime(_now.year, _now.month, 1).timestamp()
         today_sec = now - today_start
         month_sec = now - month_start
-        def _kwh_from_history(seconds):
-            # SQL 聚合整个区间（旧版受 query 默认 LIMIT 7200 限制，月初 5 天后本月 kWh 偏低）
-            return self.collector.db.energy_kwh("power", seconds, default_dt=hist_interval)
         # 优先用每日汇总（与「近 30 天用电」柱同源；本月合计不受 retention_days 截断），
         # 汇总不可用时回退为直接对保留期内的功率历史积分
+        rate = float(self.config.get("power_rate_yuan", 0.6))
+        periods = sanitize_price_periods(self.config.get("power_price_periods"))
         dm = self._daily_today_month()
         if dm and dm["has_power"]:
             today_kwh = round(dm["today_kwh"] or 0.0, 4)
             month_kwh = round(dm["month_kwh"] or 0.0, 4)
+            today_yuan = round(dm.get("today_cost") or 0.0, 2)
+            month_yuan = round(dm.get("month_cost") or 0.0, 2)
             energy_basis = "daily"
         else:
-            today_kwh = _kwh_from_history(today_sec)
-            month_kwh = _kwh_from_history(month_sec)
+            today_kwh, today_yuan = self.collector.db.energy_cost(
+                today_sec, periods, rate, default_dt=hist_interval)
+            month_kwh, month_yuan = self.collector.db.energy_cost(
+                month_sec, periods, rate, default_dt=hist_interval)
             energy_basis = "history"
         # 开机累计估算
         uptime = snap.get("uptime", 0)
         boot_kwh = round(power_w * uptime / 3_600_000, 4) if uptime > 0 else 0.0
-        # 电费
-        rate = float(self.config.get("power_rate_yuan", 0.6))
         # 硬盘休眠状态（60s 缓存），并与「硬盘信息」(lsblk 物理盘) 校对，只保留物理硬盘
         if now - self._disk_standby_ts >= 60:
             self._disk_standby_cache = read_disk_standby_states()
@@ -13483,7 +13603,7 @@ class MonitorApp:
                          "disks_active": power.get("disks_active")},
             "energy": {"today_kwh": today_kwh, "month_kwh": month_kwh, "boot_kwh": boot_kwh,
                        "basis": energy_basis},
-            "cost": {"today_yuan": round(today_kwh * rate, 2), "month_yuan": round(month_kwh * rate, 2), "rate_yuan_per_kwh": rate},
+            "cost": {"today_yuan": today_yuan, "month_yuan": month_yuan, "rate_yuan_per_kwh": rate},
             "disks": standby,
             "standby_protect": bool(int(self.config.get("disk_standby_protect", 1) or 0)),
             "estimation_params": {
@@ -13527,6 +13647,7 @@ class MonitorApp:
         data = self._daily_data(max(days, 31)) or {}   # 统一取 ≥31 天，图表与今日/本月合计共用一份缓存
         meta = data.get("_meta") or {}
         rate = float(self.config.get("power_rate_yuan", 0.6) or 0)
+        periods = sanitize_price_periods(self.config.get("power_price_periods"))
         exclude_bridge = bool(int(self.config.get("traffic_exclude_bridge", 0) or 0))
         now = time.time()
         start = History._day_start(now)
@@ -13535,6 +13656,8 @@ class MonitorApp:
             day = time.strftime("%Y-%m-%d", time.localtime(start - i * 86400 + 3600))
             d = data.get(day) or {}
             kwh = d.get("kwh") if "power_s" in d else None
+            hourly = {h: d.get("kwh@%02d" % h) for h in range(24)}
+            cost = day_cost(kwh, hourly, periods, rate) if kwh is not None else None
             has_net = any(k in d for k in ("rx_phys", "tx_phys", "rx_virt", "tx_virt"))
             rx = tx = None
             if has_net:
@@ -13545,7 +13668,7 @@ class MonitorApp:
                 "day": day,
                 "has_data": bool(d),
                 "kwh": round(kwh, 4) if kwh is not None else None,
-                "cost": round(kwh * rate, 2) if kwh is not None else None,
+                "cost": round(cost, 2) if cost is not None else None,
                 "power_h": round(d["power_s"] / 3600.0, 2) if "power_s" in d else None,
                 "avg_w": round(kwh * 3600000.0 / d["power_s"], 1) if kwh is not None and d.get("power_s") else None,
                 "rx": int(rx) if rx is not None else None,
@@ -13575,6 +13698,7 @@ class MonitorApp:
         sm = lambda k: sum((d.get(k) or 0) for d in mine)
         t = days[-1]
         return {"today_kwh": t.get("kwh"), "month_kwh": sm("kwh"),
+                "today_cost": t.get("cost"), "month_cost": round(sm("cost"), 2),
                 "today_rx": t.get("rx"), "today_tx": t.get("tx"),
                 "month_rx": sm("rx"), "month_tx": sm("tx"),
                 "has_power": t.get("kwh") is not None, "has_net": t.get("rx") is not None}
@@ -14412,6 +14536,8 @@ def load_config(data_dir):
                 cfg[k] = float(user[k])
             except Exception:
                 pass
+    if "power_price_periods" in user:
+        cfg["power_price_periods"] = sanitize_price_periods(user["power_price_periods"])
     if "weather_city" in user:
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
     if "data_dir" in user:

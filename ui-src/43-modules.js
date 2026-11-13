@@ -111,6 +111,9 @@ defineModule({
   update(o, m) {
     if (!o) return;
     const x = m.x, p = o.power || {}, has = pwrOk(o), ps = S.pstats, rate = ps && ps.cost ? ps.cost.rate_yuan_per_kwh : (S.cfg && S.cfg.power_rate_yuan);
+    const pp = !!(S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length);
+    // 分时电价下用本月实际均价推算，比基础电价更接近真实支出
+    const eff = ps && ps.cost && ps.energy && ps.energy.month_kwh > 0 ? ps.cost.month_yuan / ps.energy.month_kwh : rate;
     dnum(x.w, has ? +p.total : null, F.d1);
     setText(x.src, has ? (SRC_TXT[p.source] || '来源未知') : '不可用');
     setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗'
@@ -124,12 +127,12 @@ defineModule({
     dnum(x.tk, en ? en.today_kwh : null, F.kwh); setText(x.tc, co ? '电费 ' + F.yuan(co.today_yuan) : '--');
     dnum(x.mk, en ? en.month_kwh : null, F.kwh); setText(x.mc, co ? '电费 ' + F.yuan(co.month_yuan) : '--');
     const pj = en ? monthProj(en.month_kwh, o) : null, pk = pj ? pj.kwh : null;
-    if (x.pc) dot(x.pc).set(pk != null && ok(rate) ? F.yuan(pk * rate) : '--'); setText(x.pk, pk != null ? `约 ${F.kwh(pk)} kWh · 剩余天数按${pj.basis} ${F.d1(pj.w)} W` : '本月数据不足');
+    if (x.pc) dot(x.pc).set(pk != null && ok(eff) ? F.yuan(pk * eff) : '--'); setText(x.pk, pk != null ? `约 ${F.kwh(pk)} kWh · 剩余天数按${pj.basis} ${F.d1(pj.w)} W` : '本月数据不足');
     const yp = has || Daily.data ? yearProj(o) : null;
-    if (x.yc) dot(x.yc).set(yp && ok(rate) ? F.yuan(yp.kwh * rate) : '--');
+    if (x.yc) dot(x.yc).set(yp && ok(eff) ? F.yuan(yp.kwh * eff) : '--');
     setText(x.yk, yp ? `约 ${F.int(yp.kwh)} kWh · ${yp.basis} ${F.d1(yp.w)} W × 8760 小时` : '暂无可用的功率数据');
     const sl = disksOf(o).filter(isSleep).length, dw = S.cfg && S.cfg.power_disk_typical_w;
-    setHTML(m.r.dek, !has ? '功耗不可用。' : `此刻 <b>${F.d1(p.total)} W</b>${ok(rate) ? `，按电价 ${esc(rate)} 元/kWh` : ''}${pk != null && ok(rate) ? `，本月电费预计 <b>${F.yuan(pk * rate)}</b>` : ''}。${sl ? `${sl} 块硬盘休眠中${ok(dw) ? `，每块约省 ${esc(dw)} W` : ''}。` : ''}`);
+    setHTML(m.r.dek, !has ? '功耗不可用。' : `此刻 <b>${F.d1(p.total)} W</b>${pp ? '，按分时电价计费' : ok(rate) ? `，按电价 ${esc(rate)} 元/kWh` : ''}${pk != null && ok(eff) ? `，本月电费预计 <b>${F.yuan(pk * eff)}</b>` : ''}。${sl ? `${sl} 块硬盘休眠中${ok(dw) ? `，每块约省 ${esc(dw)} W` : ''}。` : ''}`);
     if (!m.barsAt || Date.now() - m.barsAt > 600000) { m.barsAt = Date.now(); m.loadBars(); }
   },
 });

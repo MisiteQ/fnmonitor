@@ -634,16 +634,20 @@ def ups_build(name, raw):
     live["nominal_va"] = _pick_num(raw, "ups.power.nominal", "output.power.nominal")
     live["source"] = raw.get("input.source") or ""
 
-    live["out_w"] = None
-    if live["out_v"] is not None and live["out_a"] is not None and live["out_v"] >= 50:
-        live["out_w"] = round(live["out_v"] * live["out_a"], 1)
-    elif live["rp"] is not None:
-        live["out_w"] = round(live["rp"], 1)
-
-    # 市电切换瞬间 UPS 会吐 0V：只剔除输出侧读数，输入/电量/负载仍是有效数据
+    # 输出侧有效性：仅把 0V（市电切换瞬间的异常帧）视为无效。
+    # 瓦力方程 W120 等直流输出机型正常工作电压约 19V，不能按交流 50V 阈值过滤
     ov = live.get("out_v")
-    live["valid"] = not (ov is not None and ov < 50)
+    live["valid"] = not (ov is not None and ov <= 0.5)
+
+    # 功率优先取设备直报的有功功率，设备未提供时用输出电压 × 输出电流
+    live["out_w"] = None
+    if live["rp"] is not None:
+        live["out_w"] = round(live["rp"], 1)
+    elif live["valid"] and ov is not None and live["out_a"] is not None:
+        live["out_w"] = round(ov * live["out_a"], 1)
+
     if not live["valid"]:
+        # 只剔除输出侧读数，输入/电量/负载仍是有效数据
         for k in ("out_v", "out_a", "out_w", "out_hz"):
             live[k] = None
 

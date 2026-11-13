@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.42.1-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.42.2-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。**📢 通知推送系统**（企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / Webhook 共 7 渠道，自定义模板 + 勿扰时段 + 极简推送）与**定时推送报告**（时 / 天 / 周 / 月 / 自定义间隔，17+ 模块 Markdown 汇总）。**🖥 fnOS 事件监控巡检**（主日志库 / 备份任务库 / 影视库 / 相册库 / 音乐库 / Docker Socket / SSH journal / WAN IP 变更共 8 类数据源，异步推送 + 独立开关）。**⚠️ 阈值警告推送**（8 类指标越限 / 升级 / 恢复全链路通知）。**📋 推送历史**（SQLite 分页存储，筛选 + JSON 详情）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.42.1**
+- 当前版本：**v2.42.2**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）、**[mhduiy](https://github.com/mhduiy)**（硬盘温度刷新与 SMART 温度显示一致性修复）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -64,7 +64,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.42.1-x86.fpk`（x86 机型）或 `fnmonitor-2.42.1-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.42.2-x86.fpk`（x86 机型）或 `fnmonitor-2.42.2-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -164,6 +164,7 @@ fnmonitor 不直接接管 USB，而是只读 fnOS「UPS 电源管理」已经启
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.42.2 | **🔋 UPS 低压直流输出修复 · ⚡ 峰谷电价估算**（感谢 [@hesgang](https://github.com/hesgang) 反馈 issue [#30](https://github.com/MisiteQ/fnmonitor/issues/30)、[@Gynomys](https://github.com/Gynomys) 建议 issue [#31](https://github.com/MisiteQ/fnmonitor/issues/31)）<br><br>① **🔌 修复瓦力方程 W120 等直流输出 UPS 不显示输出电压 / 电流 / 功率**：原逻辑把低于 50V 的输出当成市电切换异常帧整组清空，而 W120 正常工作电压约 19V；现仅过滤 0V 瞬态，功率优先取设备直报的有功功率、无值时用电压 × 电流（样本 19.13V × 1.365A = 26.1W）<br>② **💰 新增峰谷电价估算**：设置 →「功耗与电费」可自定义多段时段电价（跨零点如 23:00–07:00、最多 12 段，未覆盖时段按基础电价），每日电量按小时归档，今日 / 本月电费、近 30 天统计与定时推送报告均按分时电价分别计费；修改时段后已有小时电量会按新电价重算<br>③ **📈 电费口径统一**：功耗模块与详情页在启用分时电价后改用本月实际均价推算月度 / 年度电费，并标注「已启用分时电价」 |
 | v2.42.1 | **🧵 后台线程单核 100% 治理 · 功耗读数校准 · 诊断接口修复**（感谢 [@pluto628](https://github.com/pluto628) 的详细报告 issue [#28](https://github.com/MisiteQ/fnmonitor/issues/28)）<br><br>① **🩺 新增线程 CPU 看门狗**：每 30 秒扫描各线程 CPU 占用，同一线程连续 3 次 >80% 单核时把线程名与调用栈写入日志，定位「某后台线程独占单核」不再靠猜；同时补齐 HTTP 工作线程、MonitorStop 等未命名线程<br>② **⚡ 功耗读数不再虚高约 4 倍**：RAPL `energy_uj` 实际刷新粒度约 1 秒，原 0.25 秒差分窗口会把 1 秒能量当 0.25 秒计算；现改为 1 秒窗口 + monotonic 实测时长，无增量时重测一次，仍无数据则回退 TDP 估算（不再显示 0W 或虚高值）<br>③ **💽 硬盘功耗按介质计算**：通过 `/sys/block/*/queue/rotational` 与 NVMe 前缀识别 SSD / HDD，全闪机器不再按每块 8W 机械盘估算<br>④ **🧭 修复 `/api/monitor/diagnostics` 必现 NameError**：该接口误用了未定义的 `config`，现正确读取 `monitor.json` 的 `monitor` 段，诊断信息可正常返回<br>⑤ **🧹 日志去噪**：「事件被白名单丢弃」「重复事件已跳过」等每轮必现的提示改为同类 10 分钟一条，不再刷满日志 |
 | v2.42.0 | **🔋 UPS 识别加固 · 常见品牌适配 · 识别诊断**<br><br>① **🔍 修复「飞牛里正常、fnmonitor 识别不到」**：`upsc` 改为多目标探测——设置中的 NUT 主机 / 端口 → `/etc/nut/upsd.conf` 里回环 `LISTEN` → `127.0.0.1:3493` → `localhost`，兼容自定义端口与非默认配置，不再只依赖裸 `upsc -l` 的 localhost 解析<br>② **🏷 修复实例名解析错误**：`upsc -L` 的 `name: 描述` 不再把描述当实例名（此前会变成 `Unknown UPS`）<br>③ **🩺 首页不再把采集失败显示成「UPS 未启用」**：独立错误分支显示真实原因与处理提示，并展示中文品牌 / 型号 / 接入方式与视在功率<br>④ **🔌 常见品牌与驱动适配**：新增瓦力方程、APC / 施耐德、伊顿 / MGE、CyberPower、山特、科士达、雷迪司、Tripp Lite、维谛、台达、易事特、科华、华为、正泰、德力西、奥普森、罗格朗、绿联、极空间等识别；兼容 `input.L1-N.voltage`、`output.L1.current`、`ups.power`、`ups.temperature`、`ups.power.nominal` 等变量别名与 `NORMAL / ONBATTERY / BATTERY / DISCHARGING / ONBYPASS` 状态词<br>⑤ **⚡ 修复市电切换瞬间 0V 帧清空全部读数**：现在只清输出电压 / 电流 / 功率 / 频率，保留输入电压、负载与充电状态<br>⑥ **🧭 新增「识别诊断」**：设置页一键查看 `upsc` 路径、各目标连通性、`upsd` 监听、`ups.conf` 实例与驱动、系统 USB 的 VID:PID 及处理建议；README 新增 UPS 识别排查指引 |
 | v2.41.5 | **🌡 硬盘温度自动更新修复（贡献者 [mhduiy](https://github.com/mhduiy)）**<br><br>① **🔄 温度缓存可正常过期**：无 hwmon 的硬盘走 smartctl 兜底时，命中缓存仍会刷新时间戳，持续采集下缓存永不过期，温度自首次读取后不再变化（需重启才恢复）；现仅在真正读到新温度时更新时间戳，90 秒 TTL 到期后自动重读<br>② **💽 NVMe 温度直读修复**：部分 NVMe 的 `hwmonN` 直接挂在控制器目录下，此前只查找 `device/hwmon/`，导致退化为 smartctl 读取；现两种布局都能直读，减少对 smartctl 的依赖<br>③ **🎯 同盘温度口径统一**：SMART 明细表优先使用与主页、告警同源的总览温度，消除同一块盘在不同位置显示 55℃ / 56℃ 的不一致 |

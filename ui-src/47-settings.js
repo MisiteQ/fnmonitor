@@ -95,6 +95,7 @@ function controlFor(it, row) {
     el.sync(); return el;
   }
   if (it.type === 'colorspec') return colorSpec();
+  if (it.type === 'priceperiods') return pricePeriods(it, row);
   if (it.type === 'action') { const b = mount(`<button class="btn ${it.danger ? 'danger' : ''}" type="button">${esc(it.button)}</button>`); b.onclick = () => it.run(b, row); return b; }
   if (it.type === 'info') { const el = mount(`<div class="set-info"></div>`); el.sync = () => setHTML(el, it.html()); el.sync(); return el; }
 }
@@ -116,6 +117,46 @@ function colorSpec() {
     el._r.demo.innerHTML = [18, 52, 74, 88, 97].map(v => `<div><i style="width:${v}%;background-image:${rampGrad('cpu')};background-size:${(10000 / v).toFixed(1)}% 100%"></i></div>`).join('');
   };
   el.sync(); return el;
+}
+/* 分时电价（峰谷）编辑器：每行 = 开始 – 结束 · 电价；未覆盖的时段按基础电价计算 */
+function pricePeriods(it, row) {
+  const el = mount('<div class="pp-list"></div>');
+  const list = () => { const v = it.get(); return Array.isArray(v) ? v.map(p => Object.assign({}, p)) : []; };
+  const draw = () => {
+    el.innerHTML = list().map((p, i) => `<div class="pp-row" data-i="${i}">
+        <input class="textfield mono" type="time" value="${esc(p.start || '')}" data-f="start" aria-label="开始时间">
+        <span class="faint">至</span>
+        <input class="textfield mono" type="time" value="${esc(p.end || '')}" data-f="end" aria-label="结束时间">
+        <input class="textfield mono" type="number" min="0" max="10" step="0.01" value="${isFinite(+p.rate) ? p.rate : ''}" data-f="rate" aria-label="电价" placeholder="0.60">
+        <span class="faint">元/kWh</span>
+        <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该时段">${ic('x')}</button>
+      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加时段</button><span class="faint">没列出的时段按基础电价算；跨零点可填 23:00 至 07:00</span></div>`;
+  };
+  el.addEventListener('change', e => {
+    const inp = e.target.closest('input[data-f]'); if (!inp) return;
+    const arr = list(), i = +inp.closest('.pp-row').dataset.i, f = inp.dataset.f;
+    if (!arr[i]) return;
+    if (f === 'rate') {
+      const n = parseFloat(inp.value);
+      if (!isFinite(n) || n < 0 || n > 10) { toast('电价需在 0 – 10 元/kWh 之间', { icon: 'alert' }); draw(); return; }
+      arr[i].rate = n;
+    } else arr[i][f] = inp.value;
+    if (!arr[i].start || !arr[i].end) { toast('请填写开始与结束时间', { icon: 'alert' }); draw(); return; }
+    if (arr[i].start === arr[i].end) { toast('开始与结束时间不能相同', { icon: 'alert' }); draw(); return; }
+    it.set(arr, row);
+  });
+  el.addEventListener('click', e => {
+    const del = e.target.closest('[data-del]');
+    if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+    if (e.target.closest('[data-add]')) {
+      const arr = list();
+      if (arr.length >= 12) { toast('最多 12 个时段', { icon: 'alert' }); return; }
+      const br = +(S.cfg && S.cfg.power_rate_yuan);
+      arr.push({ start: '22:00', end: '08:00', rate: br > 0 ? br : 0.6 });
+      it.set(arr, row);
+    }
+  });
+  el.sync = draw; draw(); return el;
 }
 function setRow(it) {
   const row = mount(`<div class="set-row${it.wide ? ' wide' : ''}" data-k="${it.k}"><div><div class="lbl">${esc(it.label)}${it.help ? `<button class="q" type="button" aria-label="说明" aria-expanded="false">${ic('help')}</button>` : ''}</div><div class="hint" data-ref="hint"></div></div><div class="ctl"></div></div>`);
@@ -148,7 +189,8 @@ const SET_SCHEMA = [
   ] },
   { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
   { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
-    cfgItem('power_rate_yuan', '电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh' }),
+    cfgItem('power_rate_yuan', '基础电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh', hint: '未列入下方分时时段（平段）的用电按此电价计算' }),
+    cfgItem('power_price_periods', '分时电价（峰谷）', 'priceperiods', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length) ? '已启用，电费按各时段电价分别计费；修改时段后已有小时电量会按新电价重算' : '不添加时段则全部按基础电价计算；添加后按各时段电价分别计费', help: '适合峰谷电价的地区：例如夜间（23:00–07:00）半价、白天原价。时段按本地时间匹配，跨零点时段可填 23:00 至 07:00；时段重叠时按靠前的时段计算。' }),
     cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
     cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),

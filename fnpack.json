@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.1/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.2/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.2": {
+                    "changelog": "v2.42.2 UPS 低压直流输出修复 · 峰谷电价估算<br>① 修复瓦力方程 W120 等直流输出 UPS 的输出电压 / 电流 / 功率不显示：原逻辑把低于 50V 的输出当成市电切换异常帧整组清空，而 W120 正常工作电压约 19V；现仅过滤 0V 瞬态，功率优先取设备直报的有功功率、无值时用电压 × 电流<br>② 新增峰谷电价估算：设置 →「功耗与电费」可自定义多段时段电价（支持跨零点、最多 12 段，未覆盖时段按基础电价），每日电量按小时归档，今日 / 本月电费、近 30 天统计与定时推送报告均按分时电价分别计费；修改时段后已有小时电量会按新电价重算<br>③ 功耗模块与详情页在启用分时电价后改用本月实际均价推算月度 / 年度电费，并标注「已启用分时电价」",
+                    "updated_at": "2026-11-13",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.2/fnmonitor-2.42.2-x86.fpk",
+                            "sha256": "587fe1966f5cb7fd8fb8611a0b6ee9c49b2c322873a995e5c4bae6f5b55da077",
+                            "size": 724453
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.2/fnmonitor-2.42.2-arm.fpk",
+                            "sha256": "b5109fe474e744029040a7773483734edadc756ecb35283f5513b2e5c4b9ebcc",
+                            "size": 724449
+                        }
+                    }
+                },
                 "2.42.1": {
                     "changelog": "v2.42.1 后台线程单核 100% 治理 · 功耗读数校准 · 诊断接口修复<br>① 新增线程 CPU 看门狗：每 30 秒扫描各线程占用，同一线程连续 3 次 >80% 单核时把线程名与调用栈写入日志，定位「某后台线程独占单核」不再靠猜；补齐 HTTP 工作线程、MonitorStop 等未命名线程<br>② 功耗读数不再虚高约 4 倍：RAPL energy_uj 实际刷新粒度约 1 秒，原 0.25 秒差分窗口会把 1 秒能量当 0.25 秒计算；现改为 1 秒窗口 + monotonic 实测时长，无增量时重测一次，仍无数据则回退 TDP 估算<br>③ 硬盘功耗按介质计算：通过 /sys/block/*/queue/rotational 与 NVMe 前缀识别 SSD / HDD，全闪机器不再按每块 8W 机械盘估算<br>④ 修复 /api/monitor/diagnostics 必现 NameError：改为读取 monitor.json 的 monitor 段，诊断信息可正常返回<br>⑤ 日志去噪：「事件被白名单丢弃」「重复事件已跳过」等每轮必现提示改为同类 10 分钟一条",
                     "updated_at": "2026-11-09",

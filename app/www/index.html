@@ -1088,6 +1088,14 @@ a{color:var(--ink-1)}
 .set-row.wide{gap:14px}
 .set-row.wide>*{flex:1 1 100%}
 .set-row.wide .ctl{justify-content:stretch;margin-left:0}
+.pp-list{width:100%;display:flex;flex-direction:column;gap:8px}
+.pp-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pp-row .textfield{width:auto}
+.pp-row input[type="time"]{width:9.5em}
+.pp-row input[type="number"]{width:6em}
+.pp-del{padding:5px 7px;color:var(--ink-3)}
+.pp-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pp-foot .faint{font-size:var(--fs-xs)}
 .colorspec{width:100%;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .cs-col{background:var(--card-sunk);border-radius:14px;padding:14px;display:grid;gap:10px;align-content:start}
 .cs-item{display:flex;gap:10px;align-items:center}
@@ -3143,6 +3151,8 @@ show(pts.length > 1 ? days : [], pts.length > 1 ? rows : [], n => `近 ${n} 天�
 update(o, m) {
 if (!o) return;
 const x = m.x, p = o.power || {}, has = pwrOk(o), ps = S.pstats, rate = ps && ps.cost ? ps.cost.rate_yuan_per_kwh : (S.cfg && S.cfg.power_rate_yuan);
+const pp = !!(S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length);
+const eff = ps && ps.cost && ps.energy && ps.energy.month_kwh > 0 ? ps.cost.month_yuan / ps.energy.month_kwh : rate;
 dnum(x.w, has ? +p.total : null, F.d1);
 setText(x.src, has ? (SRC_TXT[p.source] || '来源未知') : '不可用');
 setText(x.wSub, !has ? '无法读取 RAPL，也无法估算整机功耗'
@@ -3156,12 +3166,12 @@ const en = ps && ps.energy, co = ps && ps.cost;
 dnum(x.tk, en ? en.today_kwh : null, F.kwh); setText(x.tc, co ? '电费 ' + F.yuan(co.today_yuan) : '--');
 dnum(x.mk, en ? en.month_kwh : null, F.kwh); setText(x.mc, co ? '电费 ' + F.yuan(co.month_yuan) : '--');
 const pj = en ? monthProj(en.month_kwh, o) : null, pk = pj ? pj.kwh : null;
-if (x.pc) dot(x.pc).set(pk != null && ok(rate) ? F.yuan(pk * rate) : '--'); setText(x.pk, pk != null ? `约 ${F.kwh(pk)} kWh · 剩余天数按${pj.basis} ${F.d1(pj.w)} W` : '本月数据不足');
+if (x.pc) dot(x.pc).set(pk != null && ok(eff) ? F.yuan(pk * eff) : '--'); setText(x.pk, pk != null ? `约 ${F.kwh(pk)} kWh · 剩余天数按${pj.basis} ${F.d1(pj.w)} W` : '本月数据不足');
 const yp = has || Daily.data ? yearProj(o) : null;
-if (x.yc) dot(x.yc).set(yp && ok(rate) ? F.yuan(yp.kwh * rate) : '--');
+if (x.yc) dot(x.yc).set(yp && ok(eff) ? F.yuan(yp.kwh * eff) : '--');
 setText(x.yk, yp ? `约 ${F.int(yp.kwh)} kWh · ${yp.basis} ${F.d1(yp.w)} W × 8760 小时` : '暂无可用的功率数据');
 const sl = disksOf(o).filter(isSleep).length, dw = S.cfg && S.cfg.power_disk_typical_w;
-setHTML(m.r.dek, !has ? '功耗不可用。' : `此刻 <b>${F.d1(p.total)} W</b>${ok(rate) ? `，按电价 ${esc(rate)} 元/kWh` : ''}${pk != null && ok(rate) ? `，本月电费预计 <b>${F.yuan(pk * rate)}</b>` : ''}。${sl ? `${sl} 块硬盘休眠中${ok(dw) ? `，每块约省 ${esc(dw)} W` : ''}。` : ''}`);
+setHTML(m.r.dek, !has ? '功耗不可用。' : `此刻 <b>${F.d1(p.total)} W</b>${pp ? '，按分时电价计费' : ok(rate) ? `，按电价 ${esc(rate)} 元/kWh` : ''}${pk != null && ok(eff) ? `，本月电费预计 <b>${F.yuan(pk * eff)}</b>` : ''}。${sl ? `${sl} 块硬盘休眠中${ok(dw) ? `，每块约省 ${esc(dw)} W` : ''}。` : ''}`);
 if (!m.barsAt || Date.now() - m.barsAt > 600000) { m.barsAt = Date.now(); m.loadBars(); }
 },
 });
@@ -3720,7 +3730,8 @@ setHTML(x.parts, has ? (p.source === 'idrac'
 ? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
 : kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
 const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
-setText(x.rate, ok(co.rate_yuan_per_kwh) ? `电价 ${co.rate_yuan_per_kwh} 元/kWh` : '');
+const ppOn = !!(S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length);
+setText(x.rate, ok(co.rate_yuan_per_kwh) ? (ppOn ? `基础电价 ${co.rate_yuan_per_kwh} 元/kWh · 已启用分时电价` : `电价 ${co.rate_yuan_per_kwh} 元/kWh`) : '');
 setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
 setHTML(x.est, ep ? kvHTML([['CPU TDP（无 RAPL 时）', ep.tdp_w + ' W'], ['单盘典型功耗', ep.disk_typical_w + ' W'], ['网卡固定功耗', ep.nic_fixed_w + ' W'], ['主板 / 其他底座', ep.base_w + ' W']]) : '');
 };
@@ -4817,6 +4828,7 @@ el.addEventListener('click', e => { const b = e.target.closest('.swatch'); if (!
 el.sync(); return el;
 }
 if (it.type === 'colorspec') return colorSpec();
+if (it.type === 'priceperiods') return pricePeriods(it, row);
 if (it.type === 'action') { const b = mount(`<button class="btn ${it.danger ? 'danger' : ''}" type="button">${esc(it.button)}</button>`); b.onclick = () => it.run(b, row); return b; }
 if (it.type === 'info') { const el = mount(`<div class="set-info"></div>`); el.sync = () => setHTML(el, it.html()); el.sync(); return el; }
 }
@@ -4838,6 +4850,45 @@ el._r.ramp.style.background = rampGrad('cpu');
 el._r.demo.innerHTML = [18, 52, 74, 88, 97].map(v => `<div><i style="width:${v}%;background-image:${rampGrad('cpu')};background-size:${(10000 / v).toFixed(1)}% 100%"></i></div>`).join('');
 };
 el.sync(); return el;
+}
+function pricePeriods(it, row) {
+const el = mount('<div class="pp-list"></div>');
+const list = () => { const v = it.get(); return Array.isArray(v) ? v.map(p => Object.assign({}, p)) : []; };
+const draw = () => {
+el.innerHTML = list().map((p, i) => `<div class="pp-row" data-i="${i}">
+<input class="textfield mono" type="time" value="${esc(p.start || '')}" data-f="start" aria-label="开始时间">
+<span class="faint">至</span>
+<input class="textfield mono" type="time" value="${esc(p.end || '')}" data-f="end" aria-label="结束时间">
+<input class="textfield mono" type="number" min="0" max="10" step="0.01" value="${isFinite(+p.rate) ? p.rate : ''}" data-f="rate" aria-label="电价" placeholder="0.60">
+<span class="faint">元/kWh</span>
+<button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该时段">${ic('x')}</button>
+</div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加时段</button><span class="faint">没列出的时段按基础电价算；跨零点可填 23:00 至 07:00</span></div>`;
+};
+el.addEventListener('change', e => {
+const inp = e.target.closest('input[data-f]'); if (!inp) return;
+const arr = list(), i = +inp.closest('.pp-row').dataset.i, f = inp.dataset.f;
+if (!arr[i]) return;
+if (f === 'rate') {
+const n = parseFloat(inp.value);
+if (!isFinite(n) || n < 0 || n > 10) { toast('电价需在 0 – 10 元/kWh 之间', { icon: 'alert' }); draw(); return; }
+arr[i].rate = n;
+} else arr[i][f] = inp.value;
+if (!arr[i].start || !arr[i].end) { toast('请填写开始与结束时间', { icon: 'alert' }); draw(); return; }
+if (arr[i].start === arr[i].end) { toast('开始与结束时间不能相同', { icon: 'alert' }); draw(); return; }
+it.set(arr, row);
+});
+el.addEventListener('click', e => {
+const del = e.target.closest('[data-del]');
+if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+if (e.target.closest('[data-add]')) {
+const arr = list();
+if (arr.length >= 12) { toast('最多 12 个时段', { icon: 'alert' }); return; }
+const br = +(S.cfg && S.cfg.power_rate_yuan);
+arr.push({ start: '22:00', end: '08:00', rate: br > 0 ? br : 0.6 });
+it.set(arr, row);
+}
+});
+el.sync = draw; draw(); return el;
 }
 function setRow(it) {
 const row = mount(`<div class="set-row${it.wide ? ' wide' : ''}" data-k="${it.k}"><div><div class="lbl">${esc(it.label)}${it.help ? `<button class="q" type="button" aria-label="说明" aria-expanded="false">${ic('help')}</button>` : ''}</div><div class="hint" data-ref="hint"></div></div><div class="ctl"></div></div>`);
@@ -4869,7 +4920,8 @@ set: (v, row) => saveCfg({ weather_city: v }, '天气位置', row).then(() => se
 ] },
 { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
 { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
-cfgItem('power_rate_yuan', '电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh' }),
+cfgItem('power_rate_yuan', '基础电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh', hint: '未列入下方分时时段（平段）的用电按此电价计算' }),
+cfgItem('power_price_periods', '分时电价（峰谷）', 'priceperiods', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length) ? '已启用，电费按各时段电价分别计费；修改时段后已有小时电量会按新电价重算' : '不添加时段则全部按基础电价计算；添加后按各时段电价分别计费', help: '适合峰谷电价的地区：例如夜间（23:00–07:00）半价、白天原价。时段按本地时间匹配，跨零点时段可填 23:00 至 07:00；时段重叠时按靠前的时段计算。' }),
 cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
 cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
 cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),

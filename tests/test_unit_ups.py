@@ -138,6 +138,47 @@ def test_three_phase_alias():
     assert live["out_w"] == 276.0
 
 
+def test_build_wallecube_w120_dc_output():
+    # W120 为直流输出机型，正常输出约 19V，不能按交流 50V 阈值过滤
+    snap = ups.ups_build("ups", _raw(**{
+        "ups.status": "OL",
+        "ups.model": "W120",
+        "output.voltage": "19.13",
+        "output.current": "1.365",
+        "ups.load": "20",
+        "battery.charge": "100",
+        "driver.name": "usbhid-ups",
+    }))
+    live = snap["live"]
+    assert live["valid"] is True
+    assert live["out_v"] == 19.13
+    assert live["out_a"] == 1.365
+    assert live["out_w"] == 26.1       # 19.13V × 1.365A
+
+
+def test_build_prefers_reported_realpower():
+    # 设备直报有功功率时优先使用，不再用电压 × 电流估算
+    snap = ups.ups_build("ups", _raw(**{
+        "ups.status": "OL",
+        "output.voltage": "19.13",
+        "output.current": "1.365",
+        "ups.realpower": "24",
+        "battery.charge": "100",
+    }))
+    assert snap["live"]["out_w"] == 24
+
+
+def test_low_voltage_without_current_has_no_power():
+    snap = ups.ups_build("ups", _raw(**{
+        "ups.status": "OL",
+        "output.voltage": "19.13",
+        "battery.charge": "100",
+    }))
+    live = snap["live"]
+    assert live["valid"] is True and live["out_v"] == 19.13
+    assert live["out_w"] is None
+
+
 def test_nut_targets_user_config_first():
     t = ups._nut_targets({"nut_host": "192.168.1.9", "nut_port": 3494})
     assert t == ["192.168.1.9:3494"]      # 显式配置只连它，不回落到本机
