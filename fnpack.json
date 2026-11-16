@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.2/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.3/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.3": {
+                    "changelog": "v2.42.3 通用 Webhook JSON body 修复 · 错误提示去误导<br>① 修复通用 Webhook 自定义 JSON body 发送 400：body 模板占位符被带换行的测试消息替换后裸换行嵌进 JSON 字符串值里变成非法 JSON；现改为先解析 JSON 结构、再对每个字符串值递归做占位符替换，json.dumps 自动转义特殊字符<br>② 修复 HTTP 4xx 错误提示误导：notify_short_err 对所有 400/404 统一翻译成「SendKey 可能无效」，SendKey 是 Server酱专属概念，通用 Webhook/钉钉/飞书等渠道不该出现；现改为通用「HTTP 4xx，请检查 URL / Token / Content-Type」，并补齐 401/403 识别",
+                    "updated_at": "2026-11-16",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.3/fnmonitor-2.42.3-x86.fpk",
+                            "sha256": "01270dd10535b1685f3472ff30ccb0071cb586e9bc5db94112ba0ffc66fbfc6d",
+                            "size": 724671
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.3/fnmonitor-2.42.3-arm.fpk",
+                            "sha256": "7babfa68bc0694504fd55fbc33c775ffe9157c6ccb2b83287254c6c677a8b893",
+                            "size": 724675
+                        }
+                    }
+                },
                 "2.42.2": {
                     "changelog": "v2.42.2 UPS 低压直流输出修复 · 峰谷电价估算<br>① 修复瓦力方程 W120 等直流输出 UPS 的输出电压 / 电流 / 功率不显示：原逻辑把低于 50V 的输出当成市电切换异常帧整组清空，而 W120 正常工作电压约 19V；现仅过滤 0V 瞬态，功率优先取设备直报的有功功率、无值时用电压 × 电流<br>② 新增峰谷电价估算：设置 →「功耗与电费」可自定义多段时段电价（支持跨零点、最多 12 段，未覆盖时段按基础电价），每日电量按小时归档，今日 / 本月电费、近 30 天统计与定时推送报告均按分时电价分别计费；修改时段后已有小时电量会按新电价重算<br>③ 功耗模块与详情页在启用分时电价后改用本月实际均价推算月度 / 年度电费，并标注「已启用分时电价」",
                     "updated_at": "2026-11-13",

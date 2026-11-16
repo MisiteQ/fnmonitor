@@ -4204,8 +4204,8 @@ def notify_short_err(msg):
         return "SSL/TLS 握手失败"
     if "unreachable" in low:
         return "网络不可达"
-    if "400" in m or "bad request" in low or "404" in m:
-        return "请求被拒（SendKey 可能无效）"
+    if "400" in m or "bad request" in low or "401" in m or "403" in m or "404" in m:
+        return "请求被服务器拒绝（HTTP 4xx，请检查 URL / Token / Content-Type）"
     if "证书" in m or "certificate" in m:
         return "SSL/TLS 握手失败"
     return (m[:60] + "…") if len(m) > 60 else (m or "未知错误")
@@ -4527,6 +4527,17 @@ def _notify_render_body(tpl, subject, body):
                .replace("{time}", now))
 
 
+def _notify_render_obj(obj, subject, body):
+    """递归渲染 dict/list/str 中的占位符，非字符串原样返回。"""
+    if isinstance(obj, str):
+        return _notify_render_body(obj, subject, body)
+    if isinstance(obj, dict):
+        return {k: _notify_render_obj(v, subject, body) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_notify_render_obj(v, subject, body) for v in obj]
+    return obj
+
+
 def notify_webhook_send(ch, subject, body):
     """通用 Webhook：支持自定义 method/content_type/headers/body 模板。HTTP 2xx 即成功。"""
     c = ch.get("config") or {}
@@ -4543,16 +4554,26 @@ def notify_webhook_send(ch, subject, body):
     headers = _notify_parse_headers(c.get("headers"))
     # 构造请求体
     if custom_body:
-        rendered = _notify_render_body(custom_body, subject, body)
         if ct == "json":
+            # 先尝试：把模板当作 JSON 结构解析，再对每个字符串值做占位符替换。
+            # 这样换行/引号等特殊字符会被 json.dumps 自动转义，不会破坏 JSON 结构。
             try:
-                payload_body = json.dumps(json.loads(rendered), ensure_ascii=False).encode("utf-8")
+                tpl_obj = json.loads(custom_body)
+                rendered_obj = _notify_render_obj(tpl_obj, subject, body)
+                payload_body = json.dumps(rendered_obj, ensure_ascii=False).encode("utf-8")
             except Exception:
-                # 模板渲染后不是合法 JSON，按原样发送
-                payload_body = rendered.encode("utf-8")
+                # 模板本身不是合法 JSON——退化为简单字符串替换（form/text 场景）
+                rendered = _notify_render_body(custom_body, subject, body)
+                try:
+                    # 再试一次：字符串替换后可能恰好是合法 JSON
+                    payload_body = json.dumps(json.loads(rendered), ensure_ascii=False).encode("utf-8")
+                except Exception:
+                    payload_body = rendered.encode("utf-8")
         elif ct == "form":
+            rendered = _notify_render_body(custom_body, subject, body)
             payload_body = urllib.parse.urlencode({"body": rendered}).encode()
         else:
+            rendered = _notify_render_body(custom_body, subject, body)
             payload_body = rendered.encode("utf-8")
     else:
         # 默认行为：POST {title, content}
