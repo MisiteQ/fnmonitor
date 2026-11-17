@@ -430,7 +430,7 @@ const SHEETS = {
         { name: 'Server酱', icon: 'bell', key: ['SendKey（SCT 开头）'], get: 'sct.ftqq.com 注册 → 关注「方糖」公众号 → 复制 SendKey' },
         { name: '企业微信群机器人', icon: 'chat', key: ['Webhook 地址'], get: '群设置 → 群机器人 → 添加 → 自定义 → 复制 Webhook' },
         { name: '钉钉群机器人', icon: 'chat', key: ['Webhook 地址', '加签密钥 SEC…（选加签时）'], get: '群设置 → 智能群助手 → 添加机器人 → 自定义 → 选加签安全设置 → 复制 Webhook 和密钥' },
-        { name: '飞书群机器人', icon: 'chat', key: ['Webhook 地址'], get: '群设置 → 群机器人 → 添加机器人 → 自定义 → 复制 Webhook' },
+        { name: '飞书群机器人', icon: 'chat', key: ['Webhook 地址', '加签密钥 / 关键词（按需）'], get: '群设置 → 群机器人 → 添加机器人 → 自定义 → 复制 Webhook；安全设置选了签名校验或自定义关键词就把对应值填上' },
         { name: 'Bark', icon: 'bell', key: ['推送地址'], get: 'iOS 安装 Bark App → 首页复制服务器地址（api.day.app/xxx）' },
         { name: 'PushPlus', icon: 'send', key: ['Token'], get: 'pushplus.plus 微信扫码登录 → 发送消息页复制 Token' },
         { name: '通用 Webhook', icon: 'link', key: ['URL', '可选 method/headers/body 模板'], get: '自行搭建的接收端；默认 POST JSON {"title","content"}' },

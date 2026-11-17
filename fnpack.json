@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.3/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.4/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.4": {
+                    "changelog": "v2.42.4 飞书推送加签修复 · 进程名显示 fnmonitor<br>① 修复飞书群机器人推送失败（issue #34）：新增加签密钥（签名校验）与自定义关键词支持，发送时自动计算 timestamp + sign 并把关键词补在消息开头；错误提示按飞书返回码翻译为可操作建议（19021 签名校验失败 / 19024 关键词不匹配 / 19002 地址或机器人类型不对 / 9499 限流）<br>② 飞书渠道高级设置新增加签密钥、关键词，保留纯文本 / 富文本消息类型选择，内置使用说明与推送渠道设置指南同步更新<br>③ 进程列表不再显示 python3：启动时把内核进程名改为 fnmonitor，fnOS 任务管理器与 top 中可直接看到应用名",
+                    "updated_at": "2026-11-17",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.4/fnmonitor-2.42.4-x86.fpk",
+                            "sha256": "2ba47b553d5f31ee3b88cd5d148339721f42135cf070efced072f5992fc320ed",
+                            "size": 725744
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.4/fnmonitor-2.42.4-arm.fpk",
+                            "sha256": "9e916c17cc5f1a6326ffacd6907ebb7df30fc8667985370e0f0cf50bb729940d",
+                            "size": 725737
+                        }
+                    }
+                },
                 "2.42.3": {
                     "changelog": "v2.42.3 通用 Webhook JSON body 修复 · 错误提示去误导<br>① 修复通用 Webhook 自定义 JSON body 发送 400：body 模板占位符被带换行的测试消息替换后裸换行嵌进 JSON 字符串值里变成非法 JSON；现改为先解析 JSON 结构、再对每个字符串值递归做占位符替换，json.dumps 自动转义特殊字符<br>② 修复 HTTP 4xx 错误提示误导：notify_short_err 对所有 400/404 统一翻译成「SendKey 可能无效」，SendKey 是 Server酱专属概念，通用 Webhook/钉钉/飞书等渠道不该出现；现改为通用「HTTP 4xx，请检查 URL / Token / Content-Type」，并补齐 401/403 识别",
                     "updated_at": "2026-11-16",

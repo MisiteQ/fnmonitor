@@ -3777,7 +3777,7 @@ NOTIFY_CHANNEL_CONFIG_DEFAULTS = {
     "sct": {"key": "", "template": ""},
     "wechat": {"url": "", "msg_type": "markdown", "template": ""},
     "dingtalk": {"url": "", "secret": "", "msg_type": "markdown", "template": ""},
-    "feishu": {"url": "", "msg_type": "text", "template": ""},
+    "feishu": {"url": "", "secret": "", "keyword": "", "msg_type": "text", "template": ""},
     "bark": {"url": "", "icon": "", "sound": "", "group": "", "jump_url": "", "template": ""},
     "pushplus": {"token": "", "channel": "wechat", "template": "txt", "topic": "", "option": "",
                  "msg_template": ""},
@@ -3793,7 +3793,7 @@ NOTIFY_CHANNEL_SECRET_KEYS = {
     "sct": ["key"],
     "wechat": ["url"],
     "dingtalk": ["url", "secret"],
-    "feishu": ["url"],
+    "feishu": ["url", "secret"],
     "bark": ["url"],
     "pushplus": ["token"],
     "webhook": ["url"],
@@ -4380,8 +4380,35 @@ def notify_dingtalk_send(ch, subject, body):
     return False, str(j.get("errmsg") or raw[:80] or "未知错误")
 
 
+def _feishu_err_message(j, raw):
+    """飞书返回码 → 能照着处理的提示（调用方还会再过一遍 notify_short_err）。"""
+    try:
+        code = int(j.get("code"))
+    except (TypeError, ValueError):
+        code = None
+    hints = {
+        19001: "飞书参数不合法：请检查渠道配置",
+        19002: "飞书参数错误：请确认地址是「自定义机器人」Webhook 且完整未被截断",
+        19021: "飞书签名校验失败：请填写机器人安全设置里的加签密钥",
+        19024: "飞书关键词校验失败：请把机器人的自定义关键词填到「关键词」里",
+        9499: "飞书请求过于频繁（限流），请稍后重试",
+    }
+    if code in hints:
+        return hints[code]
+    msg = str(j.get("msg") or j.get("StatusMessage") or "").strip()
+    return "飞书返回 %s：%s" % (code if code is not None else "?", msg or raw[:60] or "未知错误")
+
+
 def notify_feishu_send(ch, subject, body):
-    """飞书群机器人 Webhook：支持 text / post（富文本）两种消息类型。返回 (成功, 错误描述)。"""
+    """飞书群机器人 Webhook：支持 text / post（富文本）两种消息类型。
+
+    安全设置：签名校验（secret）按飞书算法在 body 里带 timestamp + sign；
+    自定义关键词（keyword）会在消息开头自动补一条，避免「关键词不匹配」。
+    返回 (成功, 错误描述)。
+    """
+    import base64
+    import hashlib
+    import hmac
     c = ch.get("config") or {}
     url = (c.get("url") or "").strip()
     if not url:
@@ -4389,30 +4416,45 @@ def notify_feishu_send(ch, subject, body):
     msg_type = (c.get("msg_type") or "text").strip().lower()
     if msg_type not in ("text", "post", "markdown"):
         msg_type = "text"
+    keyword = (c.get("keyword") or "").strip()
     # 自定义模板：覆盖默认的「标题 + 正文」组合
     tpl = (c.get("template") or "").strip()
     if tpl:
         rendered = _notify_render_body(tpl, subject, body)
         if msg_type == "post":
             lines = rendered.replace("\r\n", "\n").split("\n")
+            if keyword and keyword not in rendered:
+                lines = [keyword] + lines
             content = [[{"tag": "text", "text": line}] for line in lines if line]
             payload = {"msg_type": "post", "content": {
                 "post": {"zh_cn": {"title": subject, "content": content}}}}
         else:
+            if keyword and keyword not in rendered:
+                rendered = "%s\n%s" % (keyword, rendered)
             payload = {"msg_type": "text", "content": {"text": rendered}}
     elif msg_type == "post":
         # 飞书 post 富文本：title + content 二维数组
         lines = body.replace("\r\n", "\n").split("\n")
+        if keyword and keyword not in body:
+            lines = [keyword] + lines
         content = [[{"tag": "text", "text": line}] for line in lines if line]
         payload = {"msg_type": "post", "content": {
             "post": {"zh_cn": {"title": subject, "content": content}}}}
-    elif msg_type == "markdown":
-        # 飞书 text 类型实际不支持 markdown，用 interactive 卡片太复杂，这里回退到 text
-        text = "%s\n%s" % (subject, body)
-        payload = {"msg_type": "text", "content": {"text": text}}
     else:
+        # 飞书 text 类型实际不支持 markdown，markdown 也回退到 text
         text = "%s\n%s" % (subject, body)
+        if keyword and keyword not in text:
+            text = "%s\n%s" % (keyword, text)
         payload = {"msg_type": "text", "content": {"text": text}}
+    # 签名校验：飞书算法是 HMAC-SHA256(key=timestamp+"\n"+secret, msg="")，再 base64
+    secret = (c.get("secret") or "").strip()
+    if secret:
+        ts = str(int(time.time()))
+        string_to_sign = "%s\n%s" % (ts, secret)
+        sign = base64.b64encode(hmac.new(string_to_sign.encode("utf-8"), b"",
+                                         digestmod=hashlib.sha256).digest()).decode("utf-8")
+        payload["timestamp"] = ts
+        payload["sign"] = sign
     raw, err = _notify_post_json(url, payload)
     if err:
         return False, err
@@ -4423,7 +4465,7 @@ def notify_feishu_send(ch, subject, body):
     # 飞书响应有两种：{"code":0,"msg":"success"} 或 {"StatusCode":0,"StatusMessage":"success"}
     if j.get("code") == 0 or j.get("StatusCode") == 0:
         return True, ""
-    return False, str(j.get("msg") or j.get("StatusMessage") or raw[:80] or "未知错误")
+    return False, _feishu_err_message(j, raw)
 
 
 def notify_bark_send(ch, subject, body):
@@ -14736,7 +14778,24 @@ def _bind_server(bind_host, port, handler):
     return BoundedHTTPServer((bind_host, port), handler), bind_host
 
 
+def _set_process_name(name="fnmonitor"):
+    """把内核进程名（/proc/<pid>/comm）改成应用名。
+
+    启动命令是 `python3 server.py`，内核默认 comm 为 python3，fnOS 任务管理器 /
+    top 里只能看到 python3；改名后显示 fnmonitor（PR_SET_NAME 上限 15 字符）。
+    仅修改进程名，命令行、PID 文件与启停逻辑不受影响。
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        import ctypes
+        ctypes.CDLL(None).prctl(15, name.encode("utf-8"), 0, 0, 0)  # PR_SET_NAME
+    except Exception:
+        pass
+
+
 def main():
+    _set_process_name()
     ap = argparse.ArgumentParser(description="fnMonitor - fnOS 系统监控后端")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8777)

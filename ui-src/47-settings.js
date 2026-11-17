@@ -401,6 +401,8 @@ function renderNotify(card) {
     ]},
     feishu: { color: '#3370ff', fields: [
       { key: 'url', label: 'Webhook 地址', type: 'password', secret: true, mono: true, placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/…', hint: '群设置 → 群机器人 → 添加机器人 → 自定义' },
+      { key: 'secret', label: '加签密钥', type: 'password', secret: true, mono: true, placeholder: '安全设置里的签名密钥', advanced: true, hint: '机器人安全设置勾了「签名校验」时填，否则留空' },
+      { key: 'keyword', label: '关键词', type: 'text', mono: true, placeholder: '机器人安全设置里的自定义关键词', advanced: true, hint: '勾了「自定义关键词」时填，发送时自动补在消息开头' },
       { key: 'msg_type', label: '消息类型', type: 'seg', options: [['text', '纯文本'], ['post', '富文本']], advanced: true },
     ]},
     bark: { color: '#ff7a00', fields: [
