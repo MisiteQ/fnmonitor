@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.42.4-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.42.5-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。**📢 通知推送系统**（企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / Webhook 共 7 渠道，自定义模板 + 勿扰时段 + 极简推送）与**定时推送报告**（时 / 天 / 周 / 月 / 自定义间隔，17+ 模块 Markdown 汇总）。**🖥 fnOS 事件监控巡检**（主日志库 / 备份任务库 / 影视库 / 相册库 / 音乐库 / Docker Socket / SSH journal / WAN IP 变更共 8 类数据源，异步推送 + 独立开关）。**⚠️ 阈值警告推送**（8 类指标越限 / 升级 / 恢复全链路通知）。**📋 推送历史**（SQLite 分页存储，筛选 + JSON 详情）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.42.4**
+- 当前版本：**v2.42.5**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）、**[mhduiy](https://github.com/mhduiy)**（硬盘温度刷新与 SMART 温度显示一致性修复）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -164,6 +164,7 @@ fnmonitor 不直接接管 USB，而是只读 fnOS「UPS 电源管理」已经启
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.42.5 | **🧹 内置更新备份目录修复**<br><br>① **回滚备份移出应用目录**：内置更新的备份改放到数据目录（`TRIM_PKGVAR/update/_rollback`），安装成功后立即删除，不再在 `@appcenter` 下长期残留一份与程序等体积的 `fnmonitor.bak`<br>② **清理历史遗留**：启动时自动删除旧版本留下的 `fnmonitor.bak`，避免 fnOS 应用管理把它当成「fnmonitor.bak」幽灵应用（删除后重启应用中心或 NAS，条目即从列表消失） |
 | v2.42.4 | **📮 飞书推送加签修复 · 🏷 进程名显示 fnmonitor**（感谢 [@mencleture](https://github.com/mencleture) 反馈 issue [#34](https://github.com/MisiteQ/fnmonitor/issues/34)）<br><br>① **📮 修复飞书群机器人推送失败**：新增加签密钥（签名校验）与自定义关键词支持，发送时自动计算 `timestamp + sign` 并把关键词补在消息开头；错误提示按飞书返回码翻译为可操作建议（19021 签名校验失败 / 19024 关键词不匹配 / 19002 地址或机器人类型不对 / 9499 限流），不再直接回显原始 JSON<br>② **⚙️ 飞书渠道设置补全**：高级设置新增加签密钥、关键词，保留纯文本 / 富文本消息类型选择，内置使用说明与推送渠道设置指南同步更新<br>③ **🏷 进程列表显示应用名**：启动时把内核进程名改为 fnmonitor，fnOS 任务管理器与 top 中不再只显示 python3 |
 | v2.42.3 | **🔔 通用 Webhook JSON body 修复 · 错误提示去误导**（感谢 [@liunaiqiu](https://github.com/liunaiqiu) 反馈 issue [#32](https://github.com/MisiteQ/fnmonitor/issues/32)）<br><br>① **🔧 修复通用 Webhook 自定义 JSON body 发送 400**：body 模板 `{"title":"{title}","message":"{content}"}` 渲染时 `{content}` 被替换成带换行的测试消息，裸换行直接嵌进 JSON 字符串值里变成非法 JSON，后端 `json.loads` 解析失败后退化为直接发送格式错误的内容；现改为先把模板解析成 JSON 结构、再对每个字符串值递归做占位符替换，最后 `json.dumps` 自动转义特殊字符<br>② **🗑 修复 HTTP 4xx 错误提示误导**：`notify_short_err` 对所有 400/404 统一翻译成「SendKey 可能无效」——SendKey 是 Server酱专属概念，通用 Webhook / 钉钉 / 飞书等渠道不该出现；现改为通用「HTTP 4xx，请检查 URL / Token / Content-Type」，并补齐 401/403 的识别 |
 | v2.42.2 | **🔋 UPS 低压直流输出修复 · ⚡ 峰谷电价估算**（感谢 [@hesgang](https://github.com/hesgang) 反馈 issue [#30](https://github.com/MisiteQ/fnmonitor/issues/30)、[@Gynomys](https://github.com/Gynomys) 建议 issue [#31](https://github.com/MisiteQ/fnmonitor/issues/31)）<br><br>① **🔌 修复瓦力方程 W120 等直流输出 UPS 不显示输出电压 / 电流 / 功率**：原逻辑把低于 50V 的输出当成市电切换异常帧整组清空，而 W120 正常工作电压约 19V；现仅过滤 0V 瞬态，功率优先取设备直报的有功功率、无值时用电压 × 电流（样本 19.13V × 1.365A = 26.1W）<br>② **💰 新增峰谷电价估算**：设置 →「功耗与电费」可自定义多段时段电价（跨零点如 23:00–07:00、最多 12 段，未覆盖时段按基础电价），每日电量按小时归档，今日 / 本月电费、近 30 天统计与定时推送报告均按分时电价分别计费；修改时段后已有小时电量会按新电价重算<br>③ **📈 电费口径统一**：功耗模块与详情页在启用分时电价后改用本月实际均价推算月度 / 年度电费，并标注「已启用分时电价」 |

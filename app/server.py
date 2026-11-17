@@ -11382,10 +11382,13 @@ class UpdateManager:
         except Exception as e:
             shutil.rmtree(tmp, ignore_errors=True)
             return False, "安装包解压失败: %s" % e
-        # 备份当前 app/，失败可回滚
-        bak = app_dir + ".bak"
+        # 备份当前 app/，失败可回滚。
+        # 不能放在应用目录同级：fnOS 会把带 manifest/cmd 的目录当成一个应用扫描出来，
+        # 遗留的 fnmonitor.bak 会在应用管理里显示成幽灵应用，所以放到数据目录下。
+        bak = os.path.join(self.data_dir, "update", "_rollback")
         shutil.rmtree(bak, ignore_errors=True)
         try:
+            os.makedirs(os.path.dirname(bak), exist_ok=True)
             shutil.copytree(app_dir, bak)
         except Exception as e:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -11412,6 +11415,8 @@ class UpdateManager:
             shutil.copytree(bak, app_dir)
             shutil.rmtree(tmp, ignore_errors=True)
             return False, "安装失败已回滚: %s" % e
+        # 安装成功，删除备份，避免长期占用空间与误留回滚目录
+        shutil.rmtree(bak, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
         # fnOS 应用中心从 /var/apps/{TRIM_APPNAME}/manifest 读取版本号；
         # 该目录与应用可执行文件目录（TRIM_APPDEST，server.py 所在的 target）
@@ -14794,8 +14799,25 @@ def _set_process_name(name="fnmonitor"):
         pass
 
 
+def _cleanup_legacy_app_backup():
+    """清理旧版内置更新遗留在应用目录同级的 <app_dir>.bak。
+
+    该目录带 manifest/cmd，会被 fnOS 应用管理误扫描成「fnmonitor.bak」幽灵应用，
+    启动时顺手删除；新版更新已把回滚备份改到数据目录。
+    """
+    try:
+        import shutil
+        legacy = os.path.dirname(os.path.abspath(__file__)) + ".bak"
+        if os.path.isdir(legacy):
+            shutil.rmtree(legacy, ignore_errors=True)
+            print("[fnmonitor] 已清理旧版更新遗留目录: %s" % legacy, flush=True)
+    except Exception:
+        pass
+
+
 def main():
     _set_process_name()
+    _cleanup_legacy_app_backup()
     ap = argparse.ArgumentParser(description="fnMonitor - fnOS 系统监控后端")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8777)

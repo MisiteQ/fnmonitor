@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.4/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.5/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.5": {
+                    "changelog": "v2.42.5 内置更新备份目录修复<br>① 内置更新的回滚备份改放到数据目录（TRIM_PKGVAR/update/_rollback），安装成功后立即删除，不再在 @appcenter 下长期残留一份与程序等体积的 fnmonitor.bak<br>② 启动时自动清理旧版本遗留的 fnmonitor.bak，避免 fnOS 应用管理把它当成「fnmonitor.bak」幽灵应用（删除后重启应用中心或 NAS，条目即从列表消失）",
+                    "updated_at": "2026-11-17",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.5/fnmonitor-2.42.5-x86.fpk",
+                            "sha256": "1b6ed7e5079815e89d3528cec7382576953e10a5236a92b60f7e046be97bbd77",
+                            "size": 726169
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.5/fnmonitor-2.42.5-arm.fpk",
+                            "sha256": "06e9104b82254d73d77153ce754c72ae51ebd83d2c7368f20306aee515663038",
+                            "size": 726159
+                        }
+                    }
+                },
                 "2.42.4": {
                     "changelog": "v2.42.4 飞书推送加签修复 · 进程名显示 fnmonitor<br>① 修复飞书群机器人推送失败（issue #34）：新增加签密钥（签名校验）与自定义关键词支持，发送时自动计算 timestamp + sign 并把关键词补在消息开头；错误提示按飞书返回码翻译为可操作建议（19021 签名校验失败 / 19024 关键词不匹配 / 19002 地址或机器人类型不对 / 9499 限流）<br>② 飞书渠道高级设置新增加签密钥、关键词，保留纯文本 / 富文本消息类型选择，内置使用说明与推送渠道设置指南同步更新<br>③ 进程列表不再显示 python3：启动时把内核进程名改为 fnmonitor，fnOS 任务管理器与 top 中可直接看到应用名",
                     "updated_at": "2026-11-17",
