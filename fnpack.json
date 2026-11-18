@@ -34,13 +34,13 @@
                     "packages": {
                         "x86": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-x86.fpk",
-                            "sha256": "036b9e4ad11d691539ae8e7187e8f9d73445795a4c2c23eae956a7637f79a74b",
-                            "size": 729943
+                            "sha256": "87dbce198547efdb4f307cb259324ff1a153cef3e46f3b04694a56e15625298a",
+                            "size": 729929
                         },
                         "arm": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-arm.fpk",
-                            "sha256": "532e91f8d528db8ae91d67a55c35e62b508534ec03308d4e741c98495f16e708",
-                            "size": 729941
+                            "sha256": "ef7edbbfb1d97d02fe4d670593becc35359619af480d0e297fb2732b3cac5d72",
+                            "size": 729934
                         }
                     }
                 },
