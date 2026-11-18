@@ -11298,47 +11298,28 @@ def _app_registry_dirs(app_dir):
 
 
 def sync_app_registry(app_dir=None):
-    """把新版 manifest / 图标 / cmd 同步到 fnOS 应用注册目录，并重建 ui 软链接。
+    """把应用目录里较新的 manifest / 图标写入 fnOS 应用注册目录（只增不改目录结构）。
+
     应用内更新只覆盖 TRIM_APPDEST 下的文件，而应用中心展示的版本号取自注册目录
-    （/var/apps/{app} 或 /vol1/@appcenter/{app} 等）的 manifest；不同步则一直显示旧版本。
-    注册目录版本更高时反向回写应用目录，保证两边一致。
-    返回已同步（或需同步失败）的路径列表。"""
+    （/var/apps/{app} 或 /vol1/@appcenter/{app} 等）的 manifest，不同步就一直是旧版本。
+    这里只覆盖 manifest 与两个图标文件，绝不改动 cmd / ui 目录结构——删除或替换
+    注册目录下的 ui 会让应用中心判定应用损坏并回滚。
+    返回已更新的路径列表。"""
     app_dir = app_dir or os.path.dirname(os.path.abspath(__file__))
     dest_ver = _mf_version(app_dir)
+    if not dest_ver:
+        return []
     done = []
     for reg in _app_registry_dirs(app_dir):
         reg_ver = _mf_version(reg)
-        # 注册目录版本更新（应用中心升级过但应用目录残留旧 manifest）：反向回写
-        if _ver_key(reg_ver) and _ver_key(reg_ver) > _ver_key(dest_ver):
-            try:
-                shutil.copy2(os.path.join(reg, "manifest"),
-                             os.path.join(app_dir, "manifest"))
-                done.append(reg + "(反向)")
-            except Exception:
-                pass
-            continue
-        if not dest_ver:
+        if _ver_key(reg_ver) and _ver_key(reg_ver) >= _ver_key(dest_ver):
             continue
         try:
-            for item in ("manifest", "ICON.PNG", "ICON_256.PNG", "cmd"):
+            for item in ("manifest", "ICON.PNG", "ICON_256.PNG"):
                 s = os.path.join(app_dir, item)
-                if not os.path.exists(s):
+                if not os.path.isfile(s):
                     continue
-                d = os.path.join(reg, item)
-                if os.path.isdir(s):
-                    shutil.copytree(s, d, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(s, d)
-            # 注册目录的 ui 应为指向应用目录 ui 的软链接，更新后重建
-            registry_ui = os.path.join(reg, "ui")
-            dest_ui = os.path.join(app_dir, "ui")
-            if os.path.isdir(dest_ui):
-                if os.path.islink(registry_ui) or os.path.isfile(registry_ui):
-                    os.remove(registry_ui)
-                elif os.path.isdir(registry_ui):
-                    shutil.rmtree(registry_ui, ignore_errors=True)
-                if not os.path.exists(registry_ui):
-                    os.symlink(dest_ui, registry_ui)
+                shutil.copy2(s, os.path.join(reg, item))
             done.append(reg)
         except Exception:
             pass
@@ -11658,8 +11639,8 @@ class UpdateManager:
         # 安装成功，删除备份，避免长期占用空间与误留回滚目录
         shutil.rmtree(bak, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
-        # 把新 manifest / 图标 / cmd 同步到全部候选注册目录并重建 ui 软链接，
-        # 否则应用中心读到的仍是旧 manifest，版本号不刷新（详见 sync_app_registry）
+        # 把新 manifest / 图标同步到全部候选注册目录，否则应用中心读到的仍是旧
+        # manifest，版本号不刷新（详见 sync_app_registry）
         try:
             _synced = sync_app_registry(app_dir)
             if _synced:
@@ -14798,85 +14779,6 @@ def sync_launcher_db(mode=None, port=None):
     return True, "入口数据库已一致"
 
 
-def sync_app_version_db():
-    """把应用版本号写回 fnOS 应用中心数据库（尽力而为，失败静默）。
-
-    应用中心列表里的版本号来自 PostgreSQL（安装/升级时由系统写入）。应用内自更新
-    不经过系统安装流程，库里版本会一直停留在旧值，即使磁盘 manifest 已更新。
-    这里按 information_schema 探测「带 version 类字段 + 带应用标识字段」的表，
-    只更新能按应用名/入口名定位到的行，找不到就什么都不做。
-    非 fnOS（Windows）/ 非 root 环境直接跳过。"""
-    if os.name == "nt":
-        return True, ""
-    try:
-        if os.geteuid() != 0:
-            return True, ""
-    except Exception:
-        pass
-    ver = globals().get("VERSION") or ""
-    if not re.match(r"^\d+\.\d+\.\d+$", ver):
-        return True, ""
-    ids = []
-    for v in (_launcher_launchname(), os.environ.get("TRIM_APPNAME", ""),
-              "fnmonitor"):
-        if v and v not in ids:
-            ids.append(v)
-
-    def psql(db, sql):
-        r = subprocess.run(
-            ["sudo", "-u", "postgres", "psql", "-U", "postgres", "-d", db,
-             "-At", "-v", "ON_ERROR_STOP=1"],
-            input=sql.encode("utf-8"), capture_output=True, timeout=20)
-        if r.returncode != 0:
-            raise RuntimeError(r.stderr.decode("utf-8", "ignore").strip()
-                               or "psql 退出码 %d" % r.returncode)
-        return r.stdout.decode("utf-8", "ignore").strip()
-
-    ver_cols = ("version", "app_version", "pkg_version")
-    id_cols = ("service_name", "app_id", "app_name", "pkg_name", "appname", "name")
-    changed = []
-    # 不同 fnOS 版本把应用元数据放在不同库，逐个探测，库不存在则跳过
-    for db in ("appcenter", "trim_sac", "fnos"):
-        try:
-            rows = psql(db, "SELECT table_name, string_agg(column_name, ',') "
-                            "FROM information_schema.columns WHERE table_schema = 'public' "
-                            "GROUP BY table_name;")
-        except Exception:
-            continue
-        for line in rows.splitlines():
-            table, _, cols = line.partition("|")
-            if not table or not cols:
-                continue
-            lower = {c.strip().lower(): c.strip() for c in cols.split(",")}
-            vcol = next((lower[c] for c in ver_cols if c in lower), None)
-            kcol = next((lower[c] for c in id_cols if c in lower), None)
-            if not vcol or not kcol:
-                continue
-            tq = '"%s"' % table.replace('"', '""')
-            vq = '"%s"' % vcol.replace('"', '""')
-            kq = '"%s"' % kcol.replace('"', '""')
-            for ident in ids:
-                lit = "$fnv$%s$fnv$" % ident
-                try:
-                    cur = psql(db, "SELECT COALESCE((SELECT %s FROM %s WHERE %s = %s LIMIT 1), '');"
-                               % (vq, tq, kq, lit))
-                except Exception:
-                    break
-                if not cur:
-                    continue
-                if cur != ver:
-                    try:
-                        psql(db, "UPDATE %s SET %s = %s WHERE %s = %s;"
-                             % (tq, vq, "$fnv$%s$fnv$" % ver, kq, lit))
-                        changed.append("%s.%s.%s" % (db, table, vcol))
-                    except Exception:
-                        pass
-                break
-    if changed:
-        return True, "应用中心数据库版本已更新: %s" % "、".join(sorted(set(changed)))
-    return True, ""
-
-
 def load_config(data_dir):
     """读取 config.json（逐项容错：单个字段格式错误不影响其余字段，尤其不能让鉴权静默失效）。
     发现旧版明文 auth_password 时自动迁移为 PBKDF2 哈希、删除明文并以 0600 重写文件。"""
@@ -15227,15 +15129,19 @@ def main():
             print("[fnmonitor] 桌面入口配置同步失败: %s" % msg_l)
     except Exception as e:
         print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
-    # 内置更新只覆盖应用目录，应用中心读的是注册目录的 manifest；启动时兜底拉齐，
-    # 保证「旧版本代码执行升级 → 新版启动」这一次也能把版本号刷新过来
-    try:
-        _reg = sync_app_registry(os.path.dirname(os.path.abspath(__file__)))
-        _db_ok, _db_msg = sync_app_version_db()
-        if _reg or _db_msg:
-            print("[fnmonitor] 版本同步：%s %s" % ("、".join(_reg), _db_msg))
-    except Exception as e:
-        print("[fnmonitor] 版本同步失败: %s" % e)
+    # 内置更新只覆盖应用目录，应用中心读的是注册目录的 manifest；启动时兜底同步一次，
+    # 保证「旧版本代码执行升级 → 新版启动」也能把版本号刷新过来。
+    # 必须放到后台线程：这里在主线程且早于 HTTP 服务响应，任何阻塞都会让应用中心
+    # 的健康检查超时、判定启动失败并回滚（曾导致安装后崩溃/回滚）。
+    def _bg_sync_registry():
+        try:
+            _reg = sync_app_registry(os.path.dirname(os.path.abspath(__file__)))
+            if _reg:
+                print("[fnmonitor] 应用注册目录已同步: %s" % "、".join(_reg))
+        except Exception as e:
+            print("[fnmonitor] 应用注册目录同步失败: %s" % e)
+    threading.Thread(target=_bg_sync_registry, name="registry-sync",
+                     daemon=True).start()
     app.collector.start()
     # 硬盘巡检独立线程：与采集循环解耦，全盘 smartctl 不再拖慢 10 秒采样
     scanner = DiskScanner(app.collector.db, config)

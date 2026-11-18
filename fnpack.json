@@ -28,19 +28,19 @@
             "service_port": "8777",
             "releases": {
                 "2.42.7": {
-                    "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号：升级只覆盖应用目录，而应用中心读取的是注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter 等）下的 manifest，两者不同步就一直显示旧版本<br>② 应用启动时自动比对两侧 manifest 版本并双向拉齐，重建 ui 软链接，旧版本代码完成升级、新版本重启后立即生效<br>③ 新增应用中心数据库版本写回：列表版本号来自 PostgreSQL，自更新不写库；启动时探测 appcenter / trim_sac / fnos 库中带版本字段且能按应用标识定位的表并更新<br>④ 注册目录候选覆盖系统盘与存储池两种安装位置，精确目录未命中时按 appname 兜底匹配",
+                    "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号：升级只覆盖应用目录，而应用中心读取的是注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter 等）下的 manifest，两者不同步就一直显示旧版本<br>② 安装完成后与每次启动时都会把较新的 manifest 与图标写入各注册目录；启动时的同步在后台线程执行，不阻塞 HTTP 服务，避免影响应用中心健康检查<br>③ 只覆盖 manifest 与图标文件，不改动 cmd / ui 目录结构，避免应用中心判定应用损坏；注册目录版本更高时不做反向覆盖",
                     "updated_at": "2026-11-18",
                     "os_min_version": "0.9.0",
                     "packages": {
                         "x86": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-x86.fpk",
-                            "sha256": "facf900d72a1f96503ec174db43c56d7796c8366c83f438ba247d3d0c29cca19",
-                            "size": 731135
+                            "sha256": "036b9e4ad11d691539ae8e7187e8f9d73445795a4c2c23eae956a7637f79a74b",
+                            "size": 729943
                         },
                         "arm": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-arm.fpk",
-                            "sha256": "db2af260958bae4b1aa1235f80fe94716d37cd2d4b1efaac94b92aeb200e3c83",
-                            "size": 731144
+                            "sha256": "532e91f8d528db8ae91d67a55c35e62b508534ec03308d4e741c98495f16e708",
+                            "size": 729941
                         }
                     }
                 },
