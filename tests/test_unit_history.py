@@ -338,7 +338,9 @@ class EnergyTrafficTest(unittest.TestCase):
         self.assertAlmostEqual(ps["energy"]["today_kwh"], self.truth[today]["kwh"], places=3)
         mk = sum(v["kwh"] for d, v in self.truth.items() if d.startswith(month))
         self.assertAlmostEqual(ps["energy"]["month_kwh"], mk, places=2)
-        self.assertEqual(ps["cost"]["today_yuan"], round(ps["energy"]["today_kwh"] * 0.6, 2))
+        # 电费按未取整的 kWh 计费，与展示用 4 位小数 kWh 在半分位可能差 1 分
+        self.assertAlmostEqual(ps["cost"]["today_yuan"],
+                               round(ps["energy"]["today_kwh"] * 0.6, 2), delta=0.011)
 
     def test_traffic_totals(self):
         today = dkey(time.time())
