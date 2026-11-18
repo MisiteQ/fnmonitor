@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.8/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.8": {
+                    "changelog": "v2.42.8 内置更新官方安装流程修复<br>① 内置更新改为调用 fnOS 官方 appcenter-cli install-fpk，由系统完成安装、版本登记、生命周期回调与服务重启，修复程序已升级但应用中心仍显示旧版本<br>② 旧版直接覆盖升级后，新版首次启动会使用已下载的当前版本 FPK 自动补走一次官方安装，并通过标记防止重复补装与重启循环<br>③ fnOS 环境找不到官方安装器时停止直接覆盖并提示手动安装；安装日志保存到更新目录 appcenter-install.log",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.8/fnmonitor-2.42.8-x86.fpk",
+                            "sha256": "7cdb68f13029c255ec28fb49b8d37b27df0c9735776ff788b28926b890252ae1",
+                            "size": 731841
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.8/fnmonitor-2.42.8-arm.fpk",
+                            "sha256": "348695264f770522e0babe0a456f9b5dce50c75946afbf55ee131f72dafe4d5e",
+                            "size": 731846
+                        }
+                    }
+                },
                 "2.42.7": {
                     "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号：升级只覆盖应用目录，而应用中心读取的是注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter 等）下的 manifest，两者不同步就一直显示旧版本<br>② 安装完成后与每次启动时都会把较新的 manifest 与图标写入各注册目录；启动时的同步在后台线程执行，不阻塞 HTTP 服务，避免影响应用中心健康检查<br>③ 只覆盖 manifest 与图标文件，不改动 cmd / ui 目录结构，避免应用中心判定应用损坏；注册目录版本更高时不做反向覆盖",
                     "updated_at": "2026-11-18",

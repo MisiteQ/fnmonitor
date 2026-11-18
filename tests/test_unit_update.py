@@ -66,6 +66,7 @@ class UpdateSafetyTest(unittest.TestCase):
         app = os.path.join(cls.tmp, "pkg", "app")
         os.makedirs(app)
         shutil.copy2(SERVER_PY, os.path.join(app, "server.py"))
+        shutil.copytree(os.path.join(os.path.dirname(SERVER_PY), "utils"), os.path.join(app, "utils"))
         shutil.copy2(os.path.join(os.path.dirname(os.path.dirname(SERVER_PY)), "manifest"),
                      os.path.join(cls.tmp, "pkg", "manifest"))
         spec = importlib.util.spec_from_file_location("fnm_server_update", os.path.join(app, "server.py"))
@@ -236,6 +237,59 @@ class UpdateSafetyTest(unittest.TestCase):
         self.assertFalse(info["ok"])
         self.assertTrue(info["error"])
         json.dumps(info)
+
+    def test_fnos_install_uses_official_appcenter(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        with mock.patch.object(self.S, "_find_appcenter_cli", return_value="/usr/bin/appcenter-cli"), \
+                mock.patch.object(self.S, "_start_appcenter_install", return_value=(True, "ok")) as start:
+            ok, msg = self.um.install_fpk(p)
+        self.assertTrue(ok, msg)
+        self.assertEqual(start.call_args.kwargs["cli"], "/usr/bin/appcenter-cli")
+        self.assertEqual(os.path.abspath(start.call_args.args[0]), os.path.abspath(p))
+        self.assertTrue(os.path.exists(self.S._appcenter_install_marker(p)))
+
+    def test_fnos_without_cli_refuses_direct_overwrite(self):
+        p = os.path.join(self.d, "x.fpk")
+        with open(p, "wb") as f:
+            f.write(b"not-an-fpk")
+        with mock.patch.object(self.S, "_find_appcenter_cli", return_value=""), \
+                mock.patch.object(self.S.os, "name", "posix"), \
+                mock.patch.dict(self.S.os.environ, {"TRIM_APPDEST": "/var/apps/fnmonitor/target"}):
+            ok, msg = self.um.install_fpk(p)
+        self.assertFalse(ok)
+        self.assertIn("appcenter-cli", msg)
+
+    def test_appcenter_install_starts_detached(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        log_path = os.path.join(self.d, "update", "appcenter-install.log")
+        with mock.patch.object(self.S.subprocess, "Popen", return_value=proc) as popen, \
+                mock.patch.object(self.S.time, "sleep"):
+            ok, msg = self.S._start_appcenter_install(p, log_path, cli="/usr/bin/appcenter-cli")
+        self.assertTrue(ok, msg)
+        self.assertEqual(popen.call_args.args[0], ["/usr/bin/appcenter-cli", "install-fpk", os.path.abspath(p)])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertIs(popen.call_args.kwargs["stdin"], self.S.subprocess.DEVNULL)
+
+    def test_legacy_update_reinstalls_only_once(self):
+        os.makedirs(self.um.update_dir(), exist_ok=True)
+        name = "fnmonitor-%s-%s.fpk" % (self.S.VERSION, self.um.detect_arch())
+        p = os.path.join(self.um.update_dir(), name)
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        with mock.patch.object(self.S, "_find_appcenter_cli", return_value="/usr/bin/appcenter-cli"), \
+                mock.patch.object(self.S, "_start_appcenter_install", return_value=(True, "ok")) as start:
+            first = self.S._reinstall_legacy_update(self.um)
+            second = self.S._reinstall_legacy_update(self.um)
+        self.assertTrue(first[0], first[1])
+        self.assertFalse(second[0])
+        self.assertEqual(start.call_count, 1)
+        self.assertTrue(os.path.exists(self.S._appcenter_install_marker(p)))
 
 
 if __name__ == "__main__":

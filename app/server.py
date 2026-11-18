@@ -11326,6 +11326,64 @@ def sync_app_registry(app_dir=None):
     return done
 
 
+_APPCENTER_CLI_PATHS = ("/usr/bin/appcenter-cli", "/usr/local/bin/appcenter-cli",
+                        "/usr/sbin/appcenter-cli")
+
+
+def _find_appcenter_cli():
+    """定位 fnOS 官方安装器；应用内更新必须经由它登记版本与执行生命周期回调。"""
+    env = (os.environ.get("APPCENTER_CLI") or "").strip()
+    if env and os.path.isfile(env) and os.access(env, os.X_OK):
+        return env
+    for path in _APPCENTER_CLI_PATHS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return shutil.which("appcenter-cli") or ""
+
+
+def _appcenter_install_marker(fpk_path):
+    return fpk_path + ".appcenter"
+
+
+def _write_appcenter_install_marker(fpk_path):
+    """在启动官方安装前落标记；安装会终止本进程，不能等返回后再写。"""
+    with open(_appcenter_install_marker(fpk_path), "w", encoding="utf-8") as f:
+        f.write("%s\n%s\n" % (VERSION, time.strftime("%Y-%m-%d %H:%M:%S")))
+
+
+def _appcenter_log_tail(path, limit=1600):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()[-limit:].strip()
+    except OSError:
+        return ""
+
+
+def _start_appcenter_install(fpk_path, log_path, cli=None):
+    """脱离当前进程调用 appcenter-cli install-fpk，由 fnOS 完成安装、登记和重启。"""
+    cli = cli or _find_appcenter_cli()
+    if not cli:
+        return False, "未找到 fnOS appcenter-cli，请在应用中心手动安装已下载的 FPK"
+    fpk_path = os.path.abspath(fpk_path)
+    if not os.path.isfile(fpk_path):
+        return False, "安装包不存在: %s" % fpk_path
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "ab") as logf:
+            proc = subprocess.Popen(
+                [cli, "install-fpk", fpk_path], stdout=logf,
+                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                start_new_session=True, cwd=os.path.dirname(fpk_path))
+    except OSError as e:
+        return False, "启动应用中心安装器失败: %s" % e
+    time.sleep(2.0)  # 暴露“手动安装未开启”等立即错误，正常安装则由系统随后停止本进程
+    rc = proc.poll()
+    if rc is not None and rc != 0:
+        tail = _appcenter_log_tail(log_path)
+        return False, "应用中心安装失败（退出码 %s）%s" % (rc, ("：" + tail) if tail else "")
+    return True, "已交由 fnOS 应用中心安装，版本登记完成后服务将自动重启…"
+
+
 class UpdateManager:
     """基于 GitHub Releases 的在线更新：检查新版本、把安装包下载到 NAS（代理下载，
     解决浏览器直连 GitHub 慢的问题）。自动检查由采集线程按周期在后台线程中触发。
@@ -11561,10 +11619,9 @@ class UpdateManager:
         self._job = threading.Thread(target=_run, name="fnmonitor-update", daemon=True)
         self._job.start()
 
-    # ---- 自动安装（解包 fpk 覆盖应用目录后自我重启） ----
+    # ---- 自动安装（fnOS 走官方安装器；非 fnOS 开发环境保留直接解包兜底） ----
     def install_fpk(self, fpk_path, expect_sha256=None):
-        """解包 fpk（app.tgz + cmd + manifest）并覆盖应用目录（先备份，校验失败自动回滚），
-        成功后延迟 1.5 秒替换当前进程重启服务。返回 (成功?, 消息)。"""
+        """优先调用 appcenter-cli，确保应用中心版本记录与生命周期回调同步更新。"""
         import shutil
         import sys
         import tarfile
@@ -11578,6 +11635,16 @@ class UpdateManager:
                 return False, "读取安装包失败: %s" % e
             if not hmac.compare_digest(h.hexdigest(), str(expect_sha256).lower()):
                 return False, "安装包 SHA256 校验失败，已拒绝安装"
+        cli = _find_appcenter_cli()
+        if cli:
+            try:
+                _write_appcenter_install_marker(fpk_path)
+            except OSError:
+                pass
+            log_path = os.path.join(self.data_dir, "update", "appcenter-install.log")
+            return _start_appcenter_install(fpk_path, log_path, cli=cli)
+        if os.name != "nt" and (os.environ.get("TRIM_APPDEST") or os.path.isdir("/var/apps")):
+            return False, "未找到 fnOS appcenter-cli，已停止直接覆盖安装；请在应用中心手动安装: %s" % fpk_path
         app_dir = os.path.dirname(os.path.abspath(__file__))       # 应用安装目录（NAS 上 server.py 平铺于 TRIM_APPDEST）
         tmp = os.path.join(self.data_dir, "update", "_extract")
         shutil.rmtree(tmp, ignore_errors=True)
@@ -11664,6 +11731,32 @@ class UpdateManager:
     def downloaded_path(self):
         with self._lock:
             return self._status.get("downloaded_file") or ""
+
+
+def _reinstall_legacy_update(updater):
+    """旧版直接解包升级后，用其留下的已校验 FPK 补走一次官方安装。
+
+    新代码第一次随旧版内置更新启动时，应用中心记录仍可能停留在升级前版本。
+    每个 FPK 只补装一次，避免官方安装失败或服务重启造成循环。
+    """
+    if not re.match(r"^\d+\.\d+\.\d+$", VERSION or ""):
+        return False, ""
+    cli = _find_appcenter_cli()
+    if not cli:
+        return False, ""
+    name = "fnmonitor-%s-%s.fpk" % (VERSION, updater.detect_arch())
+    fpk_path = os.path.join(updater.update_dir(), name)
+    if not os.path.isfile(fpk_path) or os.path.exists(_appcenter_install_marker(fpk_path)):
+        return False, ""
+    try:
+        _write_appcenter_install_marker(fpk_path)
+    except OSError as e:
+        return False, "记录官方补装状态失败: %s" % e
+    log_path = os.path.join(updater.update_dir(), "appcenter-install.log")
+    ok, msg = _start_appcenter_install(fpk_path, log_path, cli=cli)
+    if ok:
+        return True, "检测到旧版直接覆盖升级，正在补走官方安装以刷新应用中心版本"
+    return False, msg
 
 
 # ---------------------------------------------------------------------------
@@ -15129,10 +15222,9 @@ def main():
             print("[fnmonitor] 桌面入口配置同步失败: %s" % msg_l)
     except Exception as e:
         print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
-    # 内置更新只覆盖应用目录，应用中心读的是注册目录的 manifest；启动时兜底同步一次，
-    # 保证「旧版本代码执行升级 → 新版启动」也能把版本号刷新过来。
-    # 必须放到后台线程：这里在主线程且早于 HTTP 服务响应，任何阻塞都会让应用中心
-    # 的健康检查超时、判定启动失败并回滚（曾导致安装后崩溃/回滚）。
+    # manifest 同步只修正磁盘文件；应用中心登记必须由 appcenter-cli 完成。
+    # 旧版直接解包升级留下的 FPK 在新版首次启动时补走一次官方安装，整个过程
+    # 放在后台线程，避免阻塞 HTTP 服务健康检查。
     def _bg_sync_registry():
         try:
             _reg = sync_app_registry(os.path.dirname(os.path.abspath(__file__)))
@@ -15140,6 +15232,13 @@ def main():
                 print("[fnmonitor] 应用注册目录已同步: %s" % "、".join(_reg))
         except Exception as e:
             print("[fnmonitor] 应用注册目录同步失败: %s" % e)
+        try:
+            time.sleep(3.0)
+            _official_ok, _official_msg = _reinstall_legacy_update(app.updater)
+            if _official_msg:
+                print("[fnmonitor] %s" % _official_msg, flush=True)
+        except Exception as e:
+            print("[fnmonitor] 应用中心官方补装失败: %s" % e, flush=True)
     threading.Thread(target=_bg_sync_registry, name="registry-sync",
                      daemon=True).start()
     app.collector.start()
