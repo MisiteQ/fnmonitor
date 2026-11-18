@@ -320,7 +320,8 @@ const SHEETS = {
           : kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
         const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
         const ppOn = !!(S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length);
-        setText(x.rate, ok(co.rate_yuan_per_kwh) ? (ppOn ? `基础电价 ${co.rate_yuan_per_kwh} 元/kWh · 已启用分时电价` : `电价 ${co.rate_yuan_per_kwh} 元/kWh`) : '');
+        const rateTxt = ok(co.rate_yuan_per_kwh) ? (+co.rate_yuan_per_kwh).toFixed(3) : '';
+        setText(x.rate, rateTxt ? (ppOn ? `基础电价 ${rateTxt} 元/kWh · 已启用分时电价` : `电价 ${rateTxt} 元/kWh`) : '');
         setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
         setHTML(x.est, ep ? kvHTML([['CPU TDP（无 RAPL 时）', ep.tdp_w + ' W'], ['单盘典型功耗', ep.disk_typical_w + ' W'], ['网卡固定功耗', ep.nic_fixed_w + ' W'], ['主板 / 其他底座', ep.base_w + ' W']]) : '');
       };
@@ -351,7 +352,7 @@ const SHEETS = {
         dnumU(x.rx, x.rxU, rOk ? +c.rx_rate : null, F.rate); dnumU(x.tx, x.txU, rOk ? +c.tx_rate : null, F.rate);
         setText(x.netN, !run ? '容器未运行' : c.net_host ? 'host 网络模式：与宿主机共用网卡，Docker 不单独统计' : !rOk ? '采样中，约 30 秒后显示' : c.net_src === 'stats' ? '按 docker stats 的累计读数差分估算（只有 3 位有效数字，低速时偏粗）' : '容器网络命名空间计数器差分，精确到字节');
         const bb = S.ctrBuf[c.id]; sp.set([{ values: run && bb && bb.length > 1 ? bb : [0, 0] }], { min: 0, max: Math.max(5, ...(bb || [0])), live: run ? 'ink' : 'none' });
-        setHTML(x.kv, kvHTML([['镜像', `<span class="mono">${esc(c.image)}</span>`], ['容器 ID', `<span class="mono">${esc(c.id)}</span>`], ['状态', esc(c.status_zh || zhStatus(c.status) || c.state || '--')], ['端口', ctrPorts(c.ports).length ? ctrPorts(c.ports).map(p => `<span class="port">${esc(p)}</span>`).join(' ') : '<span class="faint">无映射</span>'], ['内存', run && c.mem_usage ? `${esc(c.mem_usage)}${c.mem_percent ? `（${esc(c.mem_percent)}%）` : ''}` : '<span class="faint">—</span>'], ['累计流量', run && !c.net_host && (ok(c.net_in_bytes) || c.net) ? (ok(c.net_in_bytes) && ok(c.net_out_bytes) ? `↓ ${F.bytesStr(c.net_in_bytes)} · ↑ ${F.bytesStr(c.net_out_bytes)}<div class="sub">自容器启动</div>` : esc(c.net)) : '<span class="faint">—</span>'], ['创建时间', dash(c.created)]]));
+        setHTML(x.kv, kvHTML([['镜像', `<span class="mono">${esc(c.image)}</span>`], ['容器 ID', `<span class="mono">${esc(c.id)}</span>`], ['状态', esc(c.status_zh || zhStatus(c.status) || c.state || '--')], ['端口', ctrPorts(c.ports).length ? ctrPorts(c.ports).map(p => `<span class="port">${esc(p)}</span>`).join(' ') : (c.net_host ? '<span class="faint">host 网络（与宿主机共用端口）</span>' : '<span class="faint">无映射</span>')], ['内存', run && c.mem_usage ? `${esc(c.mem_usage)}${c.mem_percent ? `（${esc(c.mem_percent)}%）` : ''}` : '<span class="faint">—</span>'], ['累计流量', run && !c.net_host && (ok(c.net_in_bytes) || c.net) ? (ok(c.net_in_bytes) && ok(c.net_out_bytes) ? `↓ ${F.bytesStr(c.net_in_bytes)} · ↑ ${F.bytesStr(c.net_out_bytes)}<div class="sub">自容器启动</div>` : esc(c.net)) : '<span class="faint">—</span>'], ['创建时间', dash(c.created)]]));
       };
     },
   },

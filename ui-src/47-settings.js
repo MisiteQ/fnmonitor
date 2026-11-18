@@ -96,6 +96,7 @@ function controlFor(it, row) {
   }
   if (it.type === 'colorspec') return colorSpec();
   if (it.type === 'priceperiods') return pricePeriods(it, row);
+  if (it.type === 'diskspec') return diskSpec(it, row);
   if (it.type === 'action') { const b = mount(`<button class="btn ${it.danger ? 'danger' : ''}" type="button">${esc(it.button)}</button>`); b.onclick = () => it.run(b, row); return b; }
   if (it.type === 'info') { const el = mount(`<div class="set-info"></div>`); el.sync = () => setHTML(el, it.html()); el.sync(); return el; }
 }
@@ -127,7 +128,7 @@ function pricePeriods(it, row) {
         <input class="textfield mono" type="time" value="${esc(p.start || '')}" data-f="start" aria-label="开始时间">
         <span class="faint">至</span>
         <input class="textfield mono" type="time" value="${esc(p.end || '')}" data-f="end" aria-label="结束时间">
-        <input class="textfield mono" type="number" min="0" max="10" step="0.01" value="${isFinite(+p.rate) ? p.rate : ''}" data-f="rate" aria-label="电价" placeholder="0.60">
+        <input class="textfield mono" type="number" min="0" max="10" step="0.001" value="${isFinite(+p.rate) ? p.rate : ''}" data-f="rate" aria-label="电价" placeholder="0.600">
         <span class="faint">元/kWh</span>
         <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该时段">${ic('x')}</button>
       </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加时段</button><span class="faint">没列出的时段按基础电价算；跨零点可填 23:00 至 07:00</span></div>`;
@@ -153,6 +154,50 @@ function pricePeriods(it, row) {
       if (arr.length >= 12) { toast('最多 12 个时段', { icon: 'alert' }); return; }
       const br = +(S.cfg && S.cfg.power_rate_yuan);
       arr.push({ start: '22:00', end: '08:00', rate: br > 0 ? br : 0.6 });
+      it.set(arr, row);
+    }
+  });
+  el.sync = draw; draw(); return el;
+}
+/* 硬盘功耗清单（3.5/2.5 寸机械、固态）：按「类型 × 数量 × 单盘瓦数」合计；
+   留空则沿用自动识别（旋转 / 固态）与「单盘典型功耗」。 */
+const DISK_KINDS = [['hdd35', '3.5 寸机械'], ['hdd25', '2.5 寸机械'], ['ssd', '固态']];
+function diskSpec(it, row) {
+  const el = mount('<div class="pp-list"></div>');
+  const list = () => { const v = it.get(); return Array.isArray(v) ? v.map(d => Object.assign({}, d)) : []; };
+  const total = a => a.reduce((s, d) => s + (+d.count || 0) * (+d.watt || 0), 0);
+  const draw = () => {
+    const arr = list();
+    el.innerHTML = arr.map((d, i) => `<div class="pp-row" data-i="${i}">
+        <select class="textfield" data-f="type" aria-label="硬盘类型">${DISK_KINDS.map(([v, l]) => `<option value="${v}"${d.type === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <input class="textfield mono" type="number" min="1" max="64" step="1" value="${isFinite(+d.count) ? d.count : ''}" data-f="count" aria-label="数量" style="width:5em">
+        <span class="faint">块 ×</span>
+        <input class="textfield mono" type="number" min="0" max="50" step="0.5" value="${isFinite(+d.watt) ? d.watt : ''}" data-f="watt" aria-label="单盘功耗" style="width:5.5em">
+        <span class="faint">W</span>
+        <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该设备">${ic('x')}</button>
+      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加设备</button><span class="faint">${arr.length ? `硬盘合计 ${total(arr).toFixed(1)} W` : '留空则按机械 / 固态自动识别，单盘功耗见下方'}</span></div>`;
+  };
+  el.addEventListener('change', e => {
+    const inp = e.target.closest('[data-f]'); if (!inp) return;
+    const arr = list(), i = +inp.closest('.pp-row').dataset.i, f = inp.dataset.f;
+    if (!arr[i]) return;
+    if (f === 'type') arr[i].type = inp.value;
+    else {
+      const n = parseFloat(inp.value);
+      if (!isFinite(n)) { draw(); return; }
+      if (f === 'count' && (n < 1 || n > 64)) { toast('数量需在 1 – 64 之间', { icon: 'alert' }); draw(); return; }
+      if (f === 'watt' && (n < 0 || n > 50)) { toast('单盘功耗需在 0 – 50 W 之间', { icon: 'alert' }); draw(); return; }
+      arr[i][f] = f === 'count' ? Math.round(n) : n;
+    }
+    it.set(arr, row);
+  });
+  el.addEventListener('click', e => {
+    const del = e.target.closest('[data-del]');
+    if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+    if (e.target.closest('[data-add]')) {
+      const arr = list();
+      if (arr.length >= 8) { toast('最多 8 条设备', { icon: 'alert' }); return; }
+      arr.push({ type: 'hdd35', count: 1, watt: 8 });
       it.set(arr, row);
     }
   });
@@ -189,10 +234,11 @@ const SET_SCHEMA = [
   ] },
   { id: 'thresholds', title: '提醒阈值', icon: 'alert', desc: '平时不着色；超过警告阈值显示暖橙，超过严重阈值显示红色。总览结论、问题提示、趋势阈值线与负载色阶都使用这里的数值，健康报告也使用同一套阈值。', custom: renderThresholds },
   { id: 'power', title: '功耗与电费', icon: 'bolt', desc: '用于电费计算，以及无 RAPL 时的整机功耗估算。', items: [
-    cfgItem('power_rate_yuan', '基础电价', 'number', { min: 0, max: 10, step: 0.01, unit: '元/kWh', hint: '未列入下方分时时段（平段）的用电按此电价计算' }),
-    cfgItem('power_price_periods', '分时电价（峰谷）', 'priceperiods', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length) ? '已启用，电费按各时段电价分别计费；修改时段后已有小时电量会按新电价重算' : '不添加时段则全部按基础电价计算；添加后按各时段电价分别计费', help: '适合峰谷电价的地区：例如夜间（23:00–07:00）半价、白天原价。时段按本地时间匹配，跨零点时段可填 23:00 至 07:00；时段重叠时按靠前的时段计算。' }),
+    cfgItem('power_rate_yuan', '基础电价', 'number', { min: 0, max: 10, step: 0.001, unit: '元/kWh', hint: '支持 3 位小数（如 0.538）；未列入下方分时时段（平段）的用电按此电价计算' }),
+    cfgItem('power_price_periods', '分时电价（峰谷）', 'priceperiods', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length) ? '已启用，电费按各时段电价分别计费；修改时段后已有小时电量会按新电价重算' : '不添加时段则全部按基础电价计算；添加后按各时段电价分别计费', help: '适合峰谷电价的地区：例如夜间（23:00–07:00）半价、白天原价。时段按本地时间匹配，跨零点时段可填 23:00 至 07:00；时段重叠时按靠前的时段计算；电价支持 3 位小数。' }),
     cfgItem('power_tdp_w', 'CPU TDP', 'number', { min: 5, max: 500, unit: 'W', hint: 'RAPL 不可用时（AMD / ARM）的估算基线；ARM SoC 建议 15–35 W' }),
-    cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块活动硬盘，3.5 寸 HDD 约 8 W，SSD 约 3 W' }),
+    cfgItem('power_disks', '硬盘功耗清单', 'diskspec', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_disks) && S.cfg.power_disks.length) ? '已按清单合计硬盘功耗（休眠盘不再单独扣除）' : '留空则自动识别机械 / 固态；想区分 3.5 寸与 2.5 寸机械盘，可按类型 + 数量 + 单盘瓦数添加', help: '自动识别只能区分旋转盘与固态盘，分不出机械盘尺寸。在这里按「类型 + 数量 + 单盘瓦数」列出你的硬盘，整机功耗里的硬盘部分就按清单合计；2.5 寸 HDD 通常 2–4 W，3.5 寸 HDD 空闲 5–8 W，SSD 约 2–3 W。清单为空时沿用「单盘典型功耗」与自动识别。' }),
+    cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', showIf: () => !(S.cfg && Array.isArray(S.cfg.power_disks) && S.cfg.power_disks.length), hint: '每块活动机械盘按此计（3.5 寸约 8 W，2.5 寸约 3 W）；固态固定 2.5 W' }),
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
     cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0.5, unit: 'W', hint: 'RAPL 只测 CPU 封装，整机估算叠加此底座，可按插座实测补差' }),
   ] },

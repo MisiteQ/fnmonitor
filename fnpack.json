@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.5/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.6/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.6": {
+                    "changelog": "v2.42.6 通知 Webhook 数值类型修复 · 功耗硬盘细分 · 容器端口识别<br>① 通用 Webhook 自定义 JSON 模板里写死的纯数字（如 Gotify 的 \"priority\":\"0\"）自动转成数字类型，不再因字段类型不符被服务端 400 拒绝；4xx 失败时回显响应体内容<br>② 功耗与电费新增「硬盘功耗清单」：可按 3.5 寸机械 / 2.5 寸机械 / 固态分别填写数量与单盘瓦数（issue #36）；基础电价与分时电价支持 3 位小数<br>③ 已停止容器的端口用 docker inspect 补齐，host 网络容器显示「host 网络」而非「无端口映射」（issue #37）",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.6/fnmonitor-2.42.6-x86.fpk",
+                            "sha256": "84fc3ca950b861f81d1b30bf0642d3d09c84f373d1f0e2436d4ba2396dad75f8",
+                            "size": 729641
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.6/fnmonitor-2.42.6-arm.fpk",
+                            "sha256": "cec2b7050bb111309534573a3a02b687a42f1ea54224d3cc84881770d374993c",
+                            "size": 729645
+                        }
+                    }
+                },
                 "2.42.5": {
                     "changelog": "v2.42.5 内置更新备份目录修复<br>① 内置更新的回滚备份改放到数据目录（TRIM_PKGVAR/update/_rollback），安装成功后立即删除，不再在 @appcenter 下长期残留一份与程序等体积的 fnmonitor.bak<br>② 启动时自动清理旧版本遗留的 fnmonitor.bak，避免 fnOS 应用管理把它当成「fnmonitor.bak」幽灵应用（删除后重启应用中心或 NAS，条目即从列表消失）",
                     "updated_at": "2026-11-17",

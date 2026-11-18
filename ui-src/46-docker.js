@@ -112,7 +112,7 @@ defineModule({
       cs.forEach(c => {
         const row = mount(`<div class="ctr" data-name="${esc(c.name)}" tabindex="0" role="button" aria-label="容器 ${esc(c.name)}">
           <div class="ctr-name"><span class="sdot" data-ref="dot"></span><div class="t"><b>${esc(c.name)}</b><small title="${esc(c.image)}">${esc(c.image)}</small></div></div>
-          <div class="ports">${ctrPorts(c.ports).length ? ctrPorts(c.ports).slice(0, 4).map(p => `<span class="port">${esc(p)}</span>`).join('') + (ctrPorts(c.ports).length > 4 ? `<span class="port">+${ctrPorts(c.ports).length - 4}</span>` : '') : '<span class="faint" style="font-size:12px">无端口映射</span>'}</div>
+          <div class="ports">${ctrPorts(c.ports).length ? ctrPorts(c.ports).slice(0, 4).map(p => `<span class="port">${esc(p)}</span>`).join('') + (ctrPorts(c.ports).length > 4 ? `<span class="port">+${ctrPorts(c.ports).length - 4}</span>` : '') : c.net_host ? '<span class="faint" style="font-size:12px" title="host 网络模式直接占用宿主机端口，没有独立映射">host 网络</span>' : '<span class="faint" style="font-size:12px">无端口映射</span>'}</div>
           <div class="ctr-cpu"><div class="spk" data-ref="sp"></div><b data-ref="cpu"></b></div>
           <div class="ctr-mem"><b data-ref="mem"></b><small data-ref="memp"></small></div>
           <div class="ctr-net" data-ref="net"></div>

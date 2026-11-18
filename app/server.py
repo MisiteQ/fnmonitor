@@ -105,7 +105,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -171,6 +171,49 @@ def sanitize_price_periods(raw):
         if len(out) >= 12:
             break
     return out
+
+
+# ---------------------------------------------------------------------------
+# 硬盘功耗细分（issue #36）
+# ---------------------------------------------------------------------------
+# config.power_disks = [{"type": "hdd35", "count": 2, "watt": 8}, ...]
+# 用户自己声明硬盘清单，能区分 3.5 寸机械 / 2.5 寸机械 / 固态（自动识别只能分出
+# 旋转与固态）。清单非空时硬盘功耗直接按 count*watt 合计；为空则沿用自动识别。
+POWER_DISK_TYPES = ("hdd35", "hdd25", "ssd")
+POWER_DISK_LABELS = {"hdd35": "3.5 寸机械硬盘", "hdd25": "2.5 寸机械硬盘", "ssd": "固态硬盘"}
+
+
+def sanitize_power_disks(raw):
+    """校验 / 清洗硬盘功耗清单：类型非法或数量无效的行直接丢弃，最多保留 8 行。"""
+    out = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        t = str(it.get("type") or "").strip().lower()
+        if t not in POWER_DISK_TYPES:
+            continue
+        try:
+            cnt = int(float(it.get("count")))
+            watt = float(it.get("watt"))
+        except Exception:
+            continue
+        if cnt <= 0 or not math.isfinite(watt):
+            continue
+        out.append({"type": t, "count": max(1, min(cnt, 64)),
+                    "watt": round(max(0.0, min(50.0, watt)), 2)})
+        if len(out) >= 8:
+            break
+    return out
+
+
+def power_disks_total(config):
+    """配置了硬盘清单时返回 (合计瓦数, 单盘均值)，未配置返回 (None, None)。"""
+    rows = sanitize_power_disks((config or {}).get("power_disks"))
+    if not rows:
+        return None, None
+    total = sum(r["count"] * r["watt"] for r in rows)
+    cnt = sum(r["count"] for r in rows)
+    return round(total, 2), (round(total / cnt, 2) if cnt else None)
 
 
 def period_rate(minute, periods, base_rate):
@@ -4190,6 +4233,9 @@ def notify_short_err(msg):
     """把 SMTP / HTTP 的原始报错翻成一句能看懂的话。"""
     m = (msg or "").strip().replace("\n", " ")
     low = m.lower()
+    # 各渠道自己拼的 HTTP 错误已带状态码与响应体（如 Gotify 的字段类型错误），原样保留
+    if low.startswith("http ") or "http " in low[:6]:
+        return m[:180]
     if "auth" in low or "535" in m or "username and password" in low:
         return "认证失败（账号或授权码错误）"
     if "timed out" in low or "timeout" in low:
@@ -4569,10 +4615,27 @@ def _notify_render_body(tpl, subject, body):
                .replace("{time}", now))
 
 
+_NOTIFY_PLACEHOLDERS = ("{title}", "{content}", "{text}", "{time}")
+_NOTIFY_NUM_RE = re.compile(r"^-?(?:0|[1-9]\d{0,15})(?:\.\d{1,6})?$")
+
+
+def _notify_coerce_number(tpl, rendered):
+    """模板里写死的纯数字字符串转成 JSON 数字。
+    部分服务（如 Gotify）要求 priority 等字段必须是整型，传 "0" 会直接 400；
+    含占位符的动态内容（标题、正文）保持字符串，避免把正文里的数字改成数字类型。"""
+    if not isinstance(rendered, str):
+        return rendered
+    if any(p in tpl for p in _NOTIFY_PLACEHOLDERS):
+        return rendered
+    if _NOTIFY_NUM_RE.match(rendered):
+        return float(rendered) if "." in rendered else int(rendered)
+    return rendered
+
+
 def _notify_render_obj(obj, subject, body):
     """递归渲染 dict/list/str 中的占位符，非字符串原样返回。"""
     if isinstance(obj, str):
-        return _notify_render_body(obj, subject, body)
+        return _notify_coerce_number(obj, _notify_render_body(obj, subject, body))
     if isinstance(obj, dict):
         return {k: _notify_render_obj(v, subject, body) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -4647,6 +4710,14 @@ def notify_webhook_send(ch, subject, body):
             resp.read()
         return True, ""
     except urllib.error.HTTPError as e:
+        # 4xx/5xx 往往在响应体里写明原因（如 Gotify 的字段类型错误），回显出来便于排错
+        detail = ""
+        try:
+            detail = re.sub(r"\s+", " ", e.read().decode("utf-8", "replace")).strip()
+        except Exception:
+            pass
+        if detail:
+            return False, "HTTP %d：%s（%s）" % (e.code, (e.reason or "")[:60], detail[:120])
         return False, "HTTP %d：%s" % (e.code, (e.reason or "")[:80])
     except Exception as e:
         return False, str(e)
@@ -8256,6 +8327,44 @@ def _docker_uptime_zh(status):
     return parse_docker_status(status)["uptime"]
 
 
+def docker_inspect_ports(ids):
+    """docker ps 的 Ports 对已停止容器为空，用 docker inspect 补齐端口（issue #37）：
+    HostConfig.PortBindings 是配置里声明的映射，Config.ExposedPorts 是镜像暴露的端口。
+    返回 {容器短 ID: "0.0.0.0:8080->80/tcp, 5432/tcp"}，与 docker ps 的格式一致。"""
+    if not ids:
+        return {}
+    fmt = ('{"id":"{{.Id}}","bindings":{{json .HostConfig.PortBindings}},'
+           '"exposed":{{json .Config.ExposedPorts}}}')
+    out, _rc = run_cmd(["docker", "inspect", "--format", fmt] + list(ids), timeout=25)
+    res = {}
+    for line in (out or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            j = json.loads(line)
+        except Exception:
+            continue
+        binds = j.get("bindings") or {}
+        exposed = j.get("exposed") or {}
+        parts, bound = [], set()
+        for key, items in binds.items():
+            for b in (items or []):
+                hp = str((b or {}).get("HostPort") or "")
+                if not hp:
+                    continue
+                ip = str((b or {}).get("HostIp") or "0.0.0.0")
+                parts.append("%s:%s->%s" % (ip, hp, key))
+                bound.add(key)
+        for key in exposed:
+            if key not in bound:
+                parts.append(key)
+        cid = (j.get("id") or "")[:12]
+        if cid and parts:
+            res[cid] = ", ".join(parts)
+    return res
+
+
 def collect_docker():
     result = {"available": False, "error": "", "containers": [], "images": 0}
     out, rc = run_cmd(["docker", "ps", "-a", "--format", "{{json .}}"], timeout=20)
@@ -8296,6 +8405,17 @@ def collect_docker():
             "cpu": "", "mem_usage": "", "mem_percent": "", "net": "",
             "rx_rate": None, "tx_rate": None, "net_src": None,
         })
+    # 已停止容器的 docker ps 不带端口（issue #37）：用 inspect 补回配置里声明的端口
+    no_port = [c["id"] for c in containers if not str(c.get("ports") or "").strip()]
+    if no_port:
+        try:
+            _pm = docker_inspect_ports(no_port)
+            for c in containers:
+                if _pm.get(c["id"]):
+                    c["ports"] = _pm[c["id"]]
+                    c["ports_declared"] = True
+        except Exception:
+            pass
     # 运行中容器的资源占用
     sout, src = run_cmd(["docker", "stats", "--no-stream", "--format", "{{json .}}"], timeout=40)
     if src == 0:
@@ -10738,8 +10858,15 @@ class Collector(threading.Thread):
                                if d.get("state") != "standby"]
                 disks_active = len(_live_disks)
                 disk_w_unit = float(self.config.get("power_disk_typical_w", 8) or 0)
-                disks_w = round(sum(_SSD_TYPICAL_W if disk_is_ssd(d.get("name")) else disk_w_unit
-                                    for d in _live_disks), 2)
+                # 配置了硬盘清单（3.5/2.5 寸机械、固态）时直接按清单合计，
+                # 自动识别只能区分旋转与固态，分不出机械盘的尺寸
+                manual_w, manual_unit = power_disks_total(self.config)
+                if manual_w is not None:
+                    disks_w = manual_w
+                    disk_w_unit = manual_unit or disk_w_unit
+                else:
+                    disks_w = round(sum(_SSD_TYPICAL_W if disk_is_ssd(d.get("name")) else disk_w_unit
+                                        for d in _live_disks), 2)
                 idr = self._idrac_fast()
                 if idr and _nz(idr.get("power_watts")) is not None:
                     self._last_power = {
@@ -13425,11 +13552,15 @@ class MonitorApp:
                 try:
                     fv = float(data[k])
                     if math.isfinite(fv):
-                        updates[k] = max(0.0, min(500.0, fv))
+                        v = max(0.0, min(500.0, fv))
+                        # 电价保留 3 位小数（issue #36），其余按输入值
+                        updates[k] = round(v, 3) if k == "power_rate_yuan" else v
                 except Exception:
                     pass
         if "power_price_periods" in data:
             updates["power_price_periods"] = sanitize_price_periods(data.get("power_price_periods"))
+        if "power_disks" in data:
+            updates["power_disks"] = sanitize_power_disks(data.get("power_disks"))
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -14606,6 +14737,8 @@ def load_config(data_dir):
                 pass
     if "power_price_periods" in user:
         cfg["power_price_periods"] = sanitize_price_periods(user["power_price_periods"])
+    if "power_disks" in user:
+        cfg["power_disks"] = sanitize_power_disks(user["power_disks"])
     if "weather_city" in user:
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
     if "data_dir" in user:
