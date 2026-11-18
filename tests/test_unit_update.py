@@ -242,39 +242,81 @@ class UpdateSafetyTest(unittest.TestCase):
         p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
         with open(p, "wb") as f:
             f.write(self.payload)
-        with mock.patch.object(self.S, "_find_appcenter_cli", return_value="/usr/bin/appcenter-cli"), \
-                mock.patch.object(self.S, "_start_appcenter_install", return_value=(True, "ok")) as start:
+        with mock.patch.object(self.S, "_appcenter_daemon_available", return_value=True), \
+                mock.patch.object(self.S, "_start_appcenter_upgrade", return_value=(True, "ok")) as start:
             ok, msg = self.um.install_fpk(p)
         self.assertTrue(ok, msg)
-        self.assertEqual(start.call_args.kwargs["cli"], "/usr/bin/appcenter-cli")
         self.assertEqual(os.path.abspath(start.call_args.args[0]), os.path.abspath(p))
         self.assertTrue(os.path.exists(self.S._appcenter_install_marker(p)))
 
-    def test_fnos_without_cli_refuses_direct_overwrite(self):
+    def test_fnos_without_daemon_refuses_direct_overwrite(self):
         p = os.path.join(self.d, "x.fpk")
         with open(p, "wb") as f:
             f.write(b"not-an-fpk")
-        with mock.patch.object(self.S, "_find_appcenter_cli", return_value=""), \
+        with mock.patch.object(self.S, "_appcenter_daemon_available", return_value=False), \
                 mock.patch.object(self.S.os, "name", "posix"), \
                 mock.patch.dict(self.S.os.environ, {"TRIM_APPDEST": "/var/apps/fnmonitor/target"}):
             ok, msg = self.um.install_fpk(p)
         self.assertFalse(ok)
-        self.assertIn("appcenter-cli", msg)
+        self.assertIn("应用中心升级通道", msg)
 
-    def test_appcenter_install_starts_detached(self):
+    def _rpc_success_responses(self):
+        return [
+            {"downloadTaskId": "download-1"},
+            {"status": 2, "appName": "fnmonitor", "version": "9.9.9",
+             "packageType": "fpk", "installed": True},
+            {"wizardInfo": {"installedVolumeID": 1}},
+            {"taskId": "upgrade-1"},
+            {"status": 2},
+        ]
+
+    def test_appcenter_upgrade_uses_daemon_update_channel(self):
         p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
         with open(p, "wb") as f:
             f.write(self.payload)
-        proc = mock.Mock()
-        proc.poll.return_value = None
         log_path = os.path.join(self.d, "update", "appcenter-install.log")
-        with mock.patch.object(self.S.subprocess, "Popen", return_value=proc) as popen, \
-                mock.patch.object(self.S.time, "sleep"):
-            ok, msg = self.S._start_appcenter_install(p, log_path, cli="/usr/bin/appcenter-cli")
+        with mock.patch.object(self.S, "_appcenter_rpc",
+                               side_effect=self._rpc_success_responses()) as rpc:
+            ok, msg = self.S._start_appcenter_upgrade(p, log_path)
         self.assertTrue(ok, msg)
-        self.assertEqual(popen.call_args.args[0], ["/usr/bin/appcenter-cli", "install-fpk", os.path.abspath(p)])
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
-        self.assertIs(popen.call_args.kwargs["stdin"], self.S.subprocess.DEVNULL)
+        self.assertEqual([c.args[0] for c in rpc.call_args_list], [
+            "/rpc/v1/download/task", "/rpc/v1/download/status",
+            "/rpc/v1/update/info", "/rpc/v1/update/task",
+            "/rpc/v1/common/status"])
+        update = rpc.call_args_list[3].args[1]
+        self.assertEqual(update["appName"], "fnmonitor")
+        self.assertEqual(update["updateVersion"], "9.9.9")
+        self.assertEqual(update["systemParameters"], {
+            "agreedToProtocol": True, "installVolumeID": 1,
+            "dataVolumeId": 1, "immediateStart": False})
+        with open(log_path, encoding="utf-8") as f:
+            self.assertIn("登记版本已更新为 9.9.9", f.read())
+
+    def test_appcenter_upgrade_task_failure_is_not_success(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        responses = self._rpc_success_responses()
+        responses[-1] = {"status": 3, "message": "upgrade rejected"}
+        with mock.patch.object(self.S, "_appcenter_rpc", side_effect=responses):
+            ok, msg = self.S._start_appcenter_upgrade(
+                p, os.path.join(self.d, "update", "appcenter-install.log"))
+        self.assertFalse(ok)
+        self.assertIn("upgrade rejected", msg)
+
+    def test_appcenter_rpc_rejects_business_error(self):
+        conn = mock.Mock()
+        response = mock.Mock(status=200)
+        response.read.return_value = json.dumps(
+            {"code": 10100, "msg": "package missing", "data": {}}).encode()
+        conn.getresponse.return_value = response
+        with mock.patch.object(self.S.http.client, "HTTPConnection", return_value=conn), \
+                mock.patch.object(self.S.socket, "AF_UNIX", 1, create=True), \
+                mock.patch.object(self.S.socket, "socket") as sock:
+            with self.assertRaisesRegex(RuntimeError, "10100"):
+                self.S._appcenter_rpc("/rpc/v1/update/info", {})
+        sock.return_value.connect.assert_called_once_with(self.S._APPCENTER_SOCKET)
+        conn.close.assert_called_once()
 
     def test_legacy_update_reinstalls_only_once(self):
         os.makedirs(self.um.update_dir(), exist_ok=True)
@@ -282,8 +324,8 @@ class UpdateSafetyTest(unittest.TestCase):
         p = os.path.join(self.um.update_dir(), name)
         with open(p, "wb") as f:
             f.write(self.payload)
-        with mock.patch.object(self.S, "_find_appcenter_cli", return_value="/usr/bin/appcenter-cli"), \
-                mock.patch.object(self.S, "_start_appcenter_install", return_value=(True, "ok")) as start:
+        with mock.patch.object(self.S, "_appcenter_daemon_available", return_value=True), \
+                mock.patch.object(self.S, "_start_appcenter_upgrade", return_value=(True, "ok")) as start:
             first = self.S._reinstall_legacy_update(self.um)
             second = self.S._reinstall_legacy_update(self.um)
         self.assertTrue(first[0], first[1])
