@@ -377,9 +377,53 @@ class UpdateSafetyTest(unittest.TestCase):
                 mock.patch.object(self.S.socket, "AF_UNIX", 1, create=True), \
                 mock.patch.object(self.S.socket, "socket") as sock:
             with self.assertRaisesRegex(RuntimeError, "10100"):
-                self.S._appcenter_rpc("/rpc/v1/update/info", {})
-        sock.return_value.connect.assert_called_once_with(self.S._APPCENTER_SOCKET)
+                self.S._appcenter_rpc("/rpc/v1/update/info", {}, socket_path="/run/test.sock")
+        sock.return_value.connect.assert_called_once_with("/run/test.sock")
         conn.close.assert_called_once()
+
+    def test_appcenter_socket_candidates_are_discovered(self):
+        env_path = "/custom/appcenter-sock"
+        with mock.patch.dict(os.environ, {"APPCENTER_SOCK": env_path}), \
+                mock.patch.object(self.S, "_APPCENTER_SOCKET_CACHE",
+                                  {"path": "", "candidates": [], "ts": 0.0}), \
+                mock.patch.object(self.S.os, "listdir", side_effect=OSError), \
+                mock.patch.object(self.S, "_is_unix_socket",
+                                  side_effect=lambda p: p == env_path):
+            cands = self.S._appcenter_socket_candidates()
+        self.assertEqual(cands, [env_path])
+
+    def test_appcenter_rpc_falls_back_to_next_socket(self):
+        connect_error = self.S._AppCenterConnectError("拒绝连接")
+        with mock.patch.object(self.S, "_APPCENTER_SOCKET_CACHE",
+                               {"path": "/run/first.sock", "candidates": [], "ts": 0.0}), \
+                mock.patch.object(self.S, "_appcenter_socket_candidates",
+                                  return_value=["/run/first.sock", "/run/second.sock"]), \
+                mock.patch.object(self.S, "_appcenter_rpc_once",
+                                  side_effect=[connect_error, {"ok": 1}]) as once:
+            data = self.S._appcenter_rpc("/rpc/v1/update/info", {})
+        self.assertEqual(data, {"ok": 1})
+        self.assertEqual([c.args[3] for c in once.call_args_list],
+                         ["/run/first.sock", "/run/second.sock"])
+
+    def test_staged_package_nested_fields_and_word_status(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        responses = [
+            {"task": {"downloadTaskId": "download-1"}},
+            {"status": "success", "packageInfo": {
+                "appName": "fnmonitor", "versionName": "9.9.9",
+                "packageType": "fpk", "installed": True}},
+            {"wizardInfo": {"installedVolumeID": "1"}},
+            {"taskId": "upgrade-1"},
+            {"state": "running"},
+        ]
+        with mock.patch.object(self.S, "_APPCENTER_UPGRADE_GRACE", 0), \
+                mock.patch.object(self.S, "_appcenter_rpc", side_effect=responses) as rpc:
+            ok, msg = self.S._start_appcenter_upgrade(
+                p, os.path.join(self.d, "update", "appcenter-install.log"))
+        self.assertTrue(ok, msg)
+        self.assertEqual(rpc.call_args_list[3].args[1]["systemParameters"]["installVolumeID"], 1)
 
     def test_legacy_update_reinstalls_only_once(self):
         os.makedirs(self.um.update_dir(), exist_ok=True)

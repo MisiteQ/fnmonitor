@@ -32,6 +32,7 @@ import signal
 import socket
 import sqlite3
 import ssl
+import stat
 import subprocess
 import sys
 import threading
@@ -11463,15 +11464,100 @@ def sync_app_registry(app_dir=None):
     return done
 
 
-_APPCENTER_SOCKET = "/var/run/com.trim.app.center.sock"
+_APPCENTER_SOCKET = "/var/run/com.trim.app.center.sock"   # 首选路径
+_APPCENTER_SOCKET_NAMES = ("com.trim.app.center.sock", "com.trim.appcenter.sock",
+                           "trim.app.center.sock", "trim.appcenter.sock", "appcenter.sock")
+_APPCENTER_SOCKET_DIRS = ("/var/run", "/run", "/var/run/trim", "/run/trim",
+                          "/usr/trim/var/run", "/tmp")
+_APPCENTER_SOCKET_CACHE = {"path": "", "candidates": [], "ts": 0.0}
+
+
+class _AppCenterConnectError(RuntimeError):
+    """仅表示连不上 daemon（socket 不存在/拒绝连接），可换下一个候选路径重试。"""
+
+
+def _is_unix_socket(path):
+    try:
+        return stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _appcenter_socket_candidates():
+    """枚举可能的应用中心 socket：不同 fnOS 版本、安装方式路径不一致，不能写死单一路径。"""
+    now = time.time()
+    cache = _APPCENTER_SOCKET_CACHE
+    if now - cache["ts"] < 60:
+        found = [p for p in cache["candidates"] if _is_unix_socket(p)]
+        if cache["path"] in found:
+            found.remove(cache["path"])
+            found.insert(0, cache["path"])
+        if found:
+            return found
+    cands = []
+    env = (os.environ.get("APPCENTER_SOCK") or "").strip()
+    if env:
+        cands.append(env)
+    for name in _APPCENTER_SOCKET_NAMES:
+        for d in ("/var/run", "/run"):
+            cands.append(os.path.join(d, name))
+    cands.append(_APPCENTER_SOCKET)
+    for d in _APPCENTER_SOCKET_DIRS:
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for name in entries:
+            low = name.lower()
+            full = os.path.join(d, name)
+            if low.endswith(".sock") and "app" in low and "center" in low:
+                cands.append(full)
+            elif "app" in low and "center" in low and os.path.isdir(full):
+                # 有些版本把 socket 放在 .../app.center/ 之类目录里
+                try:
+                    for sub in os.listdir(full):
+                        if sub.lower().endswith(".sock"):
+                            cands.append(os.path.join(full, sub))
+                except OSError:
+                    continue
+    out = []
+    for p in cands:
+        if p not in out and _is_unix_socket(p):
+            out.append(p)
+    if cache["path"] in out:
+        out.remove(cache["path"])
+        out.insert(0, cache["path"])
+    cache.update({"candidates": out, "ts": now})
+    return list(out)
+
+
+def _appcenter_socket_path():
+    cands = _appcenter_socket_candidates()
+    return cands[0] if cands else ""
 
 
 def _appcenter_daemon_available():
-    return os.path.exists(_APPCENTER_SOCKET)
+    return bool(_appcenter_socket_path())
 
 
-def _appcenter_rpc(path, payload, timeout=60, socket_path=_APPCENTER_SOCKET):
-    """调用应用中心 daemon 的 Unix Socket RPC，并检查响应体中的业务错误码。"""
+def _appcenter_rpc(path, payload, timeout=60, socket_path=""):
+    """调用应用中心 daemon；连不上时依次尝试其它候选 socket，业务错误直接上抛。"""
+    if socket_path:
+        return _appcenter_rpc_once(path, payload, timeout, socket_path)
+    last = None
+    for sp in _appcenter_socket_candidates():
+        try:
+            data = _appcenter_rpc_once(path, payload, timeout, sp)
+            _APPCENTER_SOCKET_CACHE.update({"path": sp, "ts": time.time()})
+            return data
+        except _AppCenterConnectError as e:
+            last = e
+    if last is not None:
+        raise last
+    raise RuntimeError("未找到 fnOS 应用中心 socket，请在应用中心手动安装安装包")
+
+
+def _appcenter_rpc_once(path, payload, timeout, socket_path):
     conn = http.client.HTTPConnection("localhost", timeout=timeout)
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -11491,7 +11577,12 @@ def _appcenter_rpc(path, payload, timeout=60, socket_path=_APPCENTER_SOCKET):
             envelope = json.loads(raw.decode("utf-8"))
         except Exception:
             raise RuntimeError("应用中心返回了无法识别的响应: %s" % path)
-        code = int(envelope.get("code", -1))
+        if not isinstance(envelope, dict):
+            raise RuntimeError("应用中心返回了无法识别的响应: %s" % path)
+        if "code" not in envelope:
+            # 兼容不做 code/data 包装的 daemon 实现：响应本身就是数据
+            return envelope
+        code = _as_int(envelope.get("code"), -1)
         if code != 0:
             msg = str(envelope.get("msg") or envelope.get("message") or "")
             if not msg:
@@ -11503,7 +11594,7 @@ def _appcenter_rpc(path, payload, timeout=60, socket_path=_APPCENTER_SOCKET):
     except RuntimeError:
         raise
     except Exception as e:
-        raise RuntimeError("连接 fnOS 应用中心失败: %s" % e)
+        raise _AppCenterConnectError("连接 fnOS 应用中心失败: %s" % e)
     finally:
         conn.close()
 
@@ -11536,6 +11627,30 @@ _APPCENTER_TASK_STATES = {
 }
 # 提交升级后只做短时观察：升级会重启应用，不能让 HTTP 请求一直挂着等任务结束
 _APPCENTER_UPGRADE_GRACE = 20
+
+
+def _as_int(v, default=0):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pick(data, keys, depth=2):
+    """按顺序取第一个非空字段，并允许在嵌套字典里查找（各版 fnOS 响应层级不一致）。"""
+    if not isinstance(data, dict):
+        return None
+    for k in keys:
+        v = data.get(k)
+        if v not in (None, "", [], {}):
+            return v
+    if depth > 0:
+        for v in data.values():
+            if isinstance(v, dict):
+                got = _pick(v, keys, depth - 1)
+                if got not in (None, "", [], {}):
+                    return got
+    return None
 
 
 def _task_status(data):
@@ -11588,15 +11703,8 @@ def _wait_appcenter_task(route, id_key, task_id, timeout, allow_pending=False):
 
 def _appcenter_installed_version(info):
     """从 update/info 响应里尽力取出应用中心登记的当前版本，取不到返回空串。"""
-    if not isinstance(info, dict):
-        return ""
-    wizard = info.get("wizardInfo") if isinstance(info.get("wizardInfo"), dict) else {}
-    for holder in (wizard, info):
-        for key in ("installedVersion", "currentVersion", "appVersion", "version"):
-            v = holder.get(key)
-            if v:
-                return str(v)
-    return ""
+    v = _pick(info, ("installedVersion", "installedVersionName", "currentVersion", "appVersion"))
+    return str(v) if v not in (None, "") else ""
 
 
 def _start_appcenter_upgrade(fpk_path, log_path):
@@ -11611,19 +11719,32 @@ def _start_appcenter_upgrade(fpk_path, log_path):
         return False, "安装包不存在: %s" % fpk_path
     try:
         _appcenter_update_log(log_path, "开始暂存安装包: %s" % fpk_path)
-        task = _appcenter_rpc("/rpc/v1/download/task",
-                              {"packageSourceType": "file", "path": fpk_path})
-        download_id = str(task.get("downloadTaskId") or task.get("taskId") or task.get("id") or "")
+        # 各版 daemon 对本地文件来源的命名不一致，逐个变体尝试（失败才换下一个）
+        task, last_err = None, None
+        for src in ("file", "local", None):
+            payload = {"path": fpk_path}
+            if src:
+                payload["packageSourceType"] = src
+            try:
+                task = _appcenter_rpc("/rpc/v1/download/task", payload)
+                break
+            except RuntimeError as e:
+                last_err = e
+                _appcenter_update_log(log_path, "安装包暂存请求失败（source=%s）: %s" % (src or "-", e))
+        if task is None:
+            raise RuntimeError(str(last_err) if last_err else "应用中心未接受安装包暂存请求")
+        download_id = str(_pick(task, ("downloadTaskId", "taskId", "downloadId", "id"), depth=1) or "")
         if not download_id:
             raise RuntimeError("应用中心未返回安装包暂存任务 ID")
         staged = _wait_appcenter_task("/rpc/v1/download/status", "downloadTaskId",
                                       download_id, timeout=180)
-        app_name = str(staged.get("appName") or staged.get("appname") or "")
-        version = str(staged.get("version") or "")
-        package_type = str(staged.get("packageType") or "")
-        if app_name != "fnmonitor" or not version or not package_type:
+        app_name = str(_pick(staged, ("appName", "appname", "app_name")) or "")
+        version = str(_pick(staged, ("version", "versionName", "appVersion")) or "")
+        package_type = str(_pick(staged, ("packageType", "pkgType")) or "")
+        if app_name not in ("fnmonitor", os.environ.get("TRIM_APPNAME") or "fnmonitor") \
+                or not version or not package_type:
             raise RuntimeError("应用中心无法识别安装包内容")
-        if staged.get("installed", staged.get("isInstalled")) is False:
+        if _pick(staged, ("installed", "isInstalled")) is False:
             raise RuntimeError("fnmonitor 尚未安装，不能走应用内升级通道")
 
         _appcenter_update_log(log_path, "安装包暂存完成，执行升级前检查: %s" % version)
@@ -11635,9 +11756,8 @@ def _start_appcenter_upgrade(fpk_path, log_path):
             msg = "应用中心登记版本已是 %s，无需重复升级" % installed_ver
             _appcenter_update_log(log_path, msg)
             return True, msg
-        wizard = info.get("wizardInfo") if isinstance(info.get("wizardInfo"), dict) else {}
-        volume = int(wizard.get("installedVolumeID") or wizard.get("installedVolumeId")
-                     or wizard.get("volumeID") or 0)
+        volume = _as_int(_pick(info, ("installedVolumeID", "installedVolumeId",
+                                      "installVolumeID", "volumeID", "volumeId")), 0)
         if volume <= 0:
             raise RuntimeError("无法确定当前安装存储卷，已中止升级以保护现有数据")
 
@@ -11648,7 +11768,7 @@ def _start_appcenter_upgrade(fpk_path, log_path):
                 "agreedToProtocol": True, "installVolumeID": volume,
                 "dataVolumeId": volume, "immediateStart": False},
             "customParameters": [], "language": "zh-CN"})
-        task_id = str(task.get("taskId") or task.get("id") or "")
+        task_id = str(_pick(task, ("taskId", "taskID", "id"), depth=1) or "")
         if not task_id:
             raise RuntimeError("应用中心未返回升级任务 ID")
         _appcenter_update_log(log_path, "升级任务已提交: %s" % task_id)
@@ -11930,7 +12050,10 @@ class UpdateManager:
                 pass
             log_path = os.path.join(self.data_dir, "update", "appcenter-install.log")
             return _start_appcenter_upgrade(fpk_path, log_path)
-        if os.name != "nt" and (os.environ.get("TRIM_APPDEST") or os.path.isdir("/var/apps")):
+        # 判定为 fnOS 就绝不直接覆盖安装（不同机型安装目录/启动方式不同，覆盖后登记版本不会刷新）
+        fnos_markers = ("/var/apps", "/usr/trim", "/usr/trim/var/apps")
+        if os.name != "nt" and (os.environ.get("TRIM_APPDEST")
+                                or any(os.path.isdir(x) for x in fnos_markers)):
             return False, "未找到 fnOS 应用中心升级通道，已停止直接覆盖安装；请在应用中心手动安装: %s" % fpk_path
         app_dir = os.path.dirname(os.path.abspath(__file__))       # 应用安装目录（NAS 上 server.py 平铺于 TRIM_APPDEST）
         tmp = os.path.join(self.data_dir, "update", "_extract")
