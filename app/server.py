@@ -11493,7 +11493,10 @@ def _appcenter_rpc(path, payload, timeout=60, socket_path=_APPCENTER_SOCKET):
             raise RuntimeError("应用中心返回了无法识别的响应: %s" % path)
         code = int(envelope.get("code", -1))
         if code != 0:
-            msg = str(envelope.get("msg") or envelope.get("message") or path)
+            msg = str(envelope.get("msg") or envelope.get("message") or "")
+            if not msg:
+                # 无文案时回显响应原文，便于接口字段漂移后定位
+                msg = raw.decode("utf-8", "replace")[:200] or path
             raise RuntimeError("应用中心返回错误 %s: %s" % (code, msg))
         data = envelope.get("data")
         return data if isinstance(data, dict) else {}
@@ -11525,9 +11528,38 @@ def _appcenter_update_log(log_path, message):
         pass
 
 
-def _wait_appcenter_task(route, id_key, task_id, timeout):
+_APPCENTER_TASK_STATES = {
+    "pending": 0, "waiting": 0, "queued": 0, "created": 0,
+    "running": 1, "processing": 1, "downloading": 1, "installing": 1, "upgrading": 1,
+    "success": 2, "succeeded": 2, "finished": 2, "done": 2, "completed": 2,
+    "failed": 3, "error": 3, "cancelled": 4, "canceled": 4,
+}
+# 提交升级后只做短时观察：升级会重启应用，不能让 HTTP 请求一直挂着等任务结束
+_APPCENTER_UPGRADE_GRACE = 20
+
+
+def _task_status(data):
+    """解析应用中心任务状态：兼容数字状态码与常见状态词，未知返回 -1。"""
+    for key in ("status", "state", "taskStatus"):
+        v = data.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            return int(v)
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s.isdigit():
+                return int(s)
+            if s in _APPCENTER_TASK_STATES:
+                return _APPCENTER_TASK_STATES[s]
+    return -1
+
+
+def _wait_appcenter_task(route, id_key, task_id, timeout, allow_pending=False):
+    """轮询任务直到完成；allow_pending 时超时按「仍在进行」返回最近一次状态。"""
     deadline = time.monotonic() + timeout
     failures = 0
+    last = {}
     while time.monotonic() < deadline:
         try:
             data = _appcenter_rpc(route, {id_key: task_id})
@@ -11538,7 +11570,8 @@ def _wait_appcenter_task(route, id_key, task_id, timeout):
                 raise
             time.sleep(2)
             continue
-        status = int(data.get("status", -1))
+        last = data
+        status = _task_status(data)
         if status == 2:
             return data
         if status not in (0, 1):
@@ -11548,7 +11581,22 @@ def _wait_appcenter_task(route, id_key, task_id, timeout):
             raise RuntimeError("应用中心任务失败（状态 %s）%s" %
                                (status, ("：" + detail) if detail else ""))
         time.sleep(1 if route == "/rpc/v1/download/status" else 2)
+    if allow_pending:
+        return last
     raise RuntimeError("等待应用中心任务完成超时")
+
+
+def _appcenter_installed_version(info):
+    """从 update/info 响应里尽力取出应用中心登记的当前版本，取不到返回空串。"""
+    if not isinstance(info, dict):
+        return ""
+    wizard = info.get("wizardInfo") if isinstance(info.get("wizardInfo"), dict) else {}
+    for holder in (wizard, info):
+        for key in ("installedVersion", "currentVersion", "appVersion", "version"):
+            v = holder.get(key)
+            if v:
+                return str(v)
+    return ""
 
 
 def _start_appcenter_upgrade(fpk_path, log_path):
@@ -11565,25 +11613,31 @@ def _start_appcenter_upgrade(fpk_path, log_path):
         _appcenter_update_log(log_path, "开始暂存安装包: %s" % fpk_path)
         task = _appcenter_rpc("/rpc/v1/download/task",
                               {"packageSourceType": "file", "path": fpk_path})
-        download_id = str(task.get("downloadTaskId") or "")
+        download_id = str(task.get("downloadTaskId") or task.get("taskId") or task.get("id") or "")
         if not download_id:
             raise RuntimeError("应用中心未返回安装包暂存任务 ID")
         staged = _wait_appcenter_task("/rpc/v1/download/status", "downloadTaskId",
                                       download_id, timeout=180)
-        app_name = str(staged.get("appName") or "")
+        app_name = str(staged.get("appName") or staged.get("appname") or "")
         version = str(staged.get("version") or "")
         package_type = str(staged.get("packageType") or "")
         if app_name != "fnmonitor" or not version or not package_type:
             raise RuntimeError("应用中心无法识别安装包内容")
-        if not staged.get("installed"):
+        if staged.get("installed", staged.get("isInstalled")) is False:
             raise RuntimeError("fnmonitor 尚未安装，不能走应用内升级通道")
 
         _appcenter_update_log(log_path, "安装包暂存完成，执行升级前检查: %s" % version)
         info = _appcenter_rpc("/rpc/v1/update/info", {
             "appName": app_name, "updateVersion": version,
             "packageType": package_type, "language": "zh-CN"})
-        wizard = info.get("wizardInfo") or {}
-        volume = int(wizard.get("installedVolumeID") or 0)
+        installed_ver = _appcenter_installed_version(info)
+        if installed_ver and _ver_tuple(installed_ver) >= _ver_tuple(version):
+            msg = "应用中心登记版本已是 %s，无需重复升级" % installed_ver
+            _appcenter_update_log(log_path, msg)
+            return True, msg
+        wizard = info.get("wizardInfo") if isinstance(info.get("wizardInfo"), dict) else {}
+        volume = int(wizard.get("installedVolumeID") or wizard.get("installedVolumeId")
+                     or wizard.get("volumeID") or 0)
         if volume <= 0:
             raise RuntimeError("无法确定当前安装存储卷，已中止升级以保护现有数据")
 
@@ -11594,12 +11648,18 @@ def _start_appcenter_upgrade(fpk_path, log_path):
                 "agreedToProtocol": True, "installVolumeID": volume,
                 "dataVolumeId": volume, "immediateStart": False},
             "customParameters": [], "language": "zh-CN"})
-        task_id = str(task.get("taskId") or "")
+        task_id = str(task.get("taskId") or task.get("id") or "")
         if not task_id:
             raise RuntimeError("应用中心未返回升级任务 ID")
         _appcenter_update_log(log_path, "升级任务已提交: %s" % task_id)
-        _wait_appcenter_task("/rpc/v1/common/status", "taskId", task_id, timeout=900)
-        msg = "fnOS 应用中心升级完成，应用登记版本已更新为 %s" % version
+        # 只观察一小段时间：能当场失败（状态 5/3）就回显；仍在进行则按已提交处理，
+        # 由应用中心继续升级并重启应用，避免 HTTP 请求长时间挂起
+        done = _wait_appcenter_task("/rpc/v1/common/status", "taskId", task_id,
+                                    timeout=_APPCENTER_UPGRADE_GRACE, allow_pending=True)
+        if _task_status(done) == 2:
+            msg = "fnOS 应用中心升级完成，应用登记版本已更新为 %s" % version
+        else:
+            msg = "升级任务已提交，飞牛应用中心正在升级到 %s（页面可能短暂断开）" % version
         _appcenter_update_log(log_path, msg)
         return True, msg + "，服务将自动重启…"
     except Exception as e:
@@ -11629,6 +11689,7 @@ class UpdateManager:
         self._status = {"last_check": "", "latest": "", "has_update": False,
                         "downloading": False, "installing": False, "downloaded_file": "",
                         "download_dir": "", "error": ""}
+        self._upgrade_submitted = False   # 升级已交给应用中心，等待其重启应用
 
     # ---- 工具 ----
     def detect_arch(self):
@@ -11799,6 +11860,8 @@ class UpdateManager:
 
     # ---- 一键更新：检查 → 下载校验 → 安装（互斥、拒绝降级） ----
     def install_latest(self, force_check=False):
+        if self._upgrade_submitted:
+            return {"ok": True, "note": "升级已提交，飞牛应用中心正在重启应用，请稍后刷新页面"}
         if not self._install_lock.acquire(blocking=False):
             return {"ok": False, "error": "正在安装更新，请稍候"}
         try:
@@ -11817,6 +11880,7 @@ class UpdateManager:
                 return {"ok": False, "error": "下载失败: %s" % fpk}
             ok, msg = self.install_fpk(fpk, expect_sha256=asset.get("digest"))
             if ok:
+                self._upgrade_submitted = True
                 return {"ok": True, "note": msg, "version": info.get("latest")}
             return {"ok": False, "error": msg}
         finally:

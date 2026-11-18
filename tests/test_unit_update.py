@@ -304,6 +304,69 @@ class UpdateSafetyTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("upgrade rejected", msg)
 
+    def test_appcenter_upgrade_skips_when_already_registered(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        responses = [
+            {"downloadTaskId": "download-1"},
+            {"status": 2, "appName": "fnmonitor", "version": "9.9.9",
+             "packageType": "fpk", "installed": True},
+            {"wizardInfo": {"installedVolumeID": 1, "installedVersion": "9.9.9"}},
+        ]
+        with mock.patch.object(self.S, "_appcenter_rpc", side_effect=responses) as rpc:
+            ok, msg = self.S._start_appcenter_upgrade(
+                p, os.path.join(self.d, "update", "appcenter-install.log"))
+        self.assertTrue(ok, msg)
+        self.assertIn("无需重复升级", msg)
+        self.assertEqual(len(rpc.call_args_list), 3)
+
+    def test_appcenter_upgrade_pending_returns_submitted(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        # 不带 installed 字段也要按已安装处理（兼容接口字段缺失）
+        responses = [
+            {"downloadTaskId": "download-1"},
+            {"status": 2, "appName": "fnmonitor", "version": "9.9.9", "packageType": "fpk"},
+            {"wizardInfo": {"installedVolumeID": 1}},
+            {"taskId": "upgrade-1"},
+        ]
+        with mock.patch.object(self.S, "_APPCENTER_UPGRADE_GRACE", 0), \
+                mock.patch.object(self.S, "_appcenter_rpc", side_effect=responses):
+            ok, msg = self.S._start_appcenter_upgrade(
+                p, os.path.join(self.d, "update", "appcenter-install.log"))
+        self.assertTrue(ok, msg)
+        self.assertIn("已提交", msg)
+
+    def test_appcenter_upgrade_refuses_when_not_installed(self):
+        p = os.path.join(self.d, "fnmonitor-9.9.9-x86.fpk")
+        with open(p, "wb") as f:
+            f.write(self.payload)
+        responses = [
+            {"downloadTaskId": "download-1"},
+            {"status": 2, "appName": "fnmonitor", "version": "9.9.9",
+             "packageType": "fpk", "installed": False},
+        ]
+        with mock.patch.object(self.S, "_appcenter_rpc", side_effect=responses):
+            ok, msg = self.S._start_appcenter_upgrade(
+                p, os.path.join(self.d, "update", "appcenter-install.log"))
+        self.assertFalse(ok)
+        self.assertIn("尚未安装", msg)
+
+    def test_task_status_accepts_state_words(self):
+        self.assertEqual(self.S._task_status({"state": "success"}), 2)
+        self.assertEqual(self.S._task_status({"status": "1"}), 1)
+        self.assertEqual(self.S._task_status({"taskStatus": "running"}), 1)
+        self.assertEqual(self.S._task_status({"state": "failed"}), 3)
+        self.assertEqual(self.S._task_status({}), -1)
+
+    def test_install_after_submit_is_short_circuited(self):
+        self.um._upgrade_submitted = True
+        r = self.um.install_latest()
+        self.assertTrue(r["ok"])
+        self.assertIn("已提交", r["note"])
+
     def test_appcenter_rpc_rejects_business_error(self):
         conn = mock.Mock()
         response = mock.Mock(status=200)
