@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.9/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.10/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.10": {
+                    "changelog": "v2.42.10 内置更新跨机器兼容加固<br>① 应用中心升级走 Unix Socket RPC：socket 路径多候选自动发现与连接回退，响应字段、层级与状态词全面容错，兼容不同 fnOS 版本<br>② 升级任务提交后仅观察 20 秒即返回，页面不再长时间转圈；任务已提交后重复点击直接返回，登记版本已是目标版本时跳过重复升级<br>③ 去掉 /vol1~vol4 等单机硬编码：存储池挂载点、内置应用数据目录、应用注册目录、下载保存目录改为运行时动态枚举，时区跟随系统，安装/升级脚本动态解析应用基础目录",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.10/fnmonitor-2.42.10-x86.fpk",
+                            "sha256": "cad95781a951beda677478a8c3090059d3666294009d93b1f90d4f72a1678af5",
+                            "size": 741504
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.10/fnmonitor-2.42.10-arm.fpk",
+                            "sha256": "eb5719023e5afc5535f0588c855a1cc686ee0cafbe3024623aa59cca71096462",
+                            "size": 741525
+                        }
+                    }
+                },
                 "2.42.9": {
                     "changelog": "v2.42.9 天气数据源切换国内直连<br>① 天气数据源改为「中国天气网（国内直连、免费无需 key）→ Open-Meteo → wttr.in」三级兜底，修复国内网络访问 api.open-meteo.com 长期 TLS 握手超时、首页天气卡片一直显示「天气不可用」<br>② 天气获取失败时不再把原始 urlopen/ssl 报错显示到界面，改为「连接天气服务超时，请检查 NAS 外网连接」等可读提示<br>③ 失败结果缓存从 30 分钟缩短为 2 分钟，网络恢复后天气能尽快自动刷新",
                     "updated_at": "2026-11-18",
