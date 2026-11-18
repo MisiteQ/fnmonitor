@@ -25,10 +25,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-# zoneinfo 在 Python 3.9+ 标准库；fnOS 自带 3.10+，Windows 开发机也有
+# 跟随运行机器的系统时区（不同用户/地区时区不同），拿不到时退回本地时间
 try:
-    from zoneinfo import ZoneInfo
-    _TZ = ZoneInfo("Asia/Shanghai")
+    _TZ = datetime.now().astimezone().tzinfo
 except Exception:
     _TZ = None
 
@@ -101,7 +100,7 @@ DB_EVENT_ID_TO_TYPE: Dict[str, str] = {
 
 
 def _logtime_to_str(logtime: Any) -> str:
-    """10 位 Unix 时间戳 → YYYY-MM-DD HH:MM:SS（Asia/Shanghai）。"""
+    """10 位 Unix 时间戳 → YYYY-MM-DD HH:MM:SS（运行机器本地时区）。"""
     try:
         ts = int(logtime)
         if _TZ is not None:

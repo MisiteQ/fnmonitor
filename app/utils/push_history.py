@@ -13,10 +13,9 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-# zoneinfo 在 Python 3.9+ 标准库；fnOS 自带 3.10+，Windows 开发机也有
+# 跟随运行机器的系统时区（不同用户/地区时区不同），拿不到时退回本地时间
 try:
-    from zoneinfo import ZoneInfo
-    _TZ = ZoneInfo("Asia/Shanghai")
+    _TZ = datetime.now().astimezone().tzinfo
 except Exception:
     _TZ = None
 
@@ -28,7 +27,7 @@ MAX_DETAIL_CHARS = 2000
 
 
 def _now_str() -> str:
-    """当前时间字符串（Asia/Shanghai，回退本地时间）。"""
+    """当前时间字符串（运行机器本地时区；取不到时区时回退本地时间）。"""
     if _TZ is not None:
         try:
             return datetime.now(_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -215,7 +214,7 @@ def get_total_counts() -> Dict[str, int]:
 
 
 def get_today_counts() -> Dict[str, int]:
-    """当日统计：total, success, fail（按 Asia/Shanghai 日期匹配）。"""
+    """当日统计：total, success, fail（按运行机器本地时区日期匹配）。"""
     if not _db_path:
         return {"total": 0, "success": 0, "fail": 0}
     today = _now_str()[:10]

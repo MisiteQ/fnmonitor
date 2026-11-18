@@ -17,6 +17,10 @@ if [ -z "${TRIM_PKGVAR}" ] || [ -z "${APP_DIR}" ]; then
     exit 1
 fi
 
+# 不依赖启动器给的 PATH：不同 fnOS 版本 / 启动方式可能缺少 sbin，
+# 导致 smartctl、upsc、df 等外部命令找不到
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
+
 # 应用中心会把本脚本的输出追加进应用日志：只记录启动 / 停止这类状态变化，带上时间
 say() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"

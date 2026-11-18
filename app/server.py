@@ -70,37 +70,51 @@ except Exception as _mr_e:
 
 def _read_manifest_version():
     """从 manifest 读取权威版本号（打包版本由 manifest 决定，避免与应用内常量双处维护不一致）。
-    依次尝试：TRIM_APPDEST（fnOS 应用目录，最优先）、fnOS 应用基础目录 fnmonitor 子目录、
-    仓库布局 app/ 上一级（开发环境）。绝对禁止读父目录 manifest（那是应用中心总清单，版本永远落后）。"""
+    依次尝试：TRIM_APPDEST（fnOS 应用目录，最优先）、fnOS 应用注册目录（/var/apps、
+    /volN/@appcenter 等，安装位置随机器不同）、仓库布局 app/ 上一级（开发环境）。
+    绝对禁止读父目录 manifest（那是应用中心总清单，版本永远落后）。"""
     here = os.path.dirname(os.path.abspath(__file__))
-    candidates = []
-    # 1. TRIM_APPDEST（fnOS 打包安装时设置的环境变量，最权威）
-    trim_appdest = os.environ.get("TRIM_APPDEST", "")
-    if trim_appdest:
-        candidates.append(trim_appdest)
-    # 2. /var/apps/fnmonitor（fnOS 应用基础目录的 fnmonitor 子目录）
-    candidates.append("/var/apps/fnmonitor")
-    # 3. 开发环境：server.py 位于 app/ 目录，上一级就是 repo root
-    candidates.append(os.path.dirname(here))
-    for base in candidates:
-        if not base:
-            continue
+    app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
+
+    def _ver_of(base):
         try:
-            manifest_path = os.path.join(base, "manifest")
-            if not os.path.isfile(manifest_path):
-                continue
-            with open(manifest_path, "r", encoding="utf-8",
+            with open(os.path.join(base, "manifest"), "r", encoding="utf-8",
                       errors="ignore") as f:
                 for line in f:
                     m = re.match(r'\s*version\s*=\s*"?([^"\r\n]+?)"?\s*$', line)
-                    if m:
-                        # 防御：父目录总清单里 manifest 也可能被读到——校验版本号格式
-                        v = m.group(1)
-                        if re.match(r'^\d+\.\d+\.\d+$', v):
-                            return v
+                    if m and re.match(r'^\d+\.\d+\.\d+$', m.group(1)):
+                        return m.group(1)
         except Exception:
             pass
-    return ""
+        return ""
+
+    def _ver_key(v):
+        return tuple(int(x) for x in v.split("."))
+
+    # 1. TRIM_APPDEST（fnOS 打包安装时设置的环境变量，最权威，与运行中的应用一致）
+    trim_appdest = os.environ.get("TRIM_APPDEST", "")
+    if trim_appdest:
+        v = _ver_of(trim_appdest)
+        if v:
+            return v
+    # 2. fnOS 应用注册目录：应用可能装在任意存储池的 @appcenter 下，取版本最高的一份
+    candidates = ["/var/apps", "/usr/local/apps/@appcenter",
+                  "/usr/trim/apps", "/var/lib/fnos/apps"]
+    try:
+        for name in os.listdir("/"):
+            if re.match(r"^vol\d+$", name):
+                candidates.append("/" + name + "/@appcenter")
+    except OSError:
+        pass
+    best = ""
+    for root in candidates:
+        v = _ver_of(os.path.join(root, app_name))
+        if v and (not best or _ver_key(v) > _ver_key(best)):
+            best = v
+    if best:
+        return best
+    # 3. 开发环境：server.py 位于 app/ 目录，上一级就是 repo root
+    return _ver_of(os.path.dirname(here))
 
 VERSION = _read_manifest_version() or "0.0.0"   # 唯一数据源是 manifest；读不到时用哨兵值，更新检查按「版本未知」处理，避免旧版本号误报更新
 UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 / 下载安装包
@@ -8935,12 +8949,51 @@ BUILTIN_APPS = [
 ]
 
 
+_VOL_MOUNTS_CACHE = {"mounts": [], "ts": 0.0}
+
+
+def _vol_mounts():
+    """当前机器实际存在的存储池挂载点（fnOS 为 /vol1、/vol2…，编号随机器不同）。"""
+    cache = _VOL_MOUNTS_CACHE
+    now = time.time()
+    if cache["ts"] and now - cache["ts"] < 60:
+        return list(cache["mounts"])
+    vols = []
+    try:
+        for name in os.listdir("/"):
+            m = re.match(r"^vol(\d+)$", name)
+            if m and os.path.isdir("/" + name):
+                vols.append((int(m.group(1)), "/" + name))
+    except OSError:
+        pass
+    out = [p for _, p in sorted(vols)]
+    cache.update({"mounts": out, "ts": now})
+    return list(out)
+
+
+def _app_data_roots():
+    """内置应用数据目录候选（不同机型可能在 /usr/local/apps 或各存储池 /volN 下）。"""
+    roots = ["/usr/local/apps/@appdata"]
+    for v in _vol_mounts():
+        roots.append(v + "/@appdata")
+    return roots
+
+
+def _app_data_file(appid, rel):
+    """在候选应用数据目录中取真实存在的数据库路径，都不存在时返回首选路径。"""
+    roots = _app_data_roots()
+    for root in roots:
+        p = os.path.join(root, appid, rel)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(roots[0], appid, rel)
+
+
 def _app_dirs(appid):
     """探测应用数据目录的所有可能位置。"""
     found = []
-    for c in ("/usr/local/apps/@appdata/", "/vol1/@appdata/", "/vol2/@appdata/",
-              "/vol3/@appdata/", "/vol4/@appdata/"):
-        p = c + appid
+    for c in _app_data_roots():
+        p = os.path.join(c, appid)
         if os.path.isdir(p):
             found.append(p)
     return found
@@ -8952,10 +9005,8 @@ def _builtin_appdirs_sleeping():
     周期性目录遍历 / DB COUNT 会唤醒已 STANDBY 的机械硬盘，休眠期间跳过本轮
     统计（用户手动点「更新」按钮时不受此限制）。先按挂载点判定休眠，避免
     isdir 元数据访问本身唤醒硬盘。"""
-    roots = ("/usr/local/apps/@appdata", "/vol1/@appdata", "/vol2/@appdata",
-             "/vol3/@appdata", "/vol4/@appdata")
     for a in BUILTIN_APPS:
-        for c in roots:
+        for c in _app_data_roots():
             try:
                 if path_on_standby(c + "/" + a["appid"]):
                     return True
@@ -9451,6 +9502,12 @@ def _module_installed(m, units, imgs):
     for d in m.get("appdirs", []):
         if os.path.isdir(d):
             return True
+        if "@appcenter/" in d:
+            # 同一应用可能装在其它存储池或其它安装根目录下
+            rel = d.split("@appcenter/", 1)[1]
+            for root in _appcenter_roots():
+                if os.path.isdir(os.path.join(root, rel)):
+                    return True
     for u in m.get("units", []):
         if u + ".service" in units or u in units:
             return True
@@ -9500,9 +9557,14 @@ def _real_display_name(appdir, appid, mf_name):
 
 _APP_PORTS_CACHE = {"ts": 0.0, "data": None}
 _APP_PORTS_TTL = 20.0
-# 应用中心安装根目录（与 _app_center_ports 内保持一致，进程归属匹配复用）
-_APPCENTER_ROOTS = ("/vol1/@appcenter", "/usr/local/apps/@appcenter",
-                    "/usr/trim/apps", "/var/apps", "/var/lib/fnos/apps")
+
+
+def _appcenter_roots():
+    """应用中心安装根目录（编号与安装位置随机器不同，不能写死 /vol1）。"""
+    out = [v + "/@appcenter" for v in _vol_mounts()]
+    out.extend(["/usr/local/apps/@appcenter", "/usr/trim/apps",
+                "/var/apps", "/var/lib/fnos/apps"])
+    return out
 
 
 def _scan_app_center_ports():
@@ -9513,7 +9575,7 @@ def _scan_app_center_ports():
     service_port / web_port / http_port / port。
     """
     m = {}
-    for apps_dir in _APPCENTER_ROOTS:
+    for apps_dir in _appcenter_roots():
         if not os.path.isdir(apps_dir):
             continue
         try:
@@ -11370,13 +11432,6 @@ def _safe_extract(t, dest):
         t.extractall(dest, members=members)
 
 
-# fnOS 应用注册目录候选：应用中心按安装位置把应用放在不同根目录下，
-# 应用中心读取的是「注册目录/manifest」，与 server.py 所在的 TRIM_APPDEST 不是同一处。
-_FNOS_REGISTRY_ROOTS = ("/var/apps", "/vol1/@appcenter", "/vol2/@appcenter",
-                        "/usr/local/apps/@appcenter", "/usr/trim/apps",
-                        "/var/lib/fnos/apps")
-
-
 def _mf_version(base):
     """读取某个应用目录下 manifest 的 version，读不到返回空串。"""
     try:
@@ -11398,18 +11453,25 @@ def _ver_key(v):
         return ()
 
 
+def _fnos_registry_roots():
+    """fnOS 应用注册根目录候选；存储池编号随机器不同，需动态枚举。"""
+    out = ["/var/apps", "/usr/local/apps/@appcenter", "/usr/trim/apps", "/var/lib/fnos/apps"]
+    out.extend([v + "/@appcenter" for v in _vol_mounts()])
+    return out
+
+
 def _app_registry_dirs(app_dir):
     """枚举本应用在 fnOS 各候选根目录下的注册目录（不含应用自身目录）。"""
     app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
     out = []
-    for root in _FNOS_REGISTRY_ROOTS:
+    for root in _fnos_registry_roots():
         p = os.path.join(root, app_name)
         if os.path.isdir(p) and os.path.abspath(p) != os.path.abspath(app_dir):
             out.append(p)
     if out:
         return out
     # 精确目录不存在时按 manifest 的 appname 兜底匹配（个别系统用自定义目录名）
-    for root in _FNOS_REGISTRY_ROOTS:
+    for root in _fnos_registry_roots():
         if not os.path.isdir(root):
             continue
         try:
@@ -11940,13 +12002,19 @@ class UpdateManager:
 
     @staticmethod
     def _dest_allowed(ddir, default_dir):
-        """NAS 下载目录只允许：默认 数据目录/update，或存储池 /volN/ 下的路径。"""
+        """NAS 下载目录只允许：默认 数据目录/update，或存储池/挂载目录下的路径。"""
         if not os.path.isabs(ddir):
             return False
         rp = os.path.realpath(ddir)
         if rp == os.path.realpath(default_dir):
             return True
-        return bool(re.match(r"^/vol\d+/", rp + "/")) and rp.count("/") >= 2
+        # 存储池编号随机器不同，按当前机器实际挂载点判断，不写死 /vol1
+        roots = list(_vol_mounts()) + ["/mnt", "/media", "/run/media", "/srv"]
+        for root in roots:
+            root = os.path.realpath(root).rstrip("/")
+            if root and (rp == root or rp.startswith(root + "/")):
+                return True
+        return False
 
     def download_to_nas(self, asset, dest_dir=None):
         """把安装包下载并校验后保存到指定目录（默认 数据目录/update/）。返回 (成功?, 文件路径/错误)。"""
@@ -13064,10 +13132,11 @@ class MonitorApp:
     _MONITOR_DEFAULT_PATHS = {
         "logger_db_path": "/usr/trim/var/eventlogger_service/logger_data.db3",
         "backup_db_path": "/usr/trim/var/backup_service/basic_backup.db3",
-        "trim_media_db_path": "/usr/local/apps/@appdata/trim.media/database/trimmedia.db",
-        "trim_activity_db_path": "/usr/local/apps/@appdata/trim.media/database/trimactivity.db",
-        "photo_db_path": "/usr/local/apps/@appdata/trim.photos/db/photo.db",
-        "music_db_path": "/usr/local/apps/@appdata/trim.music/db/music.db",
+        # 内置应用数据目录可能在各存储池，启动时按实际存在的文件定位
+        "trim_media_db_path": _app_data_file("trim.media", "database/trimmedia.db"),
+        "trim_activity_db_path": _app_data_file("trim.media", "database/trimactivity.db"),
+        "photo_db_path": _app_data_file("trim.photos", "db/photo.db"),
+        "music_db_path": _app_data_file("trim.music", "db/music.db"),
         "docker_socket_path": "/var/run/docker.sock",
     }
 
@@ -15063,7 +15132,7 @@ def _launcher_cfg_candidates():
     /var/apps/{appname}/ui/config 是两个不同文件——fnOS 应用中心 / 桌面从基础目录
     读取入口配置（同 v2.12.1 发现 manifest 从基础目录读取）。只写 target 下的文件
     对桌面无效（v2.16.0 切换不生效的根因）。返回 [(路径, 是否允许新建), ...]，
-    允许新建仅限 /var/apps 基础目录（缺失时用应用内原始配置补建）。"""
+    允许新建仅限 fnOS 应用基础目录（缺失时用应用内原始配置补建）。"""
     app_dir = os.path.dirname(os.path.abspath(__file__))
     app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
     cands = [(os.path.join(app_dir, "ui", "config"), True)]
@@ -15071,7 +15140,10 @@ def _launcher_cfg_candidates():
     bases = [os.path.dirname(app_dir),           # target 的父目录即基础目录的布局
              "/var/apps/%s" % app_name,          # fnOS 应用基础目录（桌面实际读取）
              "/usr/trim/apps/%s" % app_name,
-             "/var/lib/fnos/apps/%s" % app_name]
+             "/var/lib/fnos/apps/%s" % app_name,
+             "/usr/local/apps/@appcenter/%s" % app_name]
+    # 应用可能装在任意存储池的 @appcenter 下，按当前机器实际存在的根目录补齐
+    bases.extend([os.path.join(root, app_name) for root in _appcenter_roots()])
     for base in bases:
         if not base or not base.strip("/"):
             continue
@@ -15080,7 +15152,9 @@ def _launcher_cfg_candidates():
         if ap in seen:
             continue
         seen.add(ap)
-        allow_new = ap.replace("\\", "/").startswith("/var/apps/")
+        allow_new = bool(re.match(
+            r"^/(var/apps|usr/trim/apps|var/lib/fnos/apps|usr/local/apps/@appcenter|vol\d+/@appcenter)/",
+            ap.replace("\\", "/")))
         cands.append((p, allow_new))
     return cands
 
@@ -15203,9 +15277,18 @@ def sync_launcher_db(mode=None, port=None):
     if not launch:
         return True, ""
 
+    # 不依赖当前进程的 PATH：不同系统 sudo/psql 的安装位置不同
+    sudo_bin = shutil.which("sudo") or next(
+        (p for p in ("/usr/bin/sudo", "/bin/sudo") if os.path.isfile(p)), "")
+    psql_bin = shutil.which("psql") or next(
+        (p for p in ("/usr/bin/psql", "/usr/local/bin/psql") if os.path.isfile(p)), "")
+    if not sudo_bin or not psql_bin:
+        print("[fnmonitor] 未找到 sudo/psql，跳过桌面入口数据库同步", flush=True)
+        return True, ""
+
     def psql(db, sql):
         r = subprocess.run(
-            ["sudo", "-u", "postgres", "psql", "-U", "postgres", "-d", db,
+            [sudo_bin, "-u", "postgres", psql_bin, "-U", "postgres", "-d", db,
              "-At", "-v", "ON_ERROR_STOP=1"],
             input=sql.encode("utf-8"), capture_output=True, timeout=25)
         if r.returncode != 0:
