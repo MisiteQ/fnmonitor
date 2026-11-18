@@ -28,19 +28,19 @@
             "service_port": "8777",
             "releases": {
                 "2.42.7": {
-                    "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号的问题：内置更新的同步逻辑此前只覆盖 /var/apps/{应用名}/ 一个注册目录，而应用实际可能注册在存储池的 /vol1/@appcenter/ 或其他候选目录，导致应用中心读取的 manifest 一直是旧版本<br>② 现在安装完成后会遍历全部候选注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter、/usr/trim/apps、/var/lib/fnos/apps），逐个同步 manifest / 图标 / cmd 并重建 ui 软链接；精确目录未命中时按 manifest 的 appname 字段保底匹配",
+                    "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号：升级只覆盖应用目录，而应用中心读取的是注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter 等）下的 manifest，两者不同步就一直显示旧版本<br>② 应用启动时自动比对两侧 manifest 版本并双向拉齐，重建 ui 软链接，旧版本代码完成升级、新版本重启后立即生效<br>③ 新增应用中心数据库版本写回：列表版本号来自 PostgreSQL，自更新不写库；启动时探测 appcenter / trim_sac / fnos 库中带版本字段且能按应用标识定位的表并更新<br>④ 注册目录候选覆盖系统盘与存储池两种安装位置，精确目录未命中时按 appname 兜底匹配",
                     "updated_at": "2026-11-18",
                     "os_min_version": "0.9.0",
                     "packages": {
                         "x86": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-x86.fpk",
-                            "sha256": "61732b312e5497672aa71bb26d026ff5bee6763a4f220a863073bde9e1f77ee6",
-                            "size": 730765
+                            "sha256": "facf900d72a1f96503ec174db43c56d7796c8366c83f438ba247d3d0c29cca19",
+                            "size": 731135
                         },
                         "arm": {
                             "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-arm.fpk",
-                            "sha256": "2585dcdc35f2ea79371bf46ce0732a5ea276a53ec8f3aab083d0c4a2c6e3ad31",
-                            "size": 730767
+                            "sha256": "db2af260958bae4b1aa1235f80fe94716d37cd2d4b1efaac94b92aeb200e3c83",
+                            "size": 731144
                         }
                     }
                 },
