@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.6/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.7": {
+                    "changelog": "v2.42.7 内置更新后应用中心版本号不刷新修复<br>① 修复通过应用内「在线更新 / 自动更新」升级后，飞牛应用中心仍显示旧版本号的问题：内置更新的同步逻辑此前只覆盖 /var/apps/{应用名}/ 一个注册目录，而应用实际可能注册在存储池的 /vol1/@appcenter/ 或其他候选目录，导致应用中心读取的 manifest 一直是旧版本<br>② 现在安装完成后会遍历全部候选注册目录（/var/apps、/vol1|/vol2/@appcenter、/usr/local/apps/@appcenter、/usr/trim/apps、/var/lib/fnos/apps），逐个同步 manifest / 图标 / cmd 并重建 ui 软链接；精确目录未命中时按 manifest 的 appname 字段保底匹配",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-x86.fpk",
+                            "sha256": "61732b312e5497672aa71bb26d026ff5bee6763a4f220a863073bde9e1f77ee6",
+                            "size": 730765
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.7/fnmonitor-2.42.7-arm.fpk",
+                            "sha256": "2585dcdc35f2ea79371bf46ce0732a5ea276a53ec8f3aab083d0c4a2c6e3ad31",
+                            "size": 730767
+                        }
+                    }
+                },
                 "2.42.6": {
                     "changelog": "v2.42.6 通知 Webhook 数值类型修复 · 功耗硬盘细分 · 容器端口识别<br>① 通用 Webhook 自定义 JSON 模板里写死的纯数字（如 Gotify 的 \"priority\":\"0\"）自动转成数字类型，不再因字段类型不符被服务端 400 拒绝；4xx 失败时回显响应体内容<br>② 功耗与电费新增「硬盘功耗清单」：可按 3.5 寸机械 / 2.5 寸机械 / 固态分别填写数量与单盘瓦数（issue #36）；基础电价与分时电价支持 3 位小数<br>③ 已停止容器的端口用 docker inspect 补齐，host 网络容器显示「host 网络」而非「无端口映射」（issue #37）",
                     "updated_at": "2026-11-18",

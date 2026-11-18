@@ -11545,25 +11545,105 @@ class UpdateManager:
         # 安装成功，删除备份，避免长期占用空间与误留回滚目录
         shutil.rmtree(bak, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
-        # fnOS 应用中心从 /var/apps/{TRIM_APPNAME}/manifest 读取版本号；
-        # 该目录与应用可执行文件目录（TRIM_APPDEST，server.py 所在的 target）
-        # 是两个不同位置：/var/apps/{appname}/ 是应用基础目录（manifest、ICON、cmd/），
-        # target/ 是软链接指向的可执行文件目录。内置更新只覆盖了 target 下的 manifest，
-        # 应用基础目录下的 manifest 仍是旧版本，导致应用中心显示版本号不刷新。
-        # 这里把新版 manifest / ICON 同步到应用基础目录。
+        # fnOS 应用中心从应用注册目录读取 manifest 版本号。应用注册目录可能在
+        # 多个位置（参见 _APPCENTER_ROOTS）：/var/apps、/vol1/@appcenter、
+        # /usr/local/apps/@appcenter 等，取决于安装方式（系统盘 vs 存储池）。
+        # 之前只同步 /var/apps/{appname}/ 一个路径，如果实际注册在 /vol1/@appcenter/
+        # 或其他位置，应用中心读到的仍是旧 manifest，导致版本号不刷新。
+        # 这里遍历所有候选注册路径，对每个存在的应用目录都同步 manifest / ICON / cmd / ui 软链接。
         app_name = os.environ.get("TRIM_APPNAME", "") or "fnmonitor"
-        app_base = "/var/apps/%s" % app_name
-        if os.path.isdir(app_base) and os.path.abspath(app_base) != os.path.abspath(app_dir):
-            for item in ("manifest", "ICON.PNG", "ICON_256.PNG"):
+        _REGISTRY_ROOTS = ("/var/apps", "/vol1/@appcenter", "/vol2/@appcenter",
+                          "/usr/local/apps/@appcenter", "/usr/trim/apps",
+                          "/var/lib/fnos/apps")
+        synced_any = False
+        for registry_root in _REGISTRY_ROOTS:
+            app_registry = os.path.join(registry_root, app_name)
+            if not os.path.isdir(app_registry):
+                continue
+            # 不能等于 app_dir 本身（TRIM_APPDEST 就是注册目录的情况，无须自同步）
+            if os.path.abspath(app_registry) == os.path.abspath(app_dir):
+                continue
+            synced_any = True
+            # 同步 manifest、ICON、cmd/ 到注册目录
+            for item in ("manifest", "ICON.PNG", "ICON_256.PNG", "cmd"):
                 s = os.path.join(app_dir, item)
                 if not os.path.exists(s):
                     continue
-                d = os.path.join(app_base, item)
+                d = os.path.join(app_registry, item)
                 try:
                     if os.path.isdir(s):
                         shutil.copytree(s, d, dirs_exist_ok=True)
                     else:
                         shutil.copy2(s, d)
+                except Exception:
+                    pass
+            # 重建 ui/ 软链接（安装时 fnOS 会把 ui 放到 TRIM_APPDEST，注册目录用软链接指向它；
+            # 自更新覆盖 TRIM_APPDEST 后软链接可能断裂或指向旧位置，重建之）
+            registry_ui = os.path.join(app_registry, "ui")
+            dest_ui = os.path.join(app_dir, "ui")
+            if os.path.isdir(dest_ui):
+                try:
+                    if os.path.islink(registry_ui):
+                        os.remove(registry_ui)
+                    elif os.path.isdir(registry_ui):
+                        shutil.rmtree(registry_ui, ignore_errors=True)
+                    elif os.path.exists(registry_ui):
+                        os.remove(registry_ui)
+                    if not os.path.exists(registry_ui):
+                        os.symlink(dest_ui, registry_ui)
+                except Exception:
+                    pass
+        # 也可能 fnOS 用 @appcenter 子卷内的具体应用 ID 目录（如 trim.monitor 之类），
+        # 扫一遍所有注册目录下带 manifest 的同名子目录，全量覆盖确保不漏
+        if not synced_any:
+            for registry_root in _REGISTRY_ROOTS:
+                if not os.path.isdir(registry_root):
+                    continue
+                try:
+                    for entry in os.listdir(registry_root):
+                        full = os.path.join(registry_root, entry)
+                        manifest_check = os.path.join(full, "manifest")
+                        if not os.path.isfile(manifest_check):
+                            continue
+                        if os.path.abspath(full) == os.path.abspath(app_dir):
+                            continue
+                        mf_name = ""
+                        try:
+                            with open(manifest_check, "r", encoding="utf-8",
+                                      errors="ignore") as _mf:
+                                for _ln in _mf:
+                                    _ln = _ln.strip()
+                                    if _ln.startswith("appname="):
+                                        mf_name = _ln.split("=", 1)[1].strip().strip('"').strip("'")
+                                        break
+                        except Exception:
+                            pass
+                        if mf_name == app_name or entry == app_name:
+                            synced_any = True
+                            for item in ("manifest", "ICON.PNG", "ICON_256.PNG", "cmd"):
+                                s = os.path.join(app_dir, item)
+                                if not os.path.exists(s):
+                                    continue
+                                d = os.path.join(full, item)
+                                try:
+                                    if os.path.isdir(s):
+                                        shutil.copytree(s, d, dirs_exist_ok=True)
+                                    else:
+                                        shutil.copy2(s, d)
+                                except Exception:
+                                    pass
+                            registry_ui = os.path.join(full, "ui")
+                            dest_ui = os.path.join(app_dir, "ui")
+                            if os.path.isdir(dest_ui):
+                                try:
+                                    if os.path.islink(registry_ui):
+                                        os.remove(registry_ui)
+                                    elif os.path.isdir(registry_ui):
+                                        shutil.rmtree(registry_ui, ignore_errors=True)
+                                    if not os.path.exists(registry_ui):
+                                        os.symlink(dest_ui, registry_ui)
+                                except Exception:
+                                    pass
                 except Exception:
                     pass
         # 升级包会覆盖 app/ui/config（type 固定为 iframe）；open_mode 不再回写
