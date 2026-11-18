@@ -331,6 +331,51 @@ class WeatherSanitizeTest(unittest.TestCase):
         self.assertTrue(w["ok"], w)
         self.assertFalse(any("geocoding" in c for c in calls), "built-in DB hit must not geocode")
 
+    WTTR = {"current_condition": [{
+        "temp_C": "5", "FeelsLikeC": "3", "humidity": "40", "windspeedKmph": "12",
+        "weatherCode": "116", "localObsDateTime": "2026-11-18 09:47 AM"}]}
+
+    def test_fallback_to_wttr_when_open_meteo_unreachable(self):
+        """主源不可达时用 wttr.in 兜底，且 WWO 代码换算成前端认的 WMO 代码。"""
+        w, calls = self._run("34.26,117.18", {"wttr.in": self.WTTR})
+        self.assertTrue(w["ok"], w)
+        self.assertEqual(w["temp"], 5.0)
+        self.assertEqual(w["code"], 2)
+        self.assertEqual(w["is_day"], 1)
+        self.assertTrue(any("api.open-meteo.com" in c for c in calls))
+
+    def test_network_error_message_is_friendly(self):
+        """两个源都失败时不把原始 urlopen 异常抛给界面。"""
+        w, _ = self._run("34.26,117.18", {})
+        self.assertFalse(w["ok"])
+        self.assertNotIn("network disabled", w["error"])
+
+    CN_SK = 'var dataSK={"temp":"12.3","weather":"多云","weathercode":"d01","SD":"55%","wse":"9km/h"}'
+
+    def test_cn_weather_source(self):
+        """中文城市优先走中国天气网：城市代码检索 + sk_2d 实况，并换算成 WMO 代码。"""
+        if not os.path.exists(os.path.join(os.path.dirname(srv.__file__), "cities_cn.json")):
+            self.skipTest("cities_cn.json not present")
+        calls = []
+
+        def fake(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            calls.append(url)
+            if "toy1.weather.com.cn/search" in url:
+                return _FakeResp(b'([{"ref":"101190801~jiangsu~x~Xuzhou~x~Xuzhou~516~221006~XZ~x"}])')
+            if "sk_2d/101190801" in url:
+                return _FakeResp(self.CN_SK.encode())
+            raise OSError("no route: %s" % url)
+
+        with mock.patch("urllib.request.urlopen", fake):
+            w = srv.fetch_weather("徐州")
+        self.assertTrue(w["ok"], w)
+        self.assertEqual(w["temp"], 12.3)
+        self.assertEqual(w["code"], 2)      # d01 -> WMO 2
+        self.assertEqual(w["humidity"], 55.0)
+        self.assertEqual(w["desc"], "⛅ 多云")
+        self.assertTrue(any("toy1.weather.com.cn" in c for c in calls))
+
 
 if __name__ == "__main__":
     unittest.main()

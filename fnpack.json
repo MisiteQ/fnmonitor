@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.8/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.9/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.9": {
+                    "changelog": "v2.42.9 天气数据源切换国内直连<br>① 天气数据源改为「中国天气网（国内直连、免费无需 key）→ Open-Meteo → wttr.in」三级兜底，修复国内网络访问 api.open-meteo.com 长期 TLS 握手超时、首页天气卡片一直显示「天气不可用」<br>② 天气获取失败时不再把原始 urlopen/ssl 报错显示到界面，改为「连接天气服务超时，请检查 NAS 外网连接」等可读提示<br>③ 失败结果缓存从 30 分钟缩短为 2 分钟，网络恢复后天气能尽快自动刷新",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.9/fnmonitor-2.42.9-x86.fpk",
+                            "sha256": "4da01f0828743f5543772f59d5c5333c7466b4623b56fe3c0d6fa5d1e7587e9b",
+                            "size": 734979
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.9/fnmonitor-2.42.9-arm.fpk",
+                            "sha256": "411aee7ac77fdc799d57b3cb0621b3f4d0fb5f41d930e94e72f344409d0420f9",
+                            "size": 734990
+                        }
+                    }
+                },
                 "2.42.8": {
                     "changelog": "v2.42.8 内置更新官方安装流程修复<br>① 内置更新改为调用 fnOS 官方 appcenter-cli install-fpk，由系统完成安装、版本登记、生命周期回调与服务重启，修复程序已升级但应用中心仍显示旧版本<br>② 旧版直接覆盖升级后，新版首次启动会使用已下载的当前版本 FPK 自动补走一次官方安装，并通过标记防止重复补装与重启循环<br>③ fnOS 环境找不到官方安装器时停止直接覆盖并提示手动安装；安装日志保存到更新目录 appcenter-install.log",
                     "updated_at": "2026-11-18",

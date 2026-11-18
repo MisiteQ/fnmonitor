@@ -9070,6 +9070,125 @@ def _wmo_text(code):
     return "🌡 " + str(code)
 
 
+# wttr.in（WWO）天气代码 -> WMO 代码：前端图标按 WMO 判定，备用源必须换算后才能复用
+_WWO_TO_WMO = {
+    113: 0, 116: 2, 119: 3, 122: 3, 143: 45, 248: 45, 260: 45,
+    176: 61, 293: 61, 296: 61, 299: 63, 302: 63, 305: 65, 308: 65,
+    311: 56, 314: 57, 317: 66, 320: 67, 350: 77,
+    323: 71, 326: 71, 329: 73, 332: 75, 335: 75, 338: 75,
+    368: 85, 371: 86, 374: 77, 377: 77,
+    353: 80, 356: 81, 359: 82, 386: 95, 389: 99, 392: 95, 395: 99,
+}
+
+
+def _wx_error_text(err):
+    """把网络异常翻成用户看得懂的一句话（原始 ssl/urlopen 报错对用户无意义）。"""
+    s = str(err or "").lower()
+    if "timed out" in s or "timeout" in s:
+        return "连接天气服务超时，请检查 NAS 外网连接"
+    if "name or service not known" in s or "getaddrinfo" in s or "name resolution" in s:
+        return "天气服务域名解析失败（DNS）"
+    if "ssl" in s or "certificate" in s:
+        return "天气服务 HTTPS 握手失败"
+    if "connection refused" in s or "unreachable" in s:
+        return "无法连接天气服务"
+    return "天气服务暂时不可用"
+
+
+def _weather_from_wttr(lat, lon, city):
+    """备用源 wttr.in（Open-Meteo 不可达时兜底），输出与主源同口径。"""
+    import urllib.request
+    import json as _json
+    req = urllib.request.Request("https://wttr.in/%.4f,%.4f?format=j1" % (lat, lon),
+                                 headers={"User-Agent": "Mozilla/5.0 fnmonitor"})
+    data = _json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "ignore"))
+    cur = ((data or {}).get("current_condition") or [{}])[0]
+    temp = cur.get("temp_C")
+    if temp is None:
+        raise ValueError("wttr.in 无数据")
+    try:
+        wwo = int(float(cur.get("weatherCode") or 113))
+    except Exception:
+        wwo = 113
+    code = _WWO_TO_WMO.get(wwo, wwo)
+    is_day = 1
+    try:  # wttr 返回的是观测地本地时间（12 小时制），据此判断昼夜
+        hour = time.strptime(str(cur.get("localObsDateTime") or ""), "%Y-%m-%d %I:%M %p").tm_hour
+        is_day = 1 if 6 <= hour < 18 else 0
+    except Exception:
+        pass
+    return {"ok": True, "city": city or "未知地区",
+            "temp": round(float(temp), 1),
+            "feels": round(float(cur.get("FeelsLikeC") or temp), 1),
+            "humidity": round(float(cur.get("humidity") or 0), 1),
+            "wind": round(float(cur.get("windspeedKmph") or 0), 1),
+            "code": code, "desc": _wmo_text(code), "is_day": is_day}
+
+
+# 中国天气网天气现象代码 -> WMO 代码（前端按 WMO 画图标）
+_CN_TO_WMO = {
+    "00": 0, "01": 2, "02": 3, "03": 80, "04": 95, "05": 96, "06": 66,
+    "07": 61, "08": 63, "09": 65, "10": 65, "11": 65, "12": 65,
+    "13": 85, "14": 71, "15": 73, "16": 75, "17": 75, "18": 45, "19": 66,
+    "20": 45, "21": 63, "22": 63, "23": 65, "24": 65, "25": 65,
+    "26": 73, "27": 75, "28": 75, "29": 45, "30": 45, "31": 45, "53": 45,
+}
+_CN_CODE_CACHE = {}
+
+
+def _get_cn_text(url, timeout=6):
+    """中国天气网接口（校验 Referer）；返回体目前是 UTF-8，兼容旧版 GBK。"""
+    import urllib.request
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 fnmonitor",
+        "Referer": "http://www.weather.com.cn/"})
+    raw = urllib.request.urlopen(req, timeout=timeout).read()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("gb18030", "ignore")
+
+
+def _cn_weather(city_name, display):
+    """中国天气网实时天气（CMA 数据，国内直连、免费无需 key）。
+    city_name 为中文城市名；先查城市代码（结果缓存），再取 sk_2d 实时观测。"""
+    import urllib.parse
+    import json as _json
+    q = re.sub(r"[（(].*?[）)]", "", clean_text(city_name or "", 64))  # 去掉「徐州（江苏省）」的省份后缀
+    q = re.sub(r"[市省区县]$", "", q).strip()
+    if not q:
+        raise ValueError("no city name")
+    code = _CN_CODE_CACHE.get(q)
+    if not code:
+        raw = _get_cn_text("http://toy1.weather.com.cn/search?cityname=%s" % urllib.parse.quote(q))
+        m = re.search(r'"ref":"(101\d{6})~', raw)
+        if not m:
+            raise ValueError("no city code")
+        code = _CN_CODE_CACHE[q] = m.group(1)
+    raw = _get_cn_text("http://d1.weather.com.cn/sk_2d/%s.html" % code)
+    i = raw.find("{")
+    d = _json.loads(raw[i:].strip().rstrip(";")) if i >= 0 else {}
+    if d.get("temp") is None:
+        raise ValueError("no data")
+    wc = str(d.get("weathercode") or "")
+    wmo = _CN_TO_WMO.get(wc[1:], 3)
+    desc, txt = _wmo_text(wmo), clean_text(str(d.get("weather") or ""), 16)
+    if txt:  # 用站点返回的中文实况（晴/多云/小雨…），图标仍按 WMO 画
+        desc = "%s %s" % (desc.split(" ")[0], txt)
+
+    def _num(v):
+        m2 = re.search(r"-?\d+(?:\.\d+)?", str(v or ""))
+        return float(m2.group(0)) if m2 else 0.0
+
+    return {"ok": True, "city": display,
+            "temp": round(_num(d.get("temp")), 1),
+            "feels": round(_num(d.get("temp")), 1),   # 该接口无体感温度，用实况温度
+            "humidity": round(_num(d.get("SD") or d.get("sd")), 1),
+            "wind": round(_num(d.get("wse")), 1),
+            "code": wmo, "desc": desc,
+            "is_day": 0 if wc[:1] == "n" else 1}
+
+
 # 内置中国行政区划坐标库（省/市/县三级 3200+，来源阿里 DataV GeoAtlas，与 QWeather 同源）。
 # Open-Meteo 地理编码基于 GeoNames，中国城市中文覆盖差（搜不到/错配同名地点），国内名称一律本地检索。
 _CN_CITIES = None
@@ -9104,6 +9223,7 @@ def fetch_weather(city_override=None):
     """获取实时天气（免费无需 key）。city_override 支持：空=公网IP自动定位；
     "城市名"（如 徐州 / Beijing）= 先查内置中国城市库，未命中走 Open-Meteo 地理编码；
     "lat,lon"（如 34.26,117.18）= 直接指定坐标。
+    数据源按序尝试：中国天气网（国内）→ Open-Meteo → wttr.in。
     返回 {"ok":True,...} 或 {"ok":False,"error":...}。需外网访问，失败自动降级。"""
     import urllib.request
     import urllib.parse
@@ -9169,26 +9289,42 @@ def fetch_weather(city_override=None):
             city = clean_text(city, 64) or "未知地区"
             if lat is None:
                 return {"ok": False, "error": "无法定位当前网络位置"}
-        # ---- Open-Meteo 当前天气 ----
-        url = ("https://api.open-meteo.com/v1/forecast"
-               "?latitude=%.4f&longitude=%.4f"
-               "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day"
-               "&timezone=auto") % (lat, lon)
-        data = _get(url)
-        cur = data.get("current", {}) or {}
-        temp = cur.get("temperature_2m")
-        if temp is None:
-            return {"ok": False, "error": "天气接口无数据"}
-        return {"ok": True, "city": clean_text(city or override, 64) or "未知地区",
-                "temp": round(float(temp), 1),
-                "feels": round(float(cur.get("apparent_temperature") or temp), 1),
-                "humidity": round(float(cur.get("relative_humidity_2m") or 0), 1),
-                "wind": round(float(cur.get("wind_speed_10m") or 0), 1),
-                "code": cur.get("weather_code"),
-                "desc": _wmo_text(cur.get("weather_code")),
-                "is_day": cur.get("is_day")}
+        # ---- 当前天气：国内优先，逐级兜底 ----
+        # 中国天气网（国内直连最快）→ Open-Meteo（国内常被封锁，故放后面）→ wttr.in
+        disp_city = clean_text(city or override, 64) or "未知地区"
+        err = None
+        if re.search(r"[\u4e00-\u9fff]", city or ""):
+            try:
+                return _cn_weather(city, disp_city)
+            except Exception as e:
+                err = e
+        try:
+            url = ("https://api.open-meteo.com/v1/forecast"
+                   "?latitude=%.4f&longitude=%.4f"
+                   "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day"
+                   "&timezone=auto") % (lat, lon)
+            data = _get(url, timeout=6)
+            cur = data.get("current", {}) or {}
+            temp = cur.get("temperature_2m")
+            if temp is None:
+                raise ValueError("天气接口无数据")
+            return {"ok": True, "city": disp_city,
+                    "temp": round(float(temp), 1),
+                    "feels": round(float(cur.get("apparent_temperature") or temp), 1),
+                    "humidity": round(float(cur.get("relative_humidity_2m") or 0), 1),
+                    "wind": round(float(cur.get("wind_speed_10m") or 0), 1),
+                    "code": cur.get("weather_code"),
+                    "desc": _wmo_text(cur.get("weather_code")),
+                    "is_day": cur.get("is_day")}
+        except Exception as e:
+            err = e
+        try:
+            return _weather_from_wttr(lat, lon, disp_city)
+        except Exception:
+            pass
+        return {"ok": False, "error": _wx_error_text(err)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _wx_error_text(e)}
 
 
 def collect_app_stats():
@@ -14194,10 +14330,12 @@ class MonitorApp:
         return self.collector.get_snapshot().get("memory", {"items": [], "dual": False})
 
     def api_weather(self):
-        """实时天气（需外网，30 分钟缓存，支持自定义位置，失败返回降级信息）。"""
+        """实时天气（需外网，成功缓存 30 分钟，失败只缓存 2 分钟便于尽快恢复）。"""
         now = time.time()
-        if self._weather_cache and (now - self._weather_ts) < 1800:
-            return self._weather_cache
+        if self._weather_cache:
+            ttl = 1800 if self._weather_cache.get("ok") else 120
+            if (now - self._weather_ts) < ttl:
+                return self._weather_cache
         w = fetch_weather(self.config.get("weather_city") or "")
         self._weather_cache = w
         self._weather_ts = now
