@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.12/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.13/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.13": {
+                    "changelog": "v2.42.13 天气详情抽屉排版修复<br>① 修复抽屉小标题被下方卡片遮挡、贴到右侧被裁切：小标题改为左对齐并留出正常间距<br>② 「今日详情」与「未来 7 天预报」改为自适应列宽，窄屏自动减少列数，不再挤压变形<br>③ 逐小时预报改为固定高度柱轨，降水概率/天气图标/温度/时间四行严格对齐，不再高低错位<br>④ 紫外线模块改为强度与防护建议横向排列，窄屏自动换行",
+                    "updated_at": "2026-11-20T12:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.13/fnmonitor-2.42.13-x86.fpk",
+                            "sha256": "a2cf2fd7ce40d4c908e0302cc082474afaa0599f7f8cc37ab88eaa56d71a01d0",
+                            "size": 753528
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.13/fnmonitor-2.42.13-arm.fpk",
+                            "sha256": "8de56505f86056438000435f4824c751cbd2325101a34b6eb0f35c7db9152027",
+                            "size": 753525
+                        }
+                    }
+                },
                 "2.42.12": {
                     "changelog": "v2.42.12 天气数据源改回中国天气网，修复 2.42.11 天气扩展不生效<br>① 2.42.11 的天气扩展依赖 Open-Meteo，该域名在国内常被阻断，导致高低温、风向、7 天预报、逐小时、紫外线全部为空；现改为以中国天气网 weather_index 为主数据源（今日高低温、风向、风力、风速、AQI、7 天预报、紫外线强度），逐小时由 wttr.in 兜底<br>② 主页天气卡片重新显示当日最高温、最低温、风向、风力等级、风速（km/h）<br>③ 天气抽屉新增今日详情网格（最高/最低/当前/体感/湿度/风向/风力/风速/AQI/PM2.5/紫外线）、未来 7 天预报、未来 24 小时温度与降水概率、紫外线强度与防护建议<br>④ AQI 等级改用国标口径（优/良/轻度污染/中度污染/重度污染/严重污染）",
                     "updated_at": "2026-11-18T20:00:00+08:00",

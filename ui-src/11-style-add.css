@@ -86,6 +86,28 @@
 .ctr-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .wx-city { font-size: 13px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wx-sub .link-like { font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
+/* 天气详情抽屉：小标题左对齐并留出正间距（.sheet-sec 的负下边距会被下方网格盖住） */
+.wx-sec { justify-content: flex-start; margin-bottom: 8px; }
+.wx-sec > *:not(:first-child) { margin-left: auto; }
+.wx-cells { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+.wx-cells .stat-cell { padding: 12px 14px; }
+.wx-days { grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
+.wx-days .stat-cell { padding: 10px 4px; }
+.wx-day-ico { display: inline-block; width: 30px; height: 30px; margin: 4px 0; }
+.wx-day-meta { font-size: .7em; }
+.wx-hrs-card { padding: 12px 12px 8px; }
+.wx-hrs { display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; }
+.wx-hr { flex: 0 0 auto; width: 42px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wx-hr .wx-pop { height: 13px; line-height: 13px; font-size: 10px; color: var(--ink-3); }
+.wx-hr .wx-hr-ico { display: block; width: 22px; height: 22px; }
+.wx-hr .wx-hr-ico svg { width: 22px; height: 22px; }
+.wx-hr .wx-track { height: 44px; display: flex; align-items: flex-end; justify-content: center; }
+.wx-hr .wx-track i { display: block; width: 14px; min-height: 4px; border-radius: 3px; background: var(--accent); }
+.wx-hr .wx-temp { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wx-hr .wx-time { font-size: 10px; color: var(--ink-3); }
+.wx-uv { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px; }
+.wx-uv-lv { font-size: 22px; font-weight: 650; margin-top: 2px; }
+.wx-uv-desc { flex: 1 1 220px; }
 .thermo-row .t-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dimm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
 .dimm { background: var(--card-sunk); border-radius: var(--r-md); padding: 10px 12px; text-align: center; }
