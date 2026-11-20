@@ -106,6 +106,8 @@ UPS_DEFAULT = {
     "notify_events": list(UPS_EVENT_CHOICES),
     "notify_debounce_s": 60,
     "notify_max_per_min": 8,
+    # 电源类型：auto=自动（先 NUT，失败且有电池则回退）/ nut=仅 NUT / battery=仅笔记本电池
+    "ups_source": "auto",
 }
 
 # ---------------------------------------------------------------------------
@@ -418,6 +420,9 @@ def ups_normalize(data, base=None):
         cfg["enabled"] = _onoff(data["enabled"])
     if "ups_name" in data:
         cfg["ups_name"] = _clean_text(str(data.get("ups_name") or ""), 64)
+    if "ups_source" in data:
+        s = str(data.get("ups_source") or "auto").strip().lower()
+        cfg["ups_source"] = s if s in ("auto", "nut", "battery") else "auto"
     if "nut_host" in data:
         host = _clean_text(str(data.get("nut_host") or ""), 128)
         cfg["nut_host"] = host if re.match(r"^[A-Za-z0-9_.:\[\]-]*$", host) else ""
@@ -480,6 +485,139 @@ def _write_json(path, data):
 
 
 # ---------------------------------------------------------------------------
+# 笔记本电池采集（upower / sysfs，只读零依赖）
+# ---------------------------------------------------------------------------
+# sysfs 电池状态词 → NUT 标准状态词（用于边沿告警复用）
+_BAT_STATUS_MAP = {
+    "charging": ("OL", "CHRG"),
+    "discharging": ("OB", "DISCHRG"),
+    "full": ("OL",),
+    "not charging": ("OL",),
+    "not-charging": ("OL",),
+    "unknown": ("OL",),
+    "": ("OL",),
+}
+_BAT_LOW_PERCENT = 20  # 低于此电量触发 LB（低电量）
+
+
+def _battery_sysfs_dirs():
+    """枚举 /sys/class/power_supply 下 type=Battery 的设备目录。"""
+    out = []
+    base = "/sys/class/power_supply"
+    try:
+        names = os.listdir(base)
+    except Exception:
+        return out
+    for nm in sorted(names):
+        d = os.path.join(base, nm)
+        if _read_sys(os.path.join(d, "type")).strip().upper() == "BATTERY":
+            out.append(d)
+    return out
+
+
+def _parse_uevent(d):
+    """读 <d>/uevent → dict（去掉 POWER_SUPPLY_ 前缀，键小写）。"""
+    raw = _read_sys(os.path.join(d, "uevent"))
+    info = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.startswith("POWER_SUPPLY_"):
+            k = k[len("POWER_SUPPLY_"):].lower()
+        info[k] = v.strip()
+    return info
+
+
+def _battery_list():
+    """返回 [(name, info_dict), ...]，info 为解析后的 uevent 字段；无电池返回 []。"""
+    out = []
+    for d in _battery_sysfs_dirs():
+        info = _parse_uevent(d)
+        if not info:
+            continue
+        name = _clean_ident(info.get("name") or os.path.basename(d), 64)
+        if not name:
+            name = os.path.basename(d)
+        out.append((name, info))
+    return out
+
+
+def _battery_status_words(info):
+    """sysfs 电池状态 → NUT 状态词列表（含低电量 LB）。"""
+    st = str(info.get("status") or "").strip().lower()
+    words = list(_BAT_STATUS_MAP.get(st, ("OL",)))
+    cap = _fnum(info.get("capacity"))
+    if cap is not None and cap <= _BAT_LOW_PERCENT:
+        words.append("LB")
+    return words
+
+
+def ups_build_battery(name, info):
+    """sysfs 电池字段 → 与 NUT 同口径的快照（device + live）。
+
+    笔记本电池无市电输入/输出侧概念：in_v/out_v/load/frequency 置空，
+    用 bat_v（电压）、out_a（电流绝对值）、out_w（功率）、chg（电量）、
+    temp、cycles（循环次数）、health（健康度%）、tech（电池技术）描述。
+    """
+    words = _battery_status_words(info)
+    live = {"status": " ".join(words), "st": _decode_status(" ".join(words))}
+    live["labels"] = _status_labels(live["st"], words)
+    # 电压（µV → V）
+    vv = _fnum(info.get("voltage_now"))
+    live["bat_v"] = round(vv / 1e6, 2) if vv is not None else None
+    # 电流（µA → A，放电为负，取绝对值）
+    cur = _fnum(info.get("current_now"))
+    live["out_a"] = round(abs(cur) / 1e6, 2) if cur is not None else None
+    # 功率：优先 power_now（µW → W），否则电压 × 电流
+    pwr = _fnum(info.get("power_now"))
+    if pwr is not None:
+        live["out_w"] = round(pwr / 1e6, 2)
+    elif live["bat_v"] is not None and live["out_a"] is not None:
+        live["out_w"] = round(live["bat_v"] * live["out_a"], 2)
+    else:
+        live["out_w"] = None
+    # 温度（0.1°C → °C）
+    tmp = _fnum(info.get("temp"))
+    live["temp"] = round(tmp / 10.0, 1) if tmp is not None else None
+    # 电量
+    cap = _fnum(info.get("capacity"))
+    live["chg"] = round(cap, 1) if cap is not None else None
+    # 剩余时间（秒），部分内核导出 time_to_empty
+    tte = _fnum(info.get("time_to_empty"))
+    live["rt"] = round(tte, 0) if tte is not None else None
+    # NUT 侧字段对电池无意义，置空保持结构一致
+    for k in ("in_v", "out_v", "in_hz", "out_hz", "load", "rp", "out_va",
+              "nominal_va", "source"):
+        live[k] = None
+    live["valid"] = True
+    # 电池专属字段
+    cc = _fnum(info.get("cycle_count"))
+    live["cycles"] = int(cc) if cc is not None else None
+    ef = _fnum(info.get("energy_full")) or _fnum(info.get("charge_full"))
+    efd = _fnum(info.get("energy_full_design")) or _fnum(info.get("charge_full_design"))
+    live["health"] = round(ef / efd * 100, 1) if (ef and efd and efd > 0) else None
+    live["tech"] = str(info.get("technology") or "").lower()
+    mfr = _clean_ident(info.get("manufacturer"))
+    model = _clean_ident(info.get("model_name"), 80)
+    serial = _clean_ident(info.get("serial_number"), 80)
+    device = {
+        "name": name,
+        "mfr": mfr,
+        "model": model,
+        "serial": serial,
+        "type": "battery",
+        "driver": "sysfs",
+        "brand": mfr or model or "笔记本电池",
+        "access": "系统电源管理（upower/sysfs）",
+        "va": None,
+        "source": "battery",
+    }
+    return {"ts": int(time.time()), "device": device, "live": live}
+
+
+# ---------------------------------------------------------------------------
 # NUT 采集
 # ---------------------------------------------------------------------------
 def ups_list(cfg=None):
@@ -487,7 +625,15 @@ def ups_list(cfg=None):
 
     依次尝试：用户配置的 NUT 地址 → 系统 upsd.conf 的 LISTEN → 回环兜底。
     兼容 “name: 描述” 形式的列表输出，避免把描述当实例名。
+    ups_source=battery 时直接返回 sysfs 电池列表。
     """
+    cfg = cfg or {}
+    if str(cfg.get("ups_source") or "auto").lower() == "battery":
+        bats = _battery_list()
+        if bats:
+            return [b[0] for b in bats]
+        raise UpsError("no_battery", "未检测到笔记本电池",
+                       "系统无 /sys/class/power_supply 电池设备；若为笔记本请确认电池已被系统识别")
     exe = _upsc_path()
     if not exe:
         raise UpsError("no_nut", "未找到 upsc 命令",
@@ -670,6 +816,7 @@ def ups_build(name, raw):
         "brand": (v or {}).get("brand") or mfr,
         "access": (v or {}).get("access") or "",
         "va": live["nominal_va"],
+        "source": "nut",
     }
     return {"ts": int(time.time()), "device": device, "live": live}
 
@@ -698,6 +845,9 @@ def ups_diag(cfg=None):
             })
     usb = _usb_ups_scan()
     listen = ["%s %d" % (h, p) for h, p in _parse_upsd_listen()]
+    bats = _battery_list()
+    batteries = [{"name": b[0], "model": _clean_ident(b[1].get("model_name"), 64),
+                  "capacity": b[1].get("capacity", "")} for b in bats]
 
     sug = []
     if not exe:
@@ -720,12 +870,16 @@ def ups_diag(cfg=None):
             sug.append("NUT 已有实例：%s；若读数为空，多半是驱动型号不匹配，"
                        "可尝试 usbhid-ups（APC HID 类）或 nutdrv_qx（Megatec 类）并指定 vendorid/productid。"
                        % "、".join(names_any))
+    if batteries:
+        sug.append("检测到笔记本电池：%s；若为笔记本且未接 USB UPS，可将上方「电源类型」选为「笔记本电池」直接读取。"
+                   % "、".join(b["name"] for b in batteries))
     return {
         "upsc": exe,
         "targets": targets,
         "ups_conf": ups_conf,
         "upsd_listen": listen,
         "usb": usb,
+        "batteries": batteries,
         "suggestions": sug[:4],
     }
 
@@ -960,11 +1114,34 @@ class UpsPoller(threading.Thread):
     def _once(self, cfg):
         self.ticks += 1
         snap = None
+        src = str(cfg.get("ups_source") or "auto").lower()
         try:
-            name, names = ups_pick(cfg)
-            self.ups_names = names
-            raw = ups_read_vars(name, cfg)
-            snap = ups_build(name, raw)
+            if src == "battery":
+                bats = _battery_list()
+                if not bats:
+                    raise UpsError("no_battery", "未检测到笔记本电池",
+                                   "系统无 /sys/class/power_supply 电池设备")
+                name, info = bats[0]
+                self.ups_names = [b[0] for b in bats]
+                snap = ups_build_battery(name, info)
+            else:
+                try:
+                    name, names = ups_pick(cfg)
+                    self.ups_names = names
+                    raw = ups_read_vars(name, cfg)
+                    snap = ups_build(name, raw)
+                except UpsError as e:
+                    # auto 模式：NUT 不可用（未安装 / 无实例）时回退笔记本电池
+                    if src == "auto" and e.code in ("no_nut", "no_device"):
+                        bats = _battery_list()
+                        if bats:
+                            name, info = bats[0]
+                            self.ups_names = [b[0] for b in bats]
+                            snap = ups_build_battery(name, info)
+                        else:
+                            raise
+                    else:
+                        raise
         except UpsError as e:
             self._set_error(e.code, e.message, e.hint)
             return
@@ -1066,6 +1243,7 @@ def ups_public(cfg):
     out["choices"] = list(UPS_EVENT_CHOICES)
     out["upsc"] = _upsc_path()
     out["nut_targets"] = _nut_targets(cfg)
+    out["batteries"] = [b[0] for b in _battery_list()]
     snap = ups_latest()
     out["nut_state"] = snap.get("state") or ("off" if not out.get("enabled") else "init")
     out["nut_error"] = snap.get("error") or ""

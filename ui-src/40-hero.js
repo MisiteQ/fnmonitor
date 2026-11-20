@@ -107,7 +107,10 @@ const Hero = {
       else if (it.go === 'retry') Poll.run('overview');
     });
     this.r.issues.addEventListener('click', e => { if (e.target.closest('[data-ignored]')) openSheet('health'); });
-    this.r.wx.addEventListener('click', e => { if (e.target.closest('[data-goset]')) focusSetting('weatherCity'); });
+    this.r.wx.addEventListener('click', e => {
+      if (e.target.closest('[data-goset]')) { focusSetting('weatherCity'); return; }
+      openSheet('weather');
+    });
     this.clock(); setInterval(() => this.clock(), 1000);
   },
   clock() {
@@ -134,7 +137,12 @@ const Hero = {
     setHTML(r.wxIco, wxIcon(w.code, w.is_day));
     dot(r.wxT).set(Math.round(+w.temp) + '°'); setText(r.wxText, wxText(w.desc));
     setText(r.wxCity, String(w.city || '').slice(0, 24)); r.wxCity.title = w.city || '';
-    setText(r.wxSub, `体感 ${F.int(w.feels)}° · 湿度 ${F.int(w.humidity)}% · 风速 ${F.d1(w.wind)} km/h`);
+    const wxParts = [];
+    if (w.temp_max != null || w.temp_min != null) wxParts.push(`高 ${F.int(w.temp_max)}° / 低 ${F.int(w.temp_min)}°`);
+    if (w.wind_dir) wxParts.push(`${w.wind_dir}${w.wind_level != null ? ' ' + w.wind_level + ' 级' : ''}`);
+    wxParts.push(`湿度 ${F.int(w.humidity)}%`);
+    if (w.aqi && w.aqi.aqi != null) wxParts.push(`空气 ${w.aqi.level || w.aqi.aqi}`);
+    setText(r.wxSub, wxParts.join(' · '));
   },
   update(o) {
     const r = this.r;

@@ -51,6 +51,8 @@ function powerParts(p) {
   if (ok(p.dram)) parts.push(['内存', +p.dram, 'color-mix(in srgb, var(--d-p) 55%, var(--card))']);
   if (ok(p.disks_w)) parts.push([`硬盘${ok(p.disks_active) ? `（${p.disks_active} 块在转）` : ''}`, +p.disks_w, 'hatch']);
   if (ok(p.base)) parts.push(['主板与其他', +p.base, 'color-mix(in srgb, var(--d-p) 25%, var(--card))']);
+  if (ok(p.gpus_w) && +p.gpus_w > 0) parts.push(['独立显卡', +p.gpus_w, 'var(--e-coral)']);
+  if (ok(p.extra_w) && +p.extra_w > 0) parts.push(['其他板卡', +p.extra_w, 'color-mix(in srgb, var(--d-p) 40%, var(--card))']);
   const rest = (+p.total || 0) - parts.reduce((a, x) => a + x[1], 0);
   if (rest > 0.05) parts.push([p.source === 'estimated' ? 'CPU 与网卡等（估算）' : '其他', rest, 'var(--fill-3)']);
   return parts;
@@ -160,10 +162,10 @@ defineModule({
         <div class="chart-mini" style="margin-top:20px;height:56px" data-ref="mini"></div>
       </div>
       <div class="stat-cells">
-        <div class="stat-cell"><div class="eyebrow">输出电压</div><div class="dnum"><span class="dm" data-ref="outV"></span><span class="unit">V</span></div><div class="sub" data-ref="outLbl"></div></div>
-        <div class="stat-cell"><div class="eyebrow">电量</div><div class="dnum"><span class="dm" data-ref="chg"></span><span class="unit">%</span></div><div class="sub" data-ref="chgLbl"></div></div>
-        <div class="stat-cell"><div class="eyebrow">负载</div><div class="dnum"><span class="dm" data-ref="load"></span><span class="unit">%</span></div><div class="sub" data-ref="loadLbl"></div></div>
-        <div class="stat-cell"><div class="eyebrow">续航</div><div class="dnum"><span class="dm" data-ref="rt"></span><span class="unit">分</span></div><div class="sub" data-ref="rtLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow" data-ref="outVEye">输出电压</div><div class="dnum"><span class="dm" data-ref="outV"></span><span class="unit">V</span></div><div class="sub" data-ref="outLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow" data-ref="chgEye">电量</div><div class="dnum"><span class="dm" data-ref="chg"></span><span class="unit">%</span></div><div class="sub" data-ref="chgLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow" data-ref="loadEye">负载</div><div class="dnum"><span class="dm" data-ref="load"></span><span class="unit">%</span></div><div class="sub" data-ref="loadLbl"></div></div>
+        <div class="stat-cell"><div class="eyebrow" data-ref="rtEye">续航</div><div class="dnum"><span class="dm" data-ref="rt"></span><span class="unit" data-ref="rtU">分</span></div><div class="sub" data-ref="rtLbl"></div></div>
       </div>
     </div>`;
     m.x = collect(body);
@@ -202,6 +204,18 @@ defineModule({
     dnum(x.load, lv.load, F.int); setText(x.loadLbl, '额定容量 ' + (dv.va || '--'));
     dnum(x.rt, lv.rt ? Math.round(lv.rt / 60) : null, F.int);
     setText(x.rtLbl, lv.temp != null ? `电池 ${F.d1(lv.temp)} ℃` : '');
+    // 电池模式：覆盖为电池相关字段（循环次数 / 健康度 / 温度）
+    if (dv.source === 'battery') {
+      setText(x.outVEye, '电池电压'); dnum(x.outV, lv.bat_v, F.d1);
+      setText(x.outLbl, lv.out_a != null ? `电流 ${F.d1(lv.out_a)} A` : '');
+      setText(x.chgLbl, lv.temp != null ? `温度 ${F.d1(lv.temp)} ℃` : (lv.tech || ''));
+      setText(x.loadEye, '循环次数'); dnum(x.load, lv.cycles, F.int);
+      setText(x.loadLbl, lv.health != null ? `健康度 ${F.d1(lv.health)}%` : '');
+      setText(x.rtEye, '健康度'); dnum(x.rt, lv.health, F.d1); setText(x.rtU, '%');
+      setText(x.rtLbl, lv.cycles != null ? `已循环 ${lv.cycles} 次` : '');
+      const devTxt = (dv.brand || dv.mfr || '') + (dv.model ? ' ' + dv.model : (dv.name || '电池'));
+      setText(x.sub, `${esc(devTxt)} · ${labels.join(' ') || '电池'}`);
+    }
     // 小曲线：输出功率历史
     try {
       const h = await Hist.get('ups_out_w', 'all', 600000).catch(() => null);

@@ -315,9 +315,15 @@ const SHEETS = {
         // iDRAC 给的是整机电源输出，没有 CPU/内存/硬盘的分解，改列电源侧读数
         const psuRows = (p.psu || []).map(u => [`电源 ${esc(u.name)}`,
           `${ok(u.volts) ? esc(String(u.volts)) + ' V' : '—'} · ${esc(u.health || '')}${u.model ? ' · ' + esc(u.model) : ''}`]);
-        setHTML(x.parts, has ? (p.source === 'idrac'
-          ? kvHTML([['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows))
-          : kvHTML([['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]])) : '');
+        const partRows = p.source === 'idrac'
+          ? [['整机功耗', w(p.total)], ['电源容量', w(p.capacity)], ['最低（近 1 分钟）', w(p.min)], ['最高（近 1 分钟）', w(p.max)], ['平均（近 1 分钟）', w(p.avg)]].concat(psuRows)
+          : [['CPU 封装 Package', w(p.package)], ['　核心 Core', w(p.core)], ['　非核心 Uncore', w(p.uncore)], ['内存 DRAM', w(p.dram)], ['主板 / 其他底座', w(p.base)], [`活动硬盘${ok(p.disks_active) ? `（${p.disks_active} 块）` : ''}`, w(p.disks_w)]];
+        if (p.source !== 'idrac') {
+          const nGpu = (S.cfg && Array.isArray(S.cfg.power_gpus)) ? S.cfg.power_gpus.reduce((s, g) => s + (+g.count || 0), 0) : 0;
+          if (ok(p.gpus_w) && +p.gpus_w > 0) partRows.push([`独立显卡${nGpu ? `（${nGpu} 张）` : ''}`, w(p.gpus_w)]);
+          if (ok(p.extra_w) && +p.extra_w > 0) partRows.push(['其他板卡', w(p.extra_w)]);
+        }
+        setHTML(x.parts, has ? kvHTML(partRows) : '');
         const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;
         const ppOn = !!(S.cfg && Array.isArray(S.cfg.power_price_periods) && S.cfg.power_price_periods.length);
         const rateTxt = ok(co.rate_yuan_per_kwh) ? (+co.rate_yuan_per_kwh).toFixed(3) : '';
@@ -325,6 +331,85 @@ const SHEETS = {
         setHTML(x.cost, ps.energy ? kvHTML([['今日', `${F.kwh(en.today_kwh)} kWh · ${F.yuan(co.today_yuan)}`], ['本月', `${F.kwh(en.month_kwh)} kWh · ${F.yuan(co.month_yuan)}`], ['开机以来（按当前功率估）', `${F.kwh(en.boot_kwh)} kWh`]]) : `<div class="card pad">${emptyHTML('功耗统计加载中…')}</div>`);
         setHTML(x.est, ep ? kvHTML([['CPU TDP（无 RAPL 时）', ep.tdp_w + ' W'], ['单盘典型功耗', ep.disk_typical_w + ' W'], ['网卡固定功耗', ep.nic_fixed_w + ' W'], ['主板 / 其他底座', ep.base_w + ' W']]) : '');
       };
+    },
+  },
+  weather: {
+    icon: () => 'sun', title: () => '天气详情',
+    sub: o => (o && o.weather && o.weather.city) || '',
+    build(b) {
+      b.innerHTML = `<div data-ref="hero"></div><div data-ref="daily" hidden></div><div data-ref="hourly" hidden></div><div data-ref="uv" hidden></div>`;
+      const x = collect(b);
+      const uvLabel = v => (v <= 2 ? '低' : v <= 5 ? '中等' : v <= 7 ? '高' : v <= 10 ? '很高' : '极高');
+      const dayLabel = d => {
+        const dt = new Date(d);
+        if (isNaN(dt)) return d;
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const diff = Math.round((dt - today) / 86400000);
+        if (diff === 0) return '今天';
+        if (diff === 1) return '明天';
+        if (diff === 2) return '后天';
+        return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dt.getDay()];
+      };
+      const draw = w => {
+        if (!w || !w.ok) {
+          setHTML(x.hero, `<div class="card pad"><div class="empty"><b>天气数据暂不可用</b><span>${esc((w && w.error) || '稍后再试')}</span></div></div>`);
+          x.daily.hidden = true; x.hourly.hidden = true; x.uv.hidden = true; return;
+        }
+        const aqi = w.aqi || {};
+        const meta = [];
+        if (ok(w.temp_max) || ok(w.temp_min)) meta.push(`高 ${ok(w.temp_max) ? w.temp_max : '—'}° / 低 ${ok(w.temp_min) ? w.temp_min : '—'}°`);
+        if (w.wind_dir || ok(w.wind_level)) meta.push(`${w.wind_dir || ''} ${ok(w.wind_level) ? w.wind_level + ' 级' : ''}`.trim());
+        if (aqi.level) meta.push(`空气 ${esc(aqi.level)}${ok(aqi.aqi) ? ' ' + aqi.aqi : ''}`);
+        if (ok(w.uv)) meta.push(`紫外线 ${w.uv}`);
+        setHTML(x.hero, `<div class="card pad" style="display:flex;align-items:center;gap:18px">
+          <span style="width:56px;height:56px;display:inline-block">${wxIcon(w.code, w.is_day ? 1 : 0)}</span>
+          <div><div class="dnum" style="font-size:2.6em"><span class="dm">${ok(w.temp) ? Math.round(w.temp) : '--'}</span><span class="unit" style="font-size:.5em">°C</span></div>
+          <div class="eyebrow">${esc(w.city || '')} · ${esc(wxText(w.desc || w.text))}</div></div>
+          <div style="margin-left:auto;text-align:right" class="faint">${meta.join(' · ')}</div>
+        </div>`);
+        const daily = Array.isArray(w.daily) ? w.daily : [];
+        if (daily.length) {
+          const cells = daily.map(d => {
+            const tmax = ok(d.tmax) ? Math.round(d.tmax) : '—';
+            const tmin = ok(d.tmin) ? Math.round(d.tmin) : '—';
+            const precip = ok(d.precip) ? (d.precip > 0 ? d.precip + 'mm' : '') : '';
+            return `<div class="stat-cell" style="text-align:center;padding:8px 2px"><div class="eyebrow">${esc(dayLabel(d.date))}</div>
+              <span style="width:32px;height:32px;display:inline-block;margin:4px 0">${wxIcon(d.code, 1)}</span>
+              <div class="tnum"><b>${tmax}°</b></div><div class="tnum faint">${tmin}°</div>
+              ${precip ? `<div class="faint" style="font-size:.7em">${esc(precip)}</div>` : ''}
+              ${d.wind_dir ? `<div class="faint" style="font-size:.7em">${esc(d.wind_dir)}</div>` : ''}
+            </div>`;
+          }).join('');
+          setHTML(x.daily, `${sec('7 天预报')}<div class="stat-cells" style="grid-template-columns:repeat(7,1fr)">${cells}</div>`);
+          x.daily.hidden = false;
+        } else x.daily.hidden = true;
+        const hourly = Array.isArray(w.hourly) ? w.hourly : [];
+        if (hourly.length) {
+          const temps = hourly.map(h => ok(h.temp) ? +h.temp : null).filter(v => v !== null);
+          const tLo = temps.length ? Math.min.apply(null, temps) : 0;
+          const tHi = temps.length ? Math.max.apply(null, temps) : 1;
+          const bars = hourly.map(h => {
+            const t = ok(h.temp) ? +h.temp : null;
+            const hh = tHi > tLo ? Math.round(((t - tLo) / (tHi - tLo)) * 28 + 6) : 16;
+            const pop = ok(h.pop) ? Math.round(h.pop) : 0;
+            return `<div class="wx-hr" style="flex:0 0 auto;text-align:center" title="${esc(h.time)} ${t != null ? t + '°' : ''}${pop ? ' 降水 ' + pop + '%' : ''}">
+              <div class="faint" style="font-size:.65em">${pop ? pop + '%' : ''}</div>
+              <div style="height:${hh}px;background:var(--accent);width:14px;border-radius:3px;margin:2px auto"></div>
+              <div class="tnum" style="font-size:.8em">${t != null ? Math.round(t) : ''}</div>
+              <div class="faint" style="font-size:.6em">${esc(String(h.time || '').slice(0, 2))}</div>
+            </div>`;
+          }).join('');
+          setHTML(x.hourly, `${sec('逐小时（今天）')}<div class="wx-hrs" style="display:flex;gap:2px;overflow-x:auto;padding-bottom:6px">${bars}</div>`);
+          x.hourly.hidden = false;
+        } else x.hourly.hidden = true;
+        if (ok(w.uv)) {
+          setHTML(x.uv, `${sec('紫外线指数')}<div class="card pad"><div class="eyebrow">今日最高</div><div class="dnum"><span class="dm">${w.uv}</span><span class="unit">${uvLabel(+w.uv)}</span></div></div>`);
+          x.uv.hidden = false;
+        } else x.uv.hidden = true;
+      };
+      const refresh = () => { API.get('/api/weather').then(draw).catch(() => draw(null)); };
+      refresh();
+      return refresh;
     },
   },
   ctr: {

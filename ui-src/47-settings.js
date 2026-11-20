@@ -97,6 +97,7 @@ function controlFor(it, row) {
   if (it.type === 'colorspec') return colorSpec();
   if (it.type === 'priceperiods') return pricePeriods(it, row);
   if (it.type === 'diskspec') return diskSpec(it, row);
+  if (it.type === 'gpuspec') return gpuSpec(it, row);
   if (it.type === 'action') { const b = mount(`<button class="btn ${it.danger ? 'danger' : ''}" type="button">${esc(it.button)}</button>`); b.onclick = () => it.run(b, row); return b; }
   if (it.type === 'info') { const el = mount(`<div class="set-info"></div>`); el.sync = () => setHTML(el, it.html()); el.sync(); return el; }
 }
@@ -203,6 +204,68 @@ function diskSpec(it, row) {
   });
   el.sync = draw; draw(); return el;
 }
+/* 独立显卡功耗清单：型号 × 数量 × TDP 瓦数；可一键从 /api/gpu 自动填充已识别显卡。
+   iDRAC 电源侧读数已含显卡，不会重复叠加；RAPL / 估算模式会叠加。 */
+function gpuSpec(it, row) {
+  const el = mount('<div class="pp-list"></div>');
+  const list = () => { const v = it.get(); return Array.isArray(v) ? v.map(d => Object.assign({}, d)) : []; };
+  const total = a => a.reduce((s, d) => s + (+d.count || 0) * (+d.watt || 0), 0);
+  const draw = () => {
+    const arr = list();
+    el.innerHTML = arr.map((d, i) => `<div class="pp-row" data-i="${i}">
+        <input class="textfield" type="text" value="${esc(d.name || '')}" data-f="name" aria-label="显卡型号" placeholder="如 RTX 4090 / RX 7900" style="min-width:10em;flex:1">
+        <input class="textfield mono" type="number" min="1" max="64" step="1" value="${isFinite(+d.count) ? d.count : ''}" data-f="count" aria-label="数量" style="width:4em">
+        <span class="faint">张 ×</span>
+        <input class="textfield mono" type="number" min="0" max="1000" step="1" value="${isFinite(+d.watt) ? d.watt : ''}" data-f="watt" aria-label="TDP 功耗" style="width:5.5em">
+        <span class="faint">W</span>
+        <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除">${ic('x')}</button>
+      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加显卡</button><button class="btn ghost" type="button" data-auto>自动检测填充</button><span class="faint">${arr.length ? `显卡合计 ${total(arr).toFixed(1)} W` : '跑 AI 的独显是电费大头，按型号填 TDP 瓦数'}</span></div>`;
+  };
+  el.addEventListener('change', e => {
+    const inp = e.target.closest('[data-f]'); if (!inp) return;
+    const r = inp.closest('.pp-row'); if (!r) return;
+    const arr = list(), i = +r.dataset.i, f = inp.dataset.f;
+    if (!arr[i]) return;
+    if (f === 'name') arr[i].name = inp.value.slice(0, 64);
+    else {
+      const n = parseFloat(inp.value);
+      if (!isFinite(n)) { draw(); return; }
+      if (f === 'count' && (n < 1 || n > 64)) { toast('数量需在 1 – 64 之间', { icon: 'alert' }); draw(); return; }
+      if (f === 'watt' && (n < 0 || n > 1000)) { toast('TDP 需在 0 – 1000 W 之间', { icon: 'alert' }); draw(); return; }
+      arr[i][f] = f === 'count' ? Math.round(n) : n;
+    }
+    it.set(arr, row);
+  });
+  el.addEventListener('click', async e => {
+    const del = e.target.closest('[data-del]');
+    if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+    if (e.target.closest('[data-add]')) {
+      const arr = list();
+      if (arr.length >= 8) { toast('最多 8 条', { icon: 'alert' }); return; }
+      arr.push({ name: '', count: 1, watt: '' });
+      it.set(arr, row); return;
+    }
+    const auto = e.target.closest('[data-auto]');
+    if (auto) {
+      auto.disabled = true; auto.textContent = '检测中…';
+      try {
+        const r = await API.get('/api/gpu');
+        const gpus = (r && r.gpu) || [];
+        if (!gpus.length) { toast('未检测到独立显卡', { icon: 'alert' }); return; }
+        const arr = list();
+        gpus.forEach(g => {
+          const nm = (g && (g.name || g.model || g.product)) || '';
+          if (nm && !arr.some(a => a.name === nm)) arr.push({ name: String(nm).slice(0, 64), count: 1, watt: '' });
+        });
+        if (arr.length > 8) arr.length = 8;
+        it.set(arr, row);
+        toast('已填充显卡，请填写 TDP 瓦数', { icon: 'check', ms: 3000 });
+      } catch (err) { toast('检测失败', { icon: 'alert' }); }
+      finally { auto.disabled = false; auto.textContent = '自动检测填充'; }
+    }
+  });
+  el.sync = draw; draw(); return el;
+}
 function setRow(it) {
   const row = mount(`<div class="set-row${it.wide ? ' wide' : ''}" data-k="${it.k}"><div><div class="lbl">${esc(it.label)}${it.help ? `<button class="q" type="button" aria-label="说明" aria-expanded="false">${ic('help')}</button>` : ''}</div><div class="hint" data-ref="hint"></div></div><div class="ctl"></div></div>`);
   const ctl = controlFor(it, row); row.querySelector('.ctl').append(ctl);
@@ -241,6 +304,8 @@ const SET_SCHEMA = [
     cfgItem('power_disk_typical_w', '单盘典型功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', showIf: () => !(S.cfg && Array.isArray(S.cfg.power_disks) && S.cfg.power_disks.length), hint: '每块活动机械盘按此计（3.5 寸约 8 W，2.5 寸约 3 W）；固态固定 2.5 W' }),
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
     cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0.5, unit: 'W', hint: 'RAPL 只测 CPU 封装，整机估算叠加此底座，可按插座实测补差' }),
+    cfgItem('power_gpus', '独立显卡功耗清单', 'gpuspec', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_gpus) && S.cfg.power_gpus.length) ? '已叠加到整机功耗与电费（RAPL / 估算模式；iDRAC 电源侧读数已含显卡，不重复计算）' : '跑 AI 的独显是电费大头，按型号 + 数量 + TDP 瓦数添加', help: 'RAPL 只测 CPU 封装，不含独立显卡。在这里列出独显（型号 + 数量 + TDP 瓦数），整机功耗与电费会叠加。iDRAC 测的是电源侧整机功耗，已含显卡，不会重复计算。TDP 查显卡官方参数（如 RTX 4090 约 450W）；旧卡即使无驱动也有空载 / 转码功耗。' }),
+    cfgItem('power_extra_w', '其他板卡功耗', 'number', { min: 0, max: 500, step: 0.5, unit: 'W', hint: '主机内部其他板卡固定功耗（独立网卡 / 声卡 / HBA 卡等）；不含显示器、键鼠等外部外设' }),
   ] },
   { id: 'monitor', title: '事件监控', icon: 'eye', desc: 'fnOS 80+ 种系统事件实时推送（主日志库 / 备份 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP），经事件模板化后走既有推送出口；硬盘巡检的开关、间隔、结果推送与已忽略的提醒也在这里。', custom: renderMonitor },
   { id: 'notify', title: '通知设置', icon: 'bell', desc: '事件推送、硬盘巡检告警、阈值警告与定时报告都走这里配置的渠道；支持多渠道同时推送，测试也各测各的。', custom: renderNotify },
@@ -1221,16 +1286,17 @@ function renderUps(card) {
              esc: s => String(s != null ? s : '').replace(/[&<>]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;'})[c]) };
   })();
   card.innerHTML = `
-    <div class="note info notify-note">${ic('plug')}<span><b>只读</b>：通过 NUT（upsc）读取 UPS 实时状态，不会写入 UPS 任何设置。需要飞牛「UPS 电源管理」启用（系统装 nut-client 包）。输出功率 = 输出电压 × 输出电流。</span></div>
+    <div class="note info notify-note" data-ref="note">${ic('plug')}<span><b>只读</b>：通过 NUT（upsc）读取 UPS 实时状态，不会写入 UPS 任何设置。需要飞牛「UPS 电源管理」启用（系统装 nut-client 包）。输出功率 = 输出电压 × 输出电流。</span></div>
     <div class="set-row inline"><div><div class="lbl">UPS 电源采集</div><div class="hint" data-ref="hOn"></div></div><div class="ctl"><button class="switch" type="button" role="switch" aria-checked="false" data-ref="swOn"></button></div></div>
-    <div class="set-row"><div><div class="lbl">UPS 名称</div><div class="hint">upsc -l 列出的实例名；留空自动选第一台</div></div><div class="ctl" style="display:flex;gap:6px">
+    <div class="set-row"><div><div class="lbl">电源类型</div><div class="hint">自动=先试 NUT，失败且检测到笔记本电池时回退；笔记本电池走系统电源管理（upower/sysfs）</div></div><div class="ctl"><select class="textfield" data-ref="source" style="min-width:200px"><option value="auto">自动</option><option value="nut">USB UPS（NUT）</option><option value="battery">笔记本电池</option></select></div></div>
+    <div class="set-row"><div><div class="lbl">UPS 名称</div><div class="hint" data-ref="nameHint">upsc -l 列出的实例名；留空自动选第一台</div></div><div class="ctl" style="display:flex;gap:6px">
       <select class="textfield" data-ref="name" style="min-width:200px"></select>
       <button class="btn sm" type="button" data-ref="refresh">${ic('refresh')} 重新扫描</button>
     </div></div>
     <div class="set-row inline"><div><div class="lbl">采集间隔</div><div class="hint">upsc 单次 0.1–1 秒；最快 3 秒、最慢 60 秒</div></div><div class="ctl" style="display:flex;gap:8px;align-items:center"><input class="textfield mono" type="number" min="3" max="60" data-ref="interval" style="width:72px"><span class="faint">秒</span></div></div>
     <details class="adv" hidden><summary class="set-sub" style="cursor:pointer">高级设置（NUT 连接 / 告警推送）</summary>
       <div style="padding:10px 0 2px 0;display:flex;flex-direction:column;gap:12px">
-        <div class="set-row"><div><div class="lbl">NUT 地址 / 端口</div><div class="hint">留空自动探测（用户配置 → /etc/nut/upsd.conf → 127.0.0.1:3493）；跨机监控或自定义 upsd 时填写</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center">
+        <div class="set-row" data-ref="nutRow"><div><div class="lbl">NUT 地址 / 端口</div><div class="hint">留空自动探测（用户配置 → /etc/nut/upsd.conf → 127.0.0.1:3493）；跨机监控或自定义 upsd 时填写</div></div><div class="ctl" style="display:flex;gap:6px;align-items:center">
           <input class="textfield mono" type="text" placeholder="自动" data-ref="nutHost" style="width:140px">
           <input class="textfield mono" type="number" min="0" max="65535" placeholder="3493" data-ref="nutPort" style="width:90px">
         </div></div>
@@ -1246,12 +1312,13 @@ function renderUps(card) {
   `;
   const x = collect(card);
   // ⚠️ 数据源对象（必须在事件绑定之前声明）
-  const f = { enabled: 0, ups_name: '', nut_host: '', nut_port: 0, poll_interval: 5, notify_enabled: 1,
+  const f = { enabled: 0, ups_source: 'auto', ups_name: '', nut_host: '', nut_port: 0, poll_interval: 5, notify_enabled: 1,
               notify_debounce_s: 60, notify_max_per_min: 8, notify_events: [] };
   let cfg = null, upscNames = [], evSel = new Set();
 
   // --- 控件事件绑定（先绑再 load）---
   x.swOn.addEventListener('click', () => { f.enabled = f.enabled ? 0 : 1; x.swOn.setAttribute('aria-checked', String(!!f.enabled)); });
+  x.source.addEventListener('change', () => { f.ups_source = x.source.value; syncSourceUI(); });
   x.swNotif.addEventListener('click', () => { f.notify_enabled = f.notify_enabled ? 0 : 1; x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled)); });
   x.name.addEventListener('change', () => { f.ups_name = x.name.value; });
   x.nutHost.addEventListener('input', () => { f.nut_host = x.nutHost.value.trim(); });
@@ -1288,6 +1355,7 @@ function renderUps(card) {
       ${tg ? `<div class="hint" style="margin-top:6px">NUT 连接</div><ul class="hint" style="margin:2px 0 0 16px">${tg}</ul>` : ''}
       <div class="hint" style="margin-top:6px">系统 USB 上的疑似 UPS</div>
       ${usb ? `<ul class="hint" style="margin:2px 0 0 16px">${usb}</ul>` : '<div class="hint">未在 /sys 发现疑似 UPS 的 USB 设备</div>'}
+      ${(d.batteries && d.batteries.length) ? `<div class="hint" style="margin-top:6px">检测到的笔记本电池</div><ul class="hint" style="margin:2px 0 0 16px">${d.batteries.map(b => `<li>${esc(b.name)}${b.model ? '（' + esc(b.model) + '）' : ''}${b.capacity !== '' ? ' · 当前电量 ' + esc(b.capacity) + '%' : ''}</li>`).join('')}</ul>` : ''}
       ${sug ? `<div style="margin-top:6px">${sug}</div>` : ''}
     </div>`;
   }
@@ -1316,7 +1384,14 @@ function renderUps(card) {
       const lv = d.live || {}, dv = d.device || {}, labels = lv.labels || [];
       const cls = lv.st & 4 ? 'crit' : (lv.st & 1024 || lv.st & 64 ? 'warn' : 'ok');
       const fld = (v, u, deci=0) => v != null ? `<b>${Number(v).toFixed(deci)}</b><small>${u}</small>` : '<b class="faint">—</b>';
-      const grid = [
+      const isBat = dv.source === 'battery';
+      const grid = isBat ? [
+        ['电池电压', fld(lv.bat_v, ' V', 2)], ['充放电电流', fld(lv.out_a, ' A', 2)],
+        ['充放电功率', fld(lv.out_w, ' W', 1)], ['电量', fld(lv.chg, '%', 0)],
+        ['电池温度', fld(lv.temp, ' ℃', 1)], ['循环次数', lv.cycles != null ? `<b>${lv.cycles}</b><small>次</small>` : '<b class="faint">—</b>'],
+        ['健康度', lv.health != null ? `<b>${Number(lv.health).toFixed(1)}</b><small>%</small>` : '<b class="faint">—</b>'],
+        ['剩余续航', lv.rt ? `<b>${Math.round(lv.rt/60)}</b><small>分钟</small>` : '<b class="faint">—</b>'],
+      ] : [
         ['输入电压', fld(lv.in_v, ' V', 1)], ['输出电压', fld(lv.out_v, ' V', 1)],
         ['输出电流', fld(lv.out_a, ' A', 2)], ['输出功率', fld(lv.out_w, ' W', 1)],
         ['负载', fld(lv.load, '%', 0)], ['电量', fld(lv.chg, '%', 0)],
@@ -1324,7 +1399,7 @@ function renderUps(card) {
         ['电池电压', fld(lv.bat_v, ' V', 2)], ['电池温度', fld(lv.temp, ' ℃', 1)],
         ['输入频率', fld(lv.in_hz, ' Hz', 1)],
       ];
-      if (lv.out_va != null) grid.push(['视在功率', fld(lv.out_va, ' VA', 0)]);
+      if (!isBat && lv.out_va != null) grid.push(['视在功率', fld(lv.out_va, ' VA', 0)]);
       const devName = (dv.brand || dv.mfr || '') + ' ' + (dv.model || dv.name || '');
       x.live.innerHTML = `
         <div class="up-head">
@@ -1338,6 +1413,19 @@ function renderUps(card) {
     });
   }
 
+  // --- 电源类型 UI 联动 ---
+  function syncSourceUI() {
+    const bat = f.ups_source === 'battery';
+    if (x.nutRow) x.nutRow.style.display = bat ? 'none' : '';
+    if (x.nameHint) x.nameHint.textContent = bat ? '检测到的电池名；留空自动选第一块电池' : 'upsc -l 列出的实例名；留空自动选第一台';
+    if (x.note) {
+      const sp = x.note.querySelector('span');
+      if (sp) sp.innerHTML = bat
+        ? '<b>只读</b>：通过系统电源管理（upower/sysfs）读取笔记本电池，不走 NUT。电量、充放电状态、电压、温度、循环次数、健康度均来自 /sys，零额外依赖。'
+        : '<b>只读</b>：通过 NUT（upsc）读取 UPS 实时状态，不会写入 UPS 任何设置。需要飞牛「UPS 电源管理」启用（系统装 nut-client 包）。输出功率 = 输出电压 × 输出电流。';
+    }
+  }
+
   // --- 同步（cfg → f → DOM）---
   function sync() {
     if (!cfg) return;
@@ -1347,6 +1435,7 @@ function renderUps(card) {
     f.notify_enabled = cfg.notify_enabled ? 1 : 0;
     f.notify_debounce_s = cfg.notify_debounce_s != null ? cfg.notify_debounce_s : 60;
     f.notify_max_per_min = cfg.notify_max_per_min != null ? cfg.notify_max_per_min : 8;
+    f.ups_source = cfg.ups_source || 'auto';
     f.ups_name = cfg.ups_name || '';
     f.nut_host = cfg.nut_host || '';
     f.nut_port = cfg.nut_port || 0;
@@ -1355,6 +1444,8 @@ function renderUps(card) {
     // DOM 层：开关 aria-checked
     x.swOn.setAttribute('aria-checked', String(!!f.enabled));
     x.swNotif.setAttribute('aria-checked', String(!!f.notify_enabled));
+    x.source.value = f.ups_source;
+    syncSourceUI();
     // DOM 层：输入框 value
     x.interval.value = f.poll_interval;
     x.nutHost.value = f.nut_host;
@@ -1402,6 +1493,7 @@ function renderUps(card) {
   async function doSave() {
     const body = {
       enabled: +f.enabled,
+      ups_source: x.source.value || 'auto',
       ups_name: x.name.value || '',        // 用户可能还没 change，读当前 value 最保险
       nut_host: x.nutHost.value.trim(),
       nut_port: +x.nutPort.value || 0,

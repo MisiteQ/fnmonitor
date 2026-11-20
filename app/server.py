@@ -121,7 +121,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "power_gpus": [], "power_extra_w": 0, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -230,6 +230,38 @@ def power_disks_total(config):
     total = sum(r["count"] * r["watt"] for r in rows)
     cnt = sum(r["count"] for r in rows)
     return round(total, 2), (round(total / cnt, 2) if cnt else None)
+
+
+# ---------------------------------------------------------------------------
+# 独立显卡功耗（issue #36）：用户声明显卡型号 × 数量 × TDP 瓦数，叠加到整机功耗
+# ---------------------------------------------------------------------------
+def sanitize_power_gpus(raw):
+    """校验 / 清洗独立显卡功耗清单：型号非空、数量/瓦数有效，最多保留 8 条。"""
+    out = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()[:64]
+        try:
+            cnt = int(float(it.get("count")))
+            watt = float(it.get("watt"))
+        except Exception:
+            continue
+        if cnt <= 0 or not math.isfinite(watt):
+            continue
+        out.append({"name": name, "count": max(1, min(cnt, 64)),
+                    "watt": round(max(0.0, min(1000.0, watt)), 1)})
+        if len(out) >= 8:
+            break
+    return out
+
+
+def power_gpus_total(config):
+    """独立显卡功耗合计瓦数；未配置返回 0。"""
+    rows = sanitize_power_gpus((config or {}).get("power_gpus"))
+    if not rows:
+        return 0
+    return round(sum(r["count"] * r["watt"] for r in rows), 2)
 
 
 def period_rate(minute, periods, base_rate):
@@ -9170,11 +9202,19 @@ def _weather_from_wttr(lat, lon, city):
         is_day = 1 if 6 <= hour < 18 else 0
     except Exception:
         pass
+    wday = ((data or {}).get("weather") or [{}])[0] or {}
+    tmax = wday.get("maxtempC")
+    tmin = wday.get("mintempC")
+    wind_dir = str(cur.get("winddir16Point") or "")
+    wind_kmh = round(float(cur.get("windspeedKmph") or 0), 1)
     return {"ok": True, "city": city or "未知地区",
             "temp": round(float(temp), 1),
             "feels": round(float(cur.get("FeelsLikeC") or temp), 1),
             "humidity": round(float(cur.get("humidity") or 0), 1),
-            "wind": round(float(cur.get("windspeedKmph") or 0), 1),
+            "wind": wind_kmh,
+            "temp_max": round(float(tmax), 1) if tmax not in (None, "") else None,
+            "temp_min": round(float(tmin), 1) if tmin not in (None, "") else None,
+            "wind_dir": wind_dir, "wind_level": _wind_beaufort(wind_kmh),
             "code": code, "desc": _wmo_text(code), "is_day": is_day}
 
 
@@ -9272,6 +9312,161 @@ def _cn_city_lookup(name):
     return None
 
 
+# 风向角度 → 16 方位中文
+_WIND_DIRS_16 = ["北", "东北偏北", "东北", "东北偏东", "东", "东南偏东", "东南", "东南偏南",
+                 "南", "西南偏南", "西南", "西南偏西", "西", "西北偏西", "西北", "西北偏北"]
+
+
+def _safe_float(v):
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return round(f, 1) if math.isfinite(f) else None
+    except Exception:
+        return None
+
+
+def _wind_dir_text(deg):
+    try:
+        d = float(deg) % 360
+    except Exception:
+        return ""
+    return _WIND_DIRS_16[int((d + 11.25) / 22.5) % 16]
+
+
+def _wind_beaufort(kmh):
+    """风速 km/h → 蒲福风级（0–12）。"""
+    try:
+        v = float(kmh)
+    except Exception:
+        return None
+    for i, l in enumerate((1, 6, 12, 20, 29, 39, 50, 62, 75, 89, 103, 118)):
+        if v < l:
+            return i
+    return 12
+
+
+def _aqi_level(aqi):
+    """european_aqi → 中文等级。"""
+    try:
+        a = float(aqi)
+    except Exception:
+        return ""
+    if a <= 20:
+        return "优"
+    if a <= 40:
+        return "良"
+    if a <= 60:
+        return "中"
+    if a <= 80:
+        return "较差"
+    if a <= 100:
+        return "差"
+    return "极差"
+
+
+def _open_meteo_ext(lat, lon):
+    """Open-Meteo 扩展数据：当天高低温 / 风向 / 7 天预报 / 逐小时 / 紫外线。
+    失败返回 {}（静默降级，不影响实时天气）。"""
+    import urllib.request
+    import json as _json
+    try:
+        url = ("https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+               "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,"
+               "wind_speed_10m,wind_direction_10m,is_day"
+               "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
+               "wind_direction_10m_dominant,uv_index_max"
+               "&hourly=temperature_2m,precipitation_probability,weather_code"
+               "&forecast_days=7&timezone=auto") % (lat, lon)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 fnmonitor"})
+        data = _json.loads(urllib.request.urlopen(req, timeout=6).read().decode("utf-8", "ignore"))
+    except Exception:
+        return {}
+    cur = data.get("current", {}) or {}
+    daily = data.get("daily", {}) or {}
+    hourly = data.get("hourly", {}) or {}
+    out = {}
+    t = cur.get("temperature_2m")
+    if t is not None:
+        out["temp"] = round(float(t), 1)
+        out["feels"] = round(float(cur.get("apparent_temperature") or t), 1)
+        out["humidity"] = round(float(cur.get("relative_humidity_2m") or 0), 1)
+        out["wind"] = round(float(cur.get("wind_speed_10m") or 0), 1)
+        out["code"] = cur.get("weather_code")
+        out["is_day"] = cur.get("is_day")
+    wd = cur.get("wind_direction_10m")
+    if wd is not None:
+        out["wind_dir"] = _wind_dir_text(wd)
+        out["wind_level"] = _wind_beaufort(out.get("wind"))
+    dmax = daily.get("temperature_2m_max") or []
+    dmin = daily.get("temperature_2m_min") or []
+    if dmax and dmax[0] is not None:
+        out["temp_max"] = round(float(dmax[0]), 1)
+    if dmin and dmin[0] is not None:
+        out["temp_min"] = round(float(dmin[0]), 1)
+    uv = daily.get("uv_index_max") or []
+    if uv and uv[0] is not None:
+        out["uv"] = round(float(uv[0]), 1)
+    times = daily.get("time") or []
+    if times:
+        days = []
+        dcodes = daily.get("weather_code") or []
+        dprec = daily.get("precipitation_sum") or []
+        ddirs = daily.get("wind_direction_10m_dominant") or []
+        for i in range(min(7, len(times))):
+            days.append({
+                "date": times[i],
+                "code": dcodes[i] if i < len(dcodes) else None,
+                "tmax": _safe_float(dmax[i]) if i < len(dmax) else None,
+                "tmin": _safe_float(dmin[i]) if i < len(dmin) else None,
+                "precip": _safe_float(dprec[i]) if i < len(dprec) else None,
+                "wind_dir": _wind_dir_text(ddirs[i]) if i < len(ddirs) and ddirs[i] is not None else "",
+            })
+        out["daily"] = days
+    htimes = hourly.get("time") or []
+    if htimes:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        htemps = hourly.get("temperature_2m") or []
+        hpops = hourly.get("precipitation_probability") or []
+        hcodes = hourly.get("weather_code") or []
+        hrs = []
+        for i, t in enumerate(htimes):
+            if not str(t).startswith(today):
+                continue
+            hrs.append({
+                "time": str(t)[11:16],
+                "temp": _safe_float(htemps[i]) if i < len(htemps) else None,
+                "pop": _safe_float(hpops[i]) if i < len(hpops) else None,
+                "code": hcodes[i] if i < len(hcodes) else None,
+            })
+            if len(hrs) >= 24:
+                break
+        out["hourly"] = hrs
+    return out
+
+
+def _fetch_aqi(lat, lon):
+    """Open-Meteo 空气质量（pm2.5 / pm10 / european_aqi）。失败返回 None。"""
+    import urllib.request
+    import json as _json
+    try:
+        url = ("https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%.4f&longitude=%.4f"
+               "&current=pm2_5,pm10,european_aqi&timezone=auto") % (lat, lon)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 fnmonitor"})
+        data = _json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore"))
+        cur = data.get("current", {}) or {}
+        pm25, pm10, aqi = cur.get("pm2_5"), cur.get("pm10"), cur.get("european_aqi")
+        if pm25 is None and pm10 is None and aqi is None:
+            return None
+        return {"pm25": _safe_float(pm25), "pm10": _safe_float(pm10),
+                "aqi": round(float(aqi)) if aqi is not None else None,
+                "level": _aqi_level(aqi)}
+    except Exception:
+        return None
+
+
 def fetch_weather(city_override=None):
     """获取实时天气（免费无需 key）。city_override 支持：空=公网IP自动定位；
     "城市名"（如 徐州 / Beijing）= 先查内置中国城市库，未命中走 Open-Meteo 地理编码；
@@ -9342,35 +9537,40 @@ def fetch_weather(city_override=None):
             city = clean_text(city, 64) or "未知地区"
             if lat is None:
                 return {"ok": False, "error": "无法定位当前网络位置"}
-        # ---- 当前天气：国内优先，逐级兜底 ----
-        # 中国天气网（国内直连最快）→ Open-Meteo（国内常被封锁，故放后面）→ wttr.in
+        # ---- 当前天气：国内优先，逐级兜底；扩展字段（高低温/风向/预报/AQI）走 Open-Meteo ----
         disp_city = clean_text(city or override, 64) or "未知地区"
         err = None
+        result = None
         if re.search(r"[\u4e00-\u9fff]", city or ""):
             try:
-                return _cn_weather(city, disp_city)
+                result = _cn_weather(city, disp_city)
             except Exception as e:
                 err = e
-        try:
-            url = ("https://api.open-meteo.com/v1/forecast"
-                   "?latitude=%.4f&longitude=%.4f"
-                   "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day"
-                   "&timezone=auto") % (lat, lon)
-            data = _get(url, timeout=6)
-            cur = data.get("current", {}) or {}
-            temp = cur.get("temperature_2m")
-            if temp is None:
-                raise ValueError("天气接口无数据")
+        # Open-Meteo 扩展：高低温 / 风向 / 7 天预报 / 逐小时 / 紫外线（失败静默降级）
+        ext = _open_meteo_ext(lat, lon)
+        if result and result.get("ok"):
+            # 实时来自中国天气网，用 ext 补扩展字段
+            for k in ("temp_max", "temp_min", "daily", "hourly", "uv"):
+                if ext.get(k) is not None:
+                    result[k] = ext[k]
+            if ext.get("wind_dir"):
+                result["wind_dir"] = ext["wind_dir"]
+                result["wind_level"] = ext.get("wind_level")
+            # 中国天气网 wse 口径与 km/h 不一致，无 Open-Meteo 时风向/风级留空
+            result["aqi"] = _fetch_aqi(lat, lon)
+            return result
+        # 中国天气网失败：用 Open-Meteo 实时（ext 已含 current）
+        if ext.get("temp") is not None:
             return {"ok": True, "city": disp_city,
-                    "temp": round(float(temp), 1),
-                    "feels": round(float(cur.get("apparent_temperature") or temp), 1),
-                    "humidity": round(float(cur.get("relative_humidity_2m") or 0), 1),
-                    "wind": round(float(cur.get("wind_speed_10m") or 0), 1),
-                    "code": cur.get("weather_code"),
-                    "desc": _wmo_text(cur.get("weather_code")),
-                    "is_day": cur.get("is_day")}
-        except Exception as e:
-            err = e
+                    "temp": ext["temp"], "feels": ext.get("feels") or ext["temp"],
+                    "humidity": ext.get("humidity"), "wind": ext.get("wind"),
+                    "code": ext.get("code"), "desc": _wmo_text(ext.get("code")),
+                    "is_day": ext.get("is_day"),
+                    "temp_max": ext.get("temp_max"), "temp_min": ext.get("temp_min"),
+                    "wind_dir": ext.get("wind_dir"), "wind_level": ext.get("wind_level"),
+                    "daily": ext.get("daily"), "hourly": ext.get("hourly"),
+                    "uv": ext.get("uv"), "aqi": _fetch_aqi(lat, lon)}
+        # wttr.in 兜底（仅实时 + 高低温）
         try:
             return _weather_from_wttr(lat, lon, disp_city)
         except Exception:
@@ -11067,6 +11267,11 @@ class Collector(threading.Thread):
                 else:
                     disks_w = round(sum(_SSD_TYPICAL_W if disk_is_ssd(d.get("name")) else disk_w_unit
                                         for d in _live_disks), 2)
+                # 独立显卡 + 其他板卡（主机内部设备，非外设）固定功耗，叠加到整机；
+                # iDRAC 电源侧读数已含显卡，故仅 RAPL / 估算模式叠加，iDRAC 仅展示分项。
+                gpus_w = power_gpus_total(self.config)
+                extra_w = float(self.config.get("power_extra_w", 0) or 0)
+                extra_w = round(max(0.0, min(500.0, extra_w)) if math.isfinite(extra_w) else 0, 1)
                 idr = self._idrac_fast()
                 if idr and _nz(idr.get("power_watts")) is not None:
                     self._last_power = {
@@ -11074,6 +11279,7 @@ class Collector(threading.Thread):
                         "total": round(float(idr["power_watts"]), 2),
                         "package": None, "core": None, "uncore": None, "dram": None,
                         "base": None, "disks_w": disks_w, "disks_active": disks_active,
+                        "gpus_w": gpus_w, "extra_w": extra_w,
                         "capacity": _nz(idr.get("power_capacity_watts")),
                         "min": _nz(idr.get("power_min")),
                         "max": _nz(idr.get("power_max")),
@@ -11090,7 +11296,9 @@ class Collector(threading.Thread):
                         rp["base"] = round(base_w, 2)
                         rp["disks_w"] = disks_w
                         rp["disks_active"] = disks_active
-                        rp["total"] = round(pkg + dram + base_w + disks_w, 2)
+                        rp["gpus_w"] = gpus_w
+                        rp["extra_w"] = extra_w
+                        rp["total"] = round(pkg + dram + base_w + disks_w + gpus_w + extra_w, 2)
                         self._last_power = rp
                     else:
                         try:
@@ -11102,10 +11310,12 @@ class Collector(threading.Thread):
                                 (disks_w / disks_active) if disks_active else disk_w_unit,
                                 float(self.config.get("power_nic_fixed_w", 5)),
                             )
+                            est_w = round(est_w + gpus_w + extra_w, 2)
                             self._last_power = {"ok": True, "total": est_w, "source": "estimated",
                                                 "package": None, "core": None, "uncore": None,
                                                 "dram": None, "base": None,
-                                                "disks_w": disks_w, "disks_active": disks_active}
+                                                "disks_w": disks_w, "disks_active": disks_active,
+                                                "gpus_w": gpus_w, "extra_w": extra_w}
                         except Exception:
                             self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
@@ -14199,7 +14409,7 @@ class MonitorApp:
             updates["disk_scan_interval_h"] = 0 if h <= 0 else min(
                 DISK_SCAN_PRESETS_H, key=lambda x: abs(x - h))
         for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
-                  "power_rate_yuan", "power_base_w"):
+                  "power_rate_yuan", "power_base_w", "power_extra_w"):
             if k in data:
                 try:
                     fv = float(data[k])
@@ -14213,6 +14423,8 @@ class MonitorApp:
             updates["power_price_periods"] = sanitize_price_periods(data.get("power_price_periods"))
         if "power_disks" in data:
             updates["power_disks"] = sanitize_power_disks(data.get("power_disks"))
+        if "power_gpus" in data:
+            updates["power_gpus"] = sanitize_power_gpus(data.get("power_gpus"))
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -15397,7 +15609,7 @@ def load_config(data_dir):
         except Exception:
             pass
     for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
-              "power_rate_yuan", "power_base_w"):
+              "power_rate_yuan", "power_base_w", "power_extra_w"):
         if k in user:
             try:
                 cfg[k] = float(user[k])
@@ -15407,6 +15619,8 @@ def load_config(data_dir):
         cfg["power_price_periods"] = sanitize_price_periods(user["power_price_periods"])
     if "power_disks" in user:
         cfg["power_disks"] = sanitize_power_disks(user["power_disks"])
+    if "power_gpus" in user:
+        cfg["power_gpus"] = sanitize_power_gpus(user["power_gpus"])
     if "weather_city" in user:
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
     if "data_dir" in user:

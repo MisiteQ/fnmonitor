@@ -288,11 +288,15 @@ class WeatherSanitizeTest(unittest.TestCase):
         self.assertNotIn("<", json.dumps(w, ensure_ascii=False))
 
     def test_coords_normalized(self):
-        w, calls = self._run("34.26,117.18", {"api.open-meteo.com/v1/forecast": self.FORECAST})
+        # forecast + air-quality 两次请求（AQI 失败会静默降级，这里 mock 成功）
+        w, calls = self._run("34.26,117.18", {
+            "api.open-meteo.com/v1/forecast": self.FORECAST,
+            "air-quality-api.open-meteo.com": {"current": {"pm2_5": 12, "pm10": 20, "european_aqi": 25}}})
         self.assertTrue(w["ok"], w)
         self.assertEqual(w["city"], "34.2600,117.1800")
         self.assertEqual(w["temp"], 21.3)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(w["aqi"]["aqi"], 25)
+        self.assertEqual(len(calls), 2)
 
     def test_out_of_range_coords(self):
         w, calls = self._run("100,200", {})

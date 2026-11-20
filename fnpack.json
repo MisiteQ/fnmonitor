@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.10/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.11/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.11": {
+                    "changelog": "v2.42.11 笔记本电池识别为 UPS · 天气信息扩展 · 独立显卡功耗<br>① UPS 新增「笔记本电池」电源类型：自动模式下检测不到 NUT 时回退读取 sysfs 电池，展示电压、充放电电流与功率、电量、温度、循环次数与健康度；电池放电=市电中断、≤20%=低电量、充放电切换复用既有 UPS 边沿告警<br>② 天气信息扩展：主页卡片副信息增加当日高低温、风向与蒲福风级、AQI 空气等级；点击卡片打开抽屉新增 7 天预报、当天逐小时温度+降水概率、紫外线指数（Open-Meteo 扩展接口，失败静默降级）<br>③ 独立显卡与其他板卡功耗计入整机：设置新增「独立显卡功耗清单」（型号×数量×TDP，可一键自动检测填充，最多 8 条）与「其他板卡功耗」（独立网卡/声卡/HBA 等主机内部设备，不含外设）；RAPL/估算模式叠加到整机功耗与电费，iDRAC 电源侧读数已含显卡不重复计算",
+                    "updated_at": "2026-11-18",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.11/fnmonitor-2.42.11-x86.fpk",
+                            "sha256": "7dfd9afb4a3c285969095afa9f30391f1407f4a517b77fce1634868dd1eaffa3",
+                            "size": 750909
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.11/fnmonitor-2.42.11-arm.fpk",
+                            "sha256": "1d7c52f0673a3d5c0d8a5733dde10a7ad249e39af45ff5436da3580b77c53451",
+                            "size": 750935
+                        }
+                    }
+                },
                 "2.42.10": {
                     "changelog": "v2.42.10 内置更新跨机器兼容加固<br>① 应用中心升级走 Unix Socket RPC：socket 路径多候选自动发现与连接回退，响应字段、层级与状态词全面容错，兼容不同 fnOS 版本<br>② 升级任务提交后仅观察 20 秒即返回，页面不再长时间转圈；任务已提交后重复点击直接返回，登记版本已是目标版本时跳过重复升级<br>③ 去掉 /vol1~vol4 等单机硬编码：存储池挂载点、内置应用数据目录、应用注册目录、下载保存目录改为运行时动态枚举，时区跟随系统，安装/升级脚本动态解析应用基础目录",
                     "updated_at": "2026-11-18",
