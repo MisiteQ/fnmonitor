@@ -1049,7 +1049,7 @@
                     }
                 },
                 "2.8.3": {
-                    "changelog": "① 接入 FnDepot 外部应用源：仓库根目录新增 fnpack.json 索引（V2 规范），在 FnDepot 客户端添加本仓库地址即可直接安装与升级<br>② 本次无功能代码变更，功能与 v2.8.2 一致",
+                    "changelog": "① 新增 fnpack.json 应用源索引：仓库根目录新增 fnpack.json 应用源索引（V2 规范，含双平台安装包校验信息）<br>② 本次无功能代码变更，功能与 v2.8.2 一致",
                     "updated_at": "2026-09-05T20:30:00+08:00",
                     "os_min_version": "0.9.0",
                     "packages": {
