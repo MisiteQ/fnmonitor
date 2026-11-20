@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.11/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.12/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.12": {
+                    "changelog": "v2.42.12 天气数据源改回中国天气网，修复 2.42.11 天气扩展不生效<br>① 2.42.11 的天气扩展依赖 Open-Meteo，该域名在国内常被阻断，导致高低温、风向、7 天预报、逐小时、紫外线全部为空；现改为以中国天气网 weather_index 为主数据源（今日高低温、风向、风力、风速、AQI、7 天预报、紫外线强度），逐小时由 wttr.in 兜底<br>② 主页天气卡片重新显示当日最高温、最低温、风向、风力等级、风速（km/h）<br>③ 天气抽屉新增今日详情网格（最高/最低/当前/体感/湿度/风向/风力/风速/AQI/PM2.5/紫外线）、未来 7 天预报、未来 24 小时温度与降水概率、紫外线强度与防护建议<br>④ AQI 等级改用国标口径（优/良/轻度污染/中度污染/重度污染/严重污染）",
+                    "updated_at": "2026-11-18T20:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.12/fnmonitor-2.42.12-x86.fpk",
+                            "sha256": "4f77e027606ec222949e2cfbee91cb313d01ce8cffb8dd849a9f32b780b665cb",
+                            "size": 753149
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.12/fnmonitor-2.42.12-arm.fpk",
+                            "sha256": "9fe2c7392073924414d55a7a50e5caf66739aa1148aef9be6d5814e4184b3c22",
+                            "size": 753152
+                        }
+                    }
+                },
                 "2.42.11": {
                     "changelog": "v2.42.11 笔记本电池识别为 UPS · 天气信息扩展 · 独立显卡功耗<br>① UPS 新增「笔记本电池」电源类型：自动模式下检测不到 NUT 时回退读取 sysfs 电池，展示电压、充放电电流与功率、电量、温度、循环次数与健康度；电池放电=市电中断、≤20%=低电量、充放电切换复用既有 UPS 边沿告警<br>② 天气信息扩展：主页卡片副信息增加当日高低温、风向与蒲福风级、AQI 空气等级；点击卡片打开抽屉新增 7 天预报、当天逐小时温度+降水概率、紫外线指数（Open-Meteo 扩展接口，失败静默降级）<br>③ 独立显卡与其他板卡功耗计入整机：设置新增「独立显卡功耗清单」（型号×数量×TDP，可一键自动检测填充，最多 8 条）与「其他板卡功耗」（独立网卡/声卡/HBA 等主机内部设备，不含外设）；RAPL/估算模式叠加到整机功耗与电费，iDRAC 电源侧读数已含显卡不重复计算",
                     "updated_at": "2026-11-18",

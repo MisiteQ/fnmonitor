@@ -337,9 +337,9 @@ const SHEETS = {
     icon: () => 'sun', title: () => '天气详情',
     sub: o => (o && o.weather && o.weather.city) || '',
     build(b) {
-      b.innerHTML = `<div data-ref="hero"></div><div data-ref="daily" hidden></div><div data-ref="hourly" hidden></div><div data-ref="uv" hidden></div>`;
+      b.innerHTML = `<div data-ref="hero"></div><div data-ref="today" hidden></div><div data-ref="daily" hidden></div><div data-ref="hourly" hidden></div><div data-ref="uv" hidden></div>`;
       const x = collect(b);
-      const uvLabel = v => (v <= 2 ? '低' : v <= 5 ? '中等' : v <= 7 ? '高' : v <= 10 ? '很高' : '极高');
+      const num = v => (v == null || v === '' ? null : Math.round(+v));
       const dayLabel = d => {
         const dt = new Date(d);
         if (isNaN(dt)) return d;
@@ -353,57 +353,81 @@ const SHEETS = {
       const draw = w => {
         if (!w || !w.ok) {
           setHTML(x.hero, `<div class="card pad"><div class="empty"><b>天气数据暂不可用</b><span>${esc((w && w.error) || '稍后再试')}</span></div></div>`);
-          x.daily.hidden = true; x.hourly.hidden = true; x.uv.hidden = true; return;
+          x.today.hidden = true; x.daily.hidden = true; x.hourly.hidden = true; x.uv.hidden = true; return;
         }
         const aqi = w.aqi || {};
-        const meta = [];
-        if (ok(w.temp_max) || ok(w.temp_min)) meta.push(`高 ${ok(w.temp_max) ? w.temp_max : '—'}° / 低 ${ok(w.temp_min) ? w.temp_min : '—'}°`);
-        if (w.wind_dir || ok(w.wind_level)) meta.push(`${w.wind_dir || ''} ${ok(w.wind_level) ? w.wind_level + ' 级' : ''}`.trim());
-        if (aqi.level) meta.push(`空气 ${esc(aqi.level)}${ok(aqi.aqi) ? ' ' + aqi.aqi : ''}`);
-        if (ok(w.uv)) meta.push(`紫外线 ${w.uv}`);
-        setHTML(x.hero, `<div class="card pad" style="display:flex;align-items:center;gap:18px">
-          <span style="width:56px;height:56px;display:inline-block">${wxIcon(w.code, w.is_day ? 1 : 0)}</span>
-          <div><div class="dnum" style="font-size:2.6em"><span class="dm">${ok(w.temp) ? Math.round(w.temp) : '--'}</span><span class="unit" style="font-size:.5em">°C</span></div>
+        const uv = (w.uv && typeof w.uv === 'object') ? w.uv : (w.uv != null ? { level: String(w.uv) } : null);
+        const hiLo = (w.temp_max != null || w.temp_min != null)
+          ? `${num(w.temp_min) != null ? num(w.temp_min) + '°' : '—'} ~ ${num(w.temp_max) != null ? num(w.temp_max) + '°' : '—'}` : '';
+        setHTML(x.hero, `<div class="card pad" style="display:flex;align-items:center;gap:16px">
+          <span style="width:54px;height:54px;display:inline-block;flex:0 0 auto">${wxIcon(w.code, w.is_day === 0 ? 0 : 1)}</span>
+          <div><div class="dnum" style="font-size:2.4em"><span class="dm">${w.temp != null ? Math.round(+w.temp) : '--'}</span><span class="unit" style="font-size:.45em">°C</span></div>
           <div class="eyebrow">${esc(w.city || '')} · ${esc(wxText(w.desc || w.text))}</div></div>
-          <div style="margin-left:auto;text-align:right" class="faint">${meta.join(' · ')}</div>
+          <div style="margin-left:auto;text-align:right" class="faint">${hiLo}${hiLo && aqi.level ? '<br>' : ''}${aqi.level ? '空气 ' + esc(aqi.level) : ''}</div>
         </div>`);
+
+        const cells = [];
+        if (w.temp_max != null) cells.push(['最高温', num(w.temp_max) + '°']);
+        if (w.temp_min != null) cells.push(['最低温', num(w.temp_min) + '°']);
+        if (w.temp != null) cells.push(['当前气温', num(w.temp) + '°']);
+        if (w.feels != null && num(w.feels) !== num(w.temp)) cells.push(['体感温度', num(w.feels) + '°']);
+        if (w.humidity != null) cells.push(['湿度', num(w.humidity) + '%']);
+        if (w.wind_dir) cells.push(['风向', esc(w.wind_dir)]);
+        if (w.wind_level != null) cells.push(['风力', esc(String(w.wind_level)) + ' 级']);
+        const wspeed = w.wind_speed != null ? w.wind_speed : w.wind;
+        if (wspeed != null) cells.push(['风速', num(wspeed) + ' km/h']);
+        if (aqi.level || aqi.aqi != null) cells.push(['空气质量', esc(aqi.level || '') + (aqi.aqi != null ? ' ' + aqi.aqi : '')]);
+        if (aqi.pm25 != null) cells.push(['PM2.5', num(aqi.pm25)]);
+        if (aqi.pm10 != null) cells.push(['PM10', num(aqi.pm10)]);
+        if (uv && uv.level) cells.push(['紫外线', esc(uv.level)]);
+        if (cells.length) {
+          setHTML(x.today, `${sec('今日详情')}<div class="stat-cells" style="grid-template-columns:repeat(auto-fit,minmax(96px,1fr))">` +
+            cells.map(c => `<div class="stat-cell"><div class="eyebrow">${esc(c[0])}</div><div class="tnum" style="font-size:1.05em">${c[1]}</div></div>`).join('') + `</div>`);
+          x.today.hidden = false;
+        } else x.today.hidden = true;
+
         const daily = Array.isArray(w.daily) ? w.daily : [];
         if (daily.length) {
-          const cells = daily.map(d => {
-            const tmax = ok(d.tmax) ? Math.round(d.tmax) : '—';
-            const tmin = ok(d.tmin) ? Math.round(d.tmin) : '—';
-            const precip = ok(d.precip) ? (d.precip > 0 ? d.precip + 'mm' : '') : '';
-            return `<div class="stat-cell" style="text-align:center;padding:8px 2px"><div class="eyebrow">${esc(dayLabel(d.date))}</div>
-              <span style="width:32px;height:32px;display:inline-block;margin:4px 0">${wxIcon(d.code, 1)}</span>
-              <div class="tnum"><b>${tmax}°</b></div><div class="tnum faint">${tmin}°</div>
+          const cols = Math.min(daily.length, 7);
+          const cells2 = daily.slice(0, 7).map(d => {
+            const tmax = d.tmax != null ? Math.round(+d.tmax) : '—';
+            const tmin = d.tmin != null ? Math.round(+d.tmin) : '—';
+            const precip = d.precip != null && +d.precip > 0 ? d.precip + 'mm' : '';
+            const wind = (d.wind_dir ? esc(d.wind_dir) : '') + (d.wind_level != null ? ' ' + esc(String(d.wind_level)) + '级' : '');
+            return `<div class="stat-cell" style="text-align:center;padding:8px 2px"><div class="eyebrow">${esc(d.label || dayLabel(d.date))}</div>
+              <span style="width:30px;height:30px;display:inline-block;margin:4px 0">${wxIcon(d.code, 1)}</span>
+              <div class="tnum"><b>${tmax}°</b> <span class="faint">${tmin}°</span></div>
               ${precip ? `<div class="faint" style="font-size:.7em">${esc(precip)}</div>` : ''}
-              ${d.wind_dir ? `<div class="faint" style="font-size:.7em">${esc(d.wind_dir)}</div>` : ''}
+              ${wind ? `<div class="faint" style="font-size:.7em">${wind}</div>` : ''}
             </div>`;
           }).join('');
-          setHTML(x.daily, `${sec('7 天预报')}<div class="stat-cells" style="grid-template-columns:repeat(7,1fr)">${cells}</div>`);
+          setHTML(x.daily, `${sec('未来 ' + daily.length + ' 天预报')}<div class="stat-cells" style="grid-template-columns:repeat(${cols},1fr)">${cells2}</div>`);
           x.daily.hidden = false;
         } else x.daily.hidden = true;
+
         const hourly = Array.isArray(w.hourly) ? w.hourly : [];
         if (hourly.length) {
-          const temps = hourly.map(h => ok(h.temp) ? +h.temp : null).filter(v => v !== null);
+          const temps = hourly.map(h => (h.temp != null ? +h.temp : null)).filter(v => v !== null);
           const tLo = temps.length ? Math.min.apply(null, temps) : 0;
           const tHi = temps.length ? Math.max.apply(null, temps) : 1;
           const bars = hourly.map(h => {
-            const t = ok(h.temp) ? +h.temp : null;
-            const hh = tHi > tLo ? Math.round(((t - tLo) / (tHi - tLo)) * 28 + 6) : 16;
-            const pop = ok(h.pop) ? Math.round(h.pop) : 0;
-            return `<div class="wx-hr" style="flex:0 0 auto;text-align:center" title="${esc(h.time)} ${t != null ? t + '°' : ''}${pop ? ' 降水 ' + pop + '%' : ''}">
+            const t = h.temp != null ? +h.temp : null;
+            const hh = t !== null && tHi > tLo ? Math.round(((t - tLo) / (tHi - tLo)) * 32 + 6) : 16;
+            const pop = h.pop != null ? Math.round(+h.pop) : 0;
+            return `<div class="wx-hr" style="flex:0 0 auto;text-align:center;min-width:34px" title="${esc(h.time)} ${t != null ? Math.round(t) + '°' : ''}${pop ? ' 降水 ' + pop + '%' : ''}">
               <div class="faint" style="font-size:.65em">${pop ? pop + '%' : ''}</div>
-              <div style="height:${hh}px;background:var(--accent);width:14px;border-radius:3px;margin:2px auto"></div>
-              <div class="tnum" style="font-size:.8em">${t != null ? Math.round(t) : ''}</div>
-              <div class="faint" style="font-size:.6em">${esc(String(h.time || '').slice(0, 2))}</div>
+              <span style="width:22px;height:22px;display:inline-block;margin:2px 0">${wxIcon(h.code, 1)}</span>
+              <div style="height:${hh}px;background:var(--accent);width:12px;border-radius:3px;margin:2px auto"></div>
+              <div class="tnum" style="font-size:.8em">${t != null ? Math.round(t) + '°' : ''}</div>
+              <div class="faint" style="font-size:.62em">${esc(String(h.time || '').slice(0, 2))}</div>
             </div>`;
           }).join('');
-          setHTML(x.hourly, `${sec('逐小时（今天）')}<div class="wx-hrs" style="display:flex;gap:2px;overflow-x:auto;padding-bottom:6px">${bars}</div>`);
+          setHTML(x.hourly, `${sec('未来 24 小时（每 3 小时）')}<div class="wx-hrs" style="display:flex;gap:2px;overflow-x:auto;padding-bottom:6px">${bars}</div>`);
           x.hourly.hidden = false;
         } else x.hourly.hidden = true;
-        if (ok(w.uv)) {
-          setHTML(x.uv, `${sec('紫外线指数')}<div class="card pad"><div class="eyebrow">今日最高</div><div class="dnum"><span class="dm">${w.uv}</span><span class="unit">${uvLabel(+w.uv)}</span></div></div>`);
+
+        if (uv && (uv.level || uv.desc)) {
+          setHTML(x.uv, `${sec('紫外线')}<div class="card pad"><div class="eyebrow">紫外线强度</div><div class="tnum" style="font-size:1.5em;margin:4px 0">${esc(uv.level || '—')}</div>${uv.desc ? `<div class="faint">${esc(uv.desc)}</div>` : ''}</div>`);
           x.uv.hidden = false;
         } else x.uv.hidden = true;
       };

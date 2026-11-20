@@ -9242,11 +9242,9 @@ def _get_cn_text(url, timeout=6):
         return raw.decode("gb18030", "ignore")
 
 
-def _cn_weather(city_name, display):
-    """中国天气网实时天气（CMA 数据，国内直连、免费无需 key）。
-    city_name 为中文城市名；先查城市代码（结果缓存），再取 sk_2d 实时观测。"""
+def _cn_city_code(city_name):
+    """中文城市名 → 中国天气网 101 城市代码（结果缓存）。"""
     import urllib.parse
-    import json as _json
     q = re.sub(r"[（(].*?[）)]", "", clean_text(city_name or "", 64))  # 去掉「徐州（江苏省）」的省份后缀
     q = re.sub(r"[市省区县]$", "", q).strip()
     if not q:
@@ -9258,6 +9256,14 @@ def _cn_weather(city_name, display):
         if not m:
             raise ValueError("no city code")
         code = _CN_CODE_CACHE[q] = m.group(1)
+    return code
+
+
+def _cn_weather(city_name, display):
+    """中国天气网实时天气（CMA 数据，国内直连、免费无需 key）。
+    city_name 为中文城市名；先查城市代码（结果缓存），再取 sk_2d 实时观测。"""
+    import json as _json
+    code = _cn_city_code(city_name)
     raw = _get_cn_text("http://d1.weather.com.cn/sk_2d/%s.html" % code)
     i = raw.find("{")
     d = _json.loads(raw[i:].strip().rstrip(";")) if i >= 0 else {}
@@ -9279,7 +9285,128 @@ def _cn_weather(city_name, display):
             "humidity": round(_num(d.get("SD") or d.get("sd")), 1),
             "wind": round(_num(d.get("wse")), 1),
             "code": wmo, "desc": desc,
-            "is_day": 0 if wc[:1] == "n" else 1}
+            "is_day": 0 if wc[:1] == "n" else 1,
+            "_code": code}
+
+
+def _cn_js_vars(raw):
+    """解析中国天气网 weather_index 里的 `var NAME = {...};` 片段。"""
+    out = {}
+    for m in re.finditer(r"var\s+(\w+)\s*=\s*", raw):
+        start = m.end()
+        nxt = raw.find(";var ", start)
+        seg = raw[start:nxt if nxt > 0 else len(raw)].strip().rstrip(";")
+        try:
+            out[m.group(1)] = json.loads(seg)
+        except Exception:
+            pass
+    return out
+
+
+def _wind_level_num(ws):
+    """「<3级」/「3-4级」/「1级」→ 3 / «3-4» / 1（无数字返回 None）。"""
+    m = re.search(r"\d+(?:\s*-\s*\d+)?", str(ws or ""))
+    if not m:
+        return None
+    s = m.group(0).replace(" ", "")
+    return int(s) if "-" not in s else s
+
+
+_CN_AQI_LEVELS = ((50, "优"), (100, "良"), (150, "轻度污染"), (200, "中度污染"), (300, "重度污染"))
+
+
+def _cn_aqi_level(aqi):
+    """中国 AQI 数值 → 中文等级（与国标 HJ 633-2012 一致）。"""
+    a = _safe_float(aqi)
+    if a is None:
+        return ""
+    for lim, name in _CN_AQI_LEVELS:
+        if a <= lim:
+            return name
+    return "严重污染"
+
+
+def _cn_weather_index(code):
+    """中国天气网 weather_index：今日高低温 / 风向风力风速 / AQI / 7 天预报 / 紫外线。
+    失败返回 {}（静默降级，不影响实时天气）。"""
+    if not code:
+        return {}
+    try:
+        raw = _get_cn_text("http://d1.weather.com.cn/weather_index/%s.html" % code)
+    except Exception:
+        return {}
+    v = _cn_js_vars(raw)
+    dz = (v.get("cityDZ") or {}).get("weatherinfo") or {}
+    sk = v.get("dataSK") or {}
+    zs = (v.get("dataZS") or {}).get("zs") or {}
+    out = {}
+    tmax, tmin = _safe_float(dz.get("temp")), _safe_float(dz.get("tempn"))
+    if tmax is not None:
+        out["temp_max"] = tmax
+    if tmin is not None:
+        out["temp_min"] = tmin
+    wd = sk.get("WD") or dz.get("wd") or ""
+    if wd:
+        out["wind_dir"] = clean_text(wd, 16)
+    wl = _wind_level_num(sk.get("WS") or dz.get("ws"))
+    if wl is not None:
+        out["wind_level"] = wl
+    m = re.search(r"-?\d+(?:\.\d+)?", str(sk.get("wse") or ""))
+    if m:
+        out["wind_speed"] = round(float(m.group(0)), 1)
+    aqi = _safe_float(sk.get("aqi"))
+    if aqi is not None:
+        out["aqi"] = {"aqi": round(aqi), "pm25": _safe_float(sk.get("aqi_pm25")),
+                      "pm10": None, "level": _cn_aqi_level(aqi)}
+    if zs.get("uv_hint"):
+        out["uv"] = {"level": clean_text(zs.get("uv_hint"), 8),
+                     "desc": clean_text(zs.get("uv_des_s"), 60)}
+    days = (v.get("fc") or {}).get("f") or []
+    if days:
+        out["daily"] = [{
+            "date": clean_text(d.get("fi"), 8),
+            "label": clean_text(d.get("fj"), 8),
+            "code": _CN_TO_WMO.get(str(d.get("fa") or ""), 3),
+            "tmax": _safe_float(d.get("fc")),
+            "tmin": _safe_float(d.get("fd")),
+            "precip": None,
+            "wind_dir": clean_text(d.get("fe"), 8),
+            "wind_level": _wind_level_num(d.get("fg")),
+        } for d in days[:7]]
+        # 卡片高低温取 7 天首日，与列表口径一致（cityDZ 可能落后于 fc 更新）
+        d0 = (out.get("daily") or [{}])[0]
+        if d0.get("tmax") is not None:
+            out["temp_max"] = d0["tmax"]
+        if d0.get("tmin") is not None:
+            out["temp_min"] = d0["tmin"]
+    return out
+
+
+def _wttr_hourly(lat, lon):
+    """未来 24 小时（wttr.in，3 小时粒度；中国天气网无免费逐小时接口）。
+    失败返回 None。"""
+    import urllib.request
+    try:
+        req = urllib.request.Request("https://wttr.in/%.4f,%.4f?format=j1" % (lat, lon),
+                                     headers={"User-Agent": "Mozilla/5.0 fnmonitor"})
+        data = json.loads(urllib.request.urlopen(req, timeout=8).read().decode("utf-8", "ignore"))
+    except Exception:
+        return None
+    hrs = []
+    for day in (data.get("weather") or [])[:2]:
+        for h in day.get("hourly") or []:
+            tm = str(h.get("time") or "0").zfill(4)
+            try:
+                wwo = int(float(h.get("weatherCode") or 113))
+            except Exception:
+                wwo = 113
+            hrs.append({"time": tm[:2] + ":00",
+                        "temp": _safe_float(h.get("tempC")),
+                        "pop": _safe_float(h.get("chanceofrain")),
+                        "code": _WWO_TO_WMO.get(wwo, 3 if wwo > 100 else wwo)})
+            if len(hrs) >= 24:
+                return hrs
+    return hrs or None
 
 
 # 内置中国行政区划坐标库（省/市/县三级 3200+，来源阿里 DataV GeoAtlas，与 QWeather 同源）。
@@ -9537,7 +9664,7 @@ def fetch_weather(city_override=None):
             city = clean_text(city, 64) or "未知地区"
             if lat is None:
                 return {"ok": False, "error": "无法定位当前网络位置"}
-        # ---- 当前天气：国内优先，逐级兜底；扩展字段（高低温/风向/预报/AQI）走 Open-Meteo ----
+        # ---- 当前天气：中国天气网为主（国内直连），Open-Meteo / wttr.in 仅兜底 ----
         disp_city = clean_text(city or override, 64) or "未知地区"
         err = None
         result = None
@@ -9546,20 +9673,21 @@ def fetch_weather(city_override=None):
                 result = _cn_weather(city, disp_city)
             except Exception as e:
                 err = e
-        # Open-Meteo 扩展：高低温 / 风向 / 7 天预报 / 逐小时 / 紫外线（失败静默降级）
-        ext = _open_meteo_ext(lat, lon)
         if result and result.get("ok"):
-            # 实时来自中国天气网，用 ext 补扩展字段
-            for k in ("temp_max", "temp_min", "daily", "hourly", "uv"):
+            # 中国天气网 weather_index 补：高低温 / 风向风力风速 / AQI / 7 天 / 紫外线
+            code101 = result.pop("_code", None)
+            ext = _cn_weather_index(code101)
+            for k in ("temp_max", "temp_min", "wind_dir", "wind_level", "wind_speed", "uv", "daily", "aqi"):
                 if ext.get(k) is not None:
                     result[k] = ext[k]
-            if ext.get("wind_dir"):
-                result["wind_dir"] = ext["wind_dir"]
-                result["wind_level"] = ext.get("wind_level")
-            # 中国天气网 wse 口径与 km/h 不一致，无 Open-Meteo 时风向/风级留空
-            result["aqi"] = _fetch_aqi(lat, lon)
+            if result.get("aqi") is None:
+                result["aqi"] = _fetch_aqi(lat, lon)
+            hrs = _wttr_hourly(lat, lon)
+            if hrs:
+                result["hourly"] = hrs
             return result
-        # 中国天气网失败：用 Open-Meteo 实时（ext 已含 current）
+        # 非中文城市 / 中国天气网失败：Open-Meteo 实时
+        ext = _open_meteo_ext(lat, lon)
         if ext.get("temp") is not None:
             return {"ok": True, "city": disp_city,
                     "temp": ext["temp"], "feels": ext.get("feels") or ext["temp"],

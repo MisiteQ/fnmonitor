@@ -138,10 +138,14 @@ const Hero = {
     dot(r.wxT).set(Math.round(+w.temp) + '°'); setText(r.wxText, wxText(w.desc));
     setText(r.wxCity, String(w.city || '').slice(0, 24)); r.wxCity.title = w.city || '';
     const wxParts = [];
-    if (w.temp_max != null || w.temp_min != null) wxParts.push(`高 ${F.int(w.temp_max)}° / 低 ${F.int(w.temp_min)}°`);
-    if (w.wind_dir) wxParts.push(`${w.wind_dir}${w.wind_level != null ? ' ' + w.wind_level + ' 级' : ''}`);
-    wxParts.push(`湿度 ${F.int(w.humidity)}%`);
-    if (w.aqi && w.aqi.aqi != null) wxParts.push(`空气 ${w.aqi.level || w.aqi.aqi}`);
+    if (w.temp_max != null || w.temp_min != null) wxParts.push(`高 ${w.temp_max != null ? F.int(w.temp_max) : '—'}° / 低 ${w.temp_min != null ? F.int(w.temp_min) : '—'}°`);
+    const wd = [];
+    if (w.wind_dir) wd.push(w.wind_dir);
+    if (w.wind_level != null) wd.push(w.wind_level + ' 级');
+    if (w.wind_speed != null) wd.push(F.int(w.wind_speed) + ' km/h');
+    if (wd.length) wxParts.push(wd.join(' '));
+    if (w.humidity != null) wxParts.push(`湿度 ${F.int(w.humidity)}%`);
+    if (w.aqi && (w.aqi.level || w.aqi.aqi != null)) wxParts.push(`空气 ${w.aqi.level || w.aqi.aqi}`);
     setText(r.wxSub, wxParts.join(' · '));
   },
   update(o) {
