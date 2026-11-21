@@ -200,7 +200,7 @@ POWER_DISK_LABELS = {"hdd35": "3.5 寸机械硬盘", "hdd25": "2.5 寸机械硬�
 
 
 def sanitize_power_disks(raw):
-    """校验 / 清洗硬盘功耗清单：类型非法或数量无效的行直接丢弃，最多保留 8 行。"""
+    """校验 / 清洗硬盘功耗清单：类型有效，数量 / 瓦数可部分未填（占位），最多保留 8 行。"""
     out = []
     for it in (raw if isinstance(raw, list) else []):
         if not isinstance(it, dict):
@@ -209,14 +209,18 @@ def sanitize_power_disks(raw):
         if t not in POWER_DISK_TYPES:
             continue
         try:
-            cnt = int(float(it.get("count")))
-            watt = float(it.get("watt"))
+            cnt_raw = it.get("count")
+            cnt = int(float(cnt_raw)) if cnt_raw not in (None, "") else 1
         except Exception:
-            continue
-        if cnt <= 0 or not math.isfinite(watt):
-            continue
-        out.append({"type": t, "count": max(1, min(cnt, 64)),
-                    "watt": round(max(0.0, min(50.0, watt)), 2)})
+            cnt = 1
+        try:
+            watt_raw = it.get("watt")
+            watt = float(watt_raw) if watt_raw not in (None, "") else 0.0
+        except Exception:
+            watt = 0.0
+        cnt = max(1, min(cnt, 64))
+        watt = round(max(0.0, min(50.0, watt)), 2) if math.isfinite(watt) else 0.0
+        out.append({"type": t, "count": cnt, "watt": watt})
         if len(out) >= 8:
             break
     return out
@@ -236,21 +240,26 @@ def power_disks_total(config):
 # 独立显卡功耗（issue #36）：用户声明显卡型号 × 数量 × TDP 瓦数，叠加到整机功耗
 # ---------------------------------------------------------------------------
 def sanitize_power_gpus(raw):
-    """校验 / 清洗独立显卡功耗清单：型号非空、数量/瓦数有效，最多保留 8 条。"""
+    """校验 / 清洗独立显卡功耗清单：型号 / 数量 / 瓦数可部分未填（占位），最多保留 8 条。
+    空 watt 按 0 计，空 name 允许保留占位。"""
     out = []
     for it in (raw if isinstance(raw, list) else []):
         if not isinstance(it, dict):
             continue
         name = str(it.get("name") or "").strip()[:64]
         try:
-            cnt = int(float(it.get("count")))
-            watt = float(it.get("watt"))
+            cnt_raw = it.get("count")
+            cnt = int(float(cnt_raw)) if cnt_raw not in (None, "") else 1
         except Exception:
-            continue
-        if cnt <= 0 or not math.isfinite(watt):
-            continue
-        out.append({"name": name, "count": max(1, min(cnt, 64)),
-                    "watt": round(max(0.0, min(1000.0, watt)), 1)})
+            cnt = 1
+        try:
+            watt_raw = it.get("watt")
+            watt = float(watt_raw) if watt_raw not in (None, "") else 0.0
+        except Exception:
+            watt = 0.0
+        cnt = max(1, min(cnt, 64))
+        watt = round(max(0.0, min(1000.0, watt)), 1) if math.isfinite(watt) else 0.0
+        out.append({"name": name, "count": cnt, "watt": watt})
         if len(out) >= 8:
             break
     return out
@@ -269,21 +278,20 @@ def power_gpus_total(config):
 # 一个清单 [{name, watt}, ...]，用户自己填型号名字 + 固定功耗
 # ---------------------------------------------------------------------------
 def sanitize_power_extras(raw):
-    """校验 / 清洗分项额外板卡功耗清单：名称非空、瓦数有效，最多保留 8 条。"""
+    """校验 / 清洗分项额外板卡功耗清单：名称 / 瓦数可部分未填（占位），最多保留 8 条。
+    空 watt 按 0 计，空 name 允许保留占位。"""
     out = []
     for it in (raw if isinstance(raw, list) else []):
         if not isinstance(it, dict):
             continue
         name = str(it.get("name") or "").strip()[:64]
-        if not name:
-            continue
         try:
-            watt = float(it.get("watt"))
+            watt_raw = it.get("watt")
+            watt = float(watt_raw) if watt_raw not in (None, "") else 0.0
         except Exception:
-            continue
-        if not math.isfinite(watt) or watt < 0:
-            continue
-        out.append({"name": name, "watt": round(min(watt, 100.0), 2)})
+            watt = 0.0
+        watt = round(max(0.0, min(100.0, watt)), 2) if math.isfinite(watt) else 0.0
+        out.append({"name": name, "watt": watt})
         if len(out) >= 8:
             break
     return out

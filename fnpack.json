@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.14/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.15/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.15": {
+                    "changelog": "v2.42.15 修复显卡/板卡添加按钮无输入框（issue #41）<br>① 修复「独立显卡功耗清单」和「其他板卡分项功耗」的 +添加 按钮点击后无反应：前端正常发出了保存请求，但后端 sanitize_power_gpus / sanitize_power_extras / sanitize_power_disks 遇到空 watt（空字符串 float('') 抛异常）或空 name 时直接丢弃整条，前端重绘后新行消失；现改为空字段保留占位（空 watt 按 0 计），数值越界改为 clamp 而非丢弃",
+                    "updated_at": "2026-11-21T21:30:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.15/fnmonitor-2.42.15-x86.fpk",
+                            "sha256": "e6187aadda1980af04ea090ff36035c30e5648a6eeeaa738996535e328cf9b53",
+                            "size": 1331543
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.15/fnmonitor-2.42.15-arm.fpk",
+                            "sha256": "4202eb875074832d413f23950a1645e143d9f4dc709d0dff79be6a2c17baba3d",
+                            "size": 1331553
+                        }
+                    }
+                },
                 "2.42.14": {
                     "changelog": "v2.42.14 笔记本电池接入 upower · 显卡动态功耗 · 分项板卡功耗（issue #40 / #36 补充）<br>① 笔记本电池改为「sysfs 为主 + upower/acpi 补充」：新增 upower -d 解析（电量、剩余时间、功率、电压、温度、循环次数、型号与电池技术），仅在 sysfs 缺失或为 0 时才采用 upower 值；未装 upower 自动退到 acpi -b，两者都没有则保持纯 sysfs；UPS 诊断新增 upower / acpi 可用性提示<br>② 独立显卡功耗支持动态读取：NVIDIA 走 nvidia-smi power.draw，AMD 走 hwmon power*_input / power*_average（µW→W），读不到时静默忽略，老卡或驱动不支持不报错<br>③ 设置「功耗与电费」新增「其他板卡分项功耗」清单（独立网卡、声卡、HBA、PCIe 扩展卡等，名称 + 固定瓦数，最多 8 条），与独立显卡清单、旧版其他板卡功耗叠加计入整机功耗与电费，功耗分解面板逐条展示分项板卡<br>④ 修正 acpi 状态映射：Discharging 含子串 charging，此前会被误判为充电",
                     "updated_at": "2026-11-21T12:00:00+08:00",

@@ -259,6 +259,7 @@ class GpuPowerReportTest(unittest.TestCase):
         self.assertIsNone(gpu["power_w"])
 
     def test_power_extras_sanitize_and_total(self):
+        # 新行为：空 name / 空 watt 不丢弃（保留占位），负 watt → 0，超限 → 100
         rows = srv.sanitize_power_extras([
             {"name": "  万兆网卡 ", "watt": "6.5"},
             {"name": "", "watt": 5},
@@ -266,8 +267,10 @@ class GpuPowerReportTest(unittest.TestCase):
             {"name": "超限", "watt": 999},
         ])
         self.assertEqual(rows, [{"name": "万兆网卡", "watt": 6.5},
+                                {"name": "", "watt": 5.0},
+                                {"name": "HBA", "watt": 0.0},
                                 {"name": "超限", "watt": 100.0}])
-        self.assertEqual(srv.power_extras_total({"power_extras": rows}), 106.5)
+        self.assertEqual(srv.power_extras_total({"power_extras": rows}), 111.5)
         self.assertEqual(srv.power_extras_total({}), 0)
         self.assertEqual(srv.sanitize_power_extras("bad"), [])
 
