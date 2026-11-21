@@ -235,5 +235,42 @@ class RealPerfOpenerTest(unittest.TestCase):
             os.close(fd)
 
 
+class GpuPowerReportTest(unittest.TestCase):
+    """issue #36：NVIDIA 动态功耗（power.draw）与分项板卡功耗清单。"""
+
+    def _collect(self, csv):
+        orig_cmd, orig_ident = srv.run_cmd, srv._gpu_ident_list
+        srv.run_cmd = lambda args, timeout=0: (csv, None)
+        srv._gpu_ident_list = lambda: [{"vendor": "10de", "type": "discrete",
+                                        "name": "RTX 4090", "pci": "0000:01:00.0"}]
+        try:
+            return srv.collect_gpu()
+        finally:
+            srv.run_cmd, srv._gpu_ident_list = orig_cmd, orig_ident
+
+    def test_nvidia_power_draw_parsed(self):
+        gpu = self._collect("35, 12, 61, 2048, 24576, 145.67")[0]
+        self.assertEqual(gpu["power_w"], 145.67)
+        self.assertEqual(gpu["util"], 35.0)
+        self.assertEqual(gpu["temp"], 61.0)
+
+    def test_nvidia_power_not_available(self):
+        gpu = self._collect("10, 5, 50, 100, 1000, [N/A]")[0]
+        self.assertIsNone(gpu["power_w"])
+
+    def test_power_extras_sanitize_and_total(self):
+        rows = srv.sanitize_power_extras([
+            {"name": "  万兆网卡 ", "watt": "6.5"},
+            {"name": "", "watt": 5},
+            {"name": "HBA", "watt": -1},
+            {"name": "超限", "watt": 999},
+        ])
+        self.assertEqual(rows, [{"name": "万兆网卡", "watt": 6.5},
+                                {"name": "超限", "watt": 100.0}])
+        self.assertEqual(srv.power_extras_total({"power_extras": rows}), 106.5)
+        self.assertEqual(srv.power_extras_total({}), 0)
+        self.assertEqual(srv.sanitize_power_extras("bad"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

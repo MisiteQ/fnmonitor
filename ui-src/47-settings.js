@@ -98,6 +98,7 @@ function controlFor(it, row) {
   if (it.type === 'priceperiods') return pricePeriods(it, row);
   if (it.type === 'diskspec') return diskSpec(it, row);
   if (it.type === 'gpuspec') return gpuSpec(it, row);
+  if (it.type === 'extraspec') return extraSpec(it, row);
   if (it.type === 'action') { const b = mount(`<button class="btn ${it.danger ? 'danger' : ''}" type="button">${esc(it.button)}</button>`); b.onclick = () => it.run(b, row); return b; }
   if (it.type === 'info') { const el = mount(`<div class="set-info"></div>`); el.sync = () => setHTML(el, it.html()); el.sync(); return el; }
 }
@@ -266,6 +267,47 @@ function gpuSpec(it, row) {
   });
   el.sync = draw; draw(); return el;
 }
+/* 分项额外板卡功耗清单：名称 × 固定瓦数；独立网卡 / 声卡 / HBA / PCIe 扩展卡等。
+   与上方「独立显卡功耗清单」「硬盘功耗清单」叠加计入整机估算；iDRAC 电源侧读数已含这些。 */
+function extraSpec(it, row) {
+  const el = mount('<div class="pp-list"></div>');
+  const list = () => { const v = it.get(); return Array.isArray(v) ? v.map(d => Object.assign({}, d)) : []; };
+  const total = a => a.reduce((s, d) => s + (+d.watt || 0), 0);
+  const draw = () => {
+    const arr = list();
+    el.innerHTML = arr.map((d, i) => `<div class="pp-row" data-i="${i}">
+        <input class="textfield" type="text" value="${esc(d.name || '')}" data-f="name" aria-label="板卡名称" placeholder="如 万兆网卡 / 独立声卡 / HBA 卡" style="min-width:10em;flex:1">
+        <input class="textfield mono" type="number" min="0" max="100" step="0.5" value="${isFinite(+d.watt) ? d.watt : ''}" data-f="watt" aria-label="固定功耗" style="width:5.5em">
+        <span class="faint">W</span>
+        <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该条目">${ic('x')}</button>
+      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加板卡</button><span class="faint">${arr.length ? `板卡合计 ${total(arr).toFixed(1)} W` : '独立网卡、声卡、HBA 卡等固定功耗叠加；不含显示器、键鼠等外部外设'}</span></div>`;
+  };
+  el.addEventListener('change', e => {
+    const inp = e.target.closest('[data-f]'); if (!inp) return;
+    const r = inp.closest('.pp-row'); if (!r) return;
+    const arr = list(), i = +r.dataset.i, f = inp.dataset.f;
+    if (!arr[i]) return;
+    if (f === 'name') arr[i].name = inp.value.slice(0, 64);
+    else {
+      const n = parseFloat(inp.value);
+      if (!isFinite(n)) { draw(); return; }
+      if (n < 0 || n > 100) { toast('单卡功耗需在 0 – 100 W 之间', { icon: 'alert' }); draw(); return; }
+      arr[i][f] = Math.round(n * 100) / 100;
+    }
+    it.set(arr, row);
+  });
+  el.addEventListener('click', e => {
+    const del = e.target.closest('[data-del]');
+    if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+    if (e.target.closest('[data-add]')) {
+      const arr = list();
+      if (arr.length >= 8) { toast('最多 8 条', { icon: 'alert' }); return; }
+      arr.push({ name: '', watt: '' });
+      it.set(arr, row);
+    }
+  });
+  el.sync = draw; draw(); return el;
+}
 function setRow(it) {
   const row = mount(`<div class="set-row${it.wide ? ' wide' : ''}" data-k="${it.k}"><div><div class="lbl">${esc(it.label)}${it.help ? `<button class="q" type="button" aria-label="说明" aria-expanded="false">${ic('help')}</button>` : ''}</div><div class="hint" data-ref="hint"></div></div><div class="ctl"></div></div>`);
   const ctl = controlFor(it, row); row.querySelector('.ctl').append(ctl);
@@ -305,7 +347,7 @@ const SET_SCHEMA = [
     cfgItem('power_nic_fixed_w', '网卡固定功耗', 'number', { min: 0, max: 50, step: 0.5, unit: 'W', hint: '每块物理网卡' }),
     cfgItem('power_base_w', '主板与其他', 'number', { min: 0, max: 100, step: 0.5, unit: 'W', hint: 'RAPL 只测 CPU 封装，整机估算叠加此底座，可按插座实测补差' }),
     cfgItem('power_gpus', '独立显卡功耗清单', 'gpuspec', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_gpus) && S.cfg.power_gpus.length) ? '已叠加到整机功耗与电费（RAPL / 估算模式；iDRAC 电源侧读数已含显卡，不重复计算）' : '跑 AI 的独显是电费大头，按型号 + 数量 + TDP 瓦数添加', help: 'RAPL 只测 CPU 封装，不含独立显卡。在这里列出独显（型号 + 数量 + TDP 瓦数），整机功耗与电费会叠加。iDRAC 测的是电源侧整机功耗，已含显卡，不会重复计算。TDP 查显卡官方参数（如 RTX 4090 约 450W）；旧卡即使无驱动也有空载 / 转码功耗。' }),
-    cfgItem('power_extra_w', '其他板卡功耗', 'number', { min: 0, max: 500, step: 0.5, unit: 'W', hint: '主机内部其他板卡固定功耗（独立网卡 / 声卡 / HBA 卡等）；不含显示器、键鼠等外部外设' }),
+    cfgItem('power_extras', '其他板卡分项功耗', 'extraspec', { wide: true, hint: () => (S.cfg && Array.isArray(S.cfg.power_extras) && S.cfg.power_extras.length) ? '已叠加到整机功耗与电费' : '独立网卡 / 声卡 / HBA 卡 / PCIe 扩展卡等，按名称 + 固定功耗添加', help: 'RAPL 只测 CPU 封装，独显单独列表，这里给独立网卡、声卡、HBA 卡、光纤卡、PCIe SSD 等其他内部扩展板卡留位。不含显示器、键鼠、路由器等外部外设。后端仍兼容旧版「其他板卡功耗」单数字，两者会叠加。' }),
   ] },
   { id: 'monitor', title: '事件监控', icon: 'eye', desc: 'fnOS 80+ 种系统事件实时推送（主日志库 / 备份 / 影视 / 相册 / 音乐 / Docker / SSH / WAN IP），经事件模板化后走既有推送出口；硬盘巡检的开关、间隔、结果推送与已忽略的提醒也在这里。', custom: renderMonitor },
   { id: 'notify', title: '通知设置', icon: 'bell', desc: '事件推送、硬盘巡检告警、阈值警告与定时报告都走这里配置的渠道；支持多渠道同时推送，测试也各测各的。', custom: renderNotify },

@@ -193,3 +193,107 @@ def test_nut_targets_defaults():
     t = ups._nut_targets({})
     assert t[0] in ("127.0.0.1:3493", "localhost")
     assert any("127.0.0.1" in x for x in t)
+
+
+# ---------------------------------------------------------------------------
+# 笔记本电池：upower / acpi 补充解析（issue #40）
+# ---------------------------------------------------------------------------
+_UPOWER_DUMP = """Daemon:
+  daemon-version:  0.99.20
+  on-battery:      yes
+
+Device: /org/freedesktop/UPower/devices/line_power_AC
+  native-path:          AC
+  power supply:         yes
+  line-power:
+    online:              no
+
+Device: /org/freedesktop/UPower/devices/battery_BAT0
+  native-path:          BAT0
+  vendor:               LGC
+  model:                DELL XYZ
+  serial:               1234
+  power supply:         yes
+  battery:
+    present:             yes
+    state:               discharging
+    energy-full:         45.2 Wh
+    energy-full-design:  52 Wh
+    energy-rate:         9.5 W
+    voltage:             12.5 V
+    charge-cycles:       120
+    time to empty:       2.5 hours
+    percentage:          67%
+    temperature:         30.5 degrees C
+    technology:          lithium-ion
+"""
+
+
+def test_parse_upower_dump_battery_fields():
+    a = ups._parse_upower_dump(_UPOWER_DUMP)
+    assert a["state"] == "discharging"
+    assert a["capacity"] == 67.0
+    assert a["power_now_upower"] == 9.5
+    assert a["voltage_now_upower"] == 12.5
+    assert a["temp_upower"] == 30.5
+    assert a["cycle_count"] == 120
+    assert a["time_to_empty"] == 9000          # "2.5 hours"
+    assert a["energy_full_upower"] == 45.2
+    assert a["energy_full_design_upower"] == 52.0
+    assert a["model"] == "DELL XYZ"            # 设备级属性也要读到
+    assert a["technology"] == "lithium-ion"
+
+
+def test_parse_upower_dump_ignores_line_power_section():
+    a = ups._parse_upower_dump(_UPOWER_DUMP)
+    assert "online" not in a                   # line-power 小节不能混进电池字段
+
+
+def test_upower_time_to_seconds_formats():
+    assert ups._upower_time_to_seconds("2.5 hours") == 9000
+    assert ups._upower_time_to_seconds("1 hour 30 minutes") == 5400
+    assert ups._upower_time_to_seconds("02:30:00") == 9000
+    assert ups._upower_time_to_seconds("15 mins") == 900
+    assert ups._upower_time_to_seconds("unknown") is None
+    assert ups._upower_time_to_seconds("") is None
+
+
+def test_parse_acpi_battery_discharging():
+    # "Discharging" 含子串 "charging"，必须判定为放电而不是充电
+    a = ups._parse_acpi_battery("Battery 0: Discharging, 42%, 01:20:00 remaining\n")
+    assert a["status_acpi"] == "discharging"
+    assert a["capacity_acpi"] == 42.0
+    a2 = ups._parse_acpi_battery("Battery 0: Charging, 88%, 00:12:00 until charged\n")
+    assert a2["status_acpi"] == "charging"
+
+
+def test_battery_info_with_upower_fills_missing_only():
+    sysfs = {"name": "BAT0", "status": "Unknown", "capacity": "67",
+             "voltage_now": "12500000", "power_now": "0", "energy_full": "45200000"}
+    orig_path, orig_run = ups._upower_path, ups._run
+    ups._upower_path = lambda: "/usr/bin/upower"
+    ups._run = lambda args, timeout=8: (0, _UPOWER_DUMP, "")
+    try:
+        info = ups._battery_info_with_upower(sysfs)
+    finally:
+        ups._upower_path, ups._run = orig_path, orig_run
+    assert info["status"] == "discharging"     # sysfs 是 Unknown，采用 upower
+    assert info["time_to_empty"] == 9000       # sysfs 没有，upower 补
+    assert info["temp"] == 305.0               # °C → 0.1°C（与 sysfs 同口径）
+    assert info["power_now"] == "9500000"      # sysfs 为 0，采用 upower 的 9.5W
+    assert info["cycle_count"] == 120
+    assert info["model_name"] == "DELL XYZ"
+    assert info["source_hint"] == "sysfs+upower"
+
+
+def test_battery_info_without_tools_keeps_sysfs():
+    sysfs = {"name": "BAT0", "status": "Discharging", "capacity": "50"}
+    orig_path, orig_acpi = ups._upower_path, ups._acpi_path
+    ups._upower_path = lambda: ""
+    ups._acpi_path = lambda: ""
+    try:
+        info = ups._battery_info_with_upower(sysfs)
+    finally:
+        ups._upower_path, ups._acpi_path = orig_path, orig_acpi
+    assert info["status"] == "Discharging" and info["capacity"] == "50"
+    assert info["source_hint"] == "sysfs"

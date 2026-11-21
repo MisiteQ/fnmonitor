@@ -321,7 +321,21 @@ const SHEETS = {
         if (p.source !== 'idrac') {
           const nGpu = (S.cfg && Array.isArray(S.cfg.power_gpus)) ? S.cfg.power_gpus.reduce((s, g) => s + (+g.count || 0), 0) : 0;
           if (ok(p.gpus_w) && +p.gpus_w > 0) partRows.push([`独立显卡${nGpu ? `（${nGpu} 张）` : ''}`, w(p.gpus_w)]);
-          if (ok(p.extra_w) && +p.extra_w > 0) partRows.push(['其他板卡', w(p.extra_w)]);
+          if (ok(p.extra_w) && +p.extra_w > 0) {
+            const extras = Array.isArray(p.extras_detail) ? p.extras_detail : [];
+            if (extras.length > 0) {
+              extras.forEach(e => {
+                if (e.name && ok(e.watt) && +e.watt > 0) partRows.push([`　${esc(e.name)}`, w(e.watt)]);
+              });
+              // 兜底：旧版 power_extra_w 单数字叠加在分项清单之上，显示为"未分类"
+              const extrasSum = extras.reduce((s, e) => s + (+e.watt || 0), 0);
+              if (+p.extra_w > extrasSum + 0.05) {
+                partRows.push(['　未分类板卡', w(+p.extra_w - extrasSum)]);
+              }
+            } else {
+              partRows.push(['其他板卡', w(p.extra_w)]);
+            }
+          }
         }
         setHTML(x.parts, has ? kvHTML(partRows) : '');
         const en = ps.energy || {}, co = ps.cost || {}, ep = ps.estimation_params;

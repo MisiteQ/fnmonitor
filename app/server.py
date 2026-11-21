@@ -121,7 +121,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "power_gpus": [], "power_extra_w": 0, "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "power_gpus": [], "power_extra_w": 0, "power_extras": [], "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -262,6 +262,39 @@ def power_gpus_total(config):
     if not rows:
         return 0
     return round(sum(r["count"] * r["watt"] for r in rows), 2)
+
+
+# ---------------------------------------------------------------------------
+# 分项额外板卡功耗（issue #36）：独立网卡 / 声卡 / HBA / PCIe 扩展卡等
+# 一个清单 [{name, watt}, ...]，用户自己填型号名字 + 固定功耗
+# ---------------------------------------------------------------------------
+def sanitize_power_extras(raw):
+    """校验 / 清洗分项额外板卡功耗清单：名称非空、瓦数有效，最多保留 8 条。"""
+    out = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()[:64]
+        if not name:
+            continue
+        try:
+            watt = float(it.get("watt"))
+        except Exception:
+            continue
+        if not math.isfinite(watt) or watt < 0:
+            continue
+        out.append({"name": name, "watt": round(min(watt, 100.0), 2)})
+        if len(out) >= 8:
+            break
+    return out
+
+
+def power_extras_total(config):
+    """分项额外板卡功耗合计瓦数；未配置返回 0。"""
+    rows = sanitize_power_extras((config or {}).get("power_extras"))
+    if not rows:
+        return 0
+    return round(sum(r["watt"] for r in rows), 2)
 
 
 def period_rate(minute, periods, base_rate):
@@ -2615,7 +2648,13 @@ def intel_gpu_diag(pci=None, sysfs="/sys", pmu=None, idle=None):
 
 
 def collect_gpu():
-    """GPU 实时监控：温度 / 利用率 / 显存 / 频率（NVIDIA nvidia-smi / AMD sysfs / Intel 核显）。"""
+    """GPU 实时监控：温度 / 利用率 / 显存 / 频率 / 功耗（NVIDIA nvidia-smi / AMD sysfs / Intel 核显）。
+
+    功耗读取策略：
+    - NVIDIA：nvidia-smi --query-gpu=power.draw（W），有 NVML 的机器原生支持
+    - AMD（amdgpu）：hwmon sysfs 的 power*_input（µW → W，取首个有效值）
+    - Intel 核显：暂无（核显与 CPU 共用 RAPL package 域，分离不了）
+    """
     res = []
     for g in _gpu_ident_list():
         temp = None
@@ -2630,7 +2669,8 @@ def collect_gpu():
         extra = {"util_source": None, "engines": None}
         try:
             if g["vendor"] == "10de":  # NVIDIA
-                s, _ = run_cmd(["nvidia-smi", "--query-gpu=utilization.gpu,utilization.memory,temperature.gpu,memory.used,memory.total",
+                s, _ = run_cmd(["nvidia-smi",
+                                "--query-gpu=utilization.gpu,utilization.memory,temperature.gpu,memory.used,memory.total,power.draw",
                                 "--format=csv,noheader,nounits"], 3)
                 parts = [x.strip() for x in s.split(",")]
                 if len(parts) >= 5:
@@ -2650,6 +2690,15 @@ def collect_gpu():
                             mem_pct = round(mem_used / mem_total * 100, 1)
                     except Exception:
                         pass
+                    # 第 6 列：power.draw（W）— 有些驱动/老卡不支持，跳过即可
+                    if len(parts) >= 6:
+                        try:
+                            v = (parts[5] or "").strip().strip("[]")
+                            # nvidia-smi 在值不可读时会返回 "N/A" / "[N/A]"
+                            if v and v.lower() not in ("n/a", "not supported"):
+                                power_w = float(v)
+                        except Exception:
+                            pass
             elif g["vendor"] == "1002":  # AMD
                 b = _amd_gpu_busy(g["pci"])
                 if b is not None:
@@ -2658,17 +2707,17 @@ def collect_gpu():
                 t = _gpu_temp_from_sysfs_live(g["pci"])
                 if t is not None:
                     temp = t
-                # AMDGPU VRAM
+                # AMDGPU VRAM + 功耗（hwmon power*_input，µW → W）
                 try:
                     base = (g["pci"] or "").strip()
                     for name in os.listdir("/sys/class/drm"):
                         if not re.match(r"^card\d+$", name):
                             continue
                         devdir = os.path.join("/sys/class/drm", name, "device")
-                        uevent = os.path.join(devdir, "uevent")
-                        if not os.path.exists(uevent):
+                        uevent_path = os.path.join(devdir, "uevent")
+                        if not os.path.exists(uevent_path):
                             continue
-                        data = open(uevent).read()
+                        data = open(uevent_path).read()
                         mm = re.search(r"PCI_SLOT_NAME=(\S+)", data)
                         if not mm:
                             continue
@@ -2682,7 +2731,25 @@ def collect_gpu():
                             mem_total = int(open(total_path).read().strip())
                             if mem_total > 0:
                                 mem_pct = round(mem_used / mem_total * 100, 1)
-                            break
+                        # hwmon 功耗：遍历该设备下所有 hwmon，读 power*_input / power*_average
+                        hwmon_dir = os.path.join(devdir, "hwmon")
+                        if os.path.isdir(hwmon_dir) and power_w is None:
+                            for hw in sorted(os.listdir(hwmon_dir)):
+                                hw_path = os.path.join(hwmon_dir, hw)
+                                if not os.path.isdir(hw_path):
+                                    continue
+                                for f in sorted(os.listdir(hw_path)):
+                                    if re.match(r"^power\d+_(input|average)$", f):
+                                        try:
+                                            val = int(open(os.path.join(hw_path, f)).read().strip())
+                                            if val > 0:
+                                                power_w = round(val / 1e6, 2)  # µW → W
+                                                break
+                                        except Exception:
+                                            continue
+                                if power_w is not None:
+                                    break
+                        break
                 except Exception:
                     pass
             elif g["vendor"] == "8086":  # Intel 核显：i915 PMU 引擎占用 / RC6 活跃度估算
@@ -11398,8 +11465,16 @@ class Collector(threading.Thread):
                 # 独立显卡 + 其他板卡（主机内部设备，非外设）固定功耗，叠加到整机；
                 # iDRAC 电源侧读数已含显卡，故仅 RAPL / 估算模式叠加，iDRAC 仅展示分项。
                 gpus_w = power_gpus_total(self.config)
-                extra_w = float(self.config.get("power_extra_w", 0) or 0)
-                extra_w = round(max(0.0, min(500.0, extra_w)) if math.isfinite(extra_w) else 0, 1)
+                # 额外板卡 = 新分项清单（power_extras）+ 旧兜底数字（power_extra_w），两者都叠
+                extras_w = power_extras_total(self.config)
+                try:
+                    legacy_extra = max(0.0, float(self.config.get("power_extra_w", 0) or 0))
+                    if not math.isfinite(legacy_extra):
+                        legacy_extra = 0.0
+                except Exception:
+                    legacy_extra = 0.0
+                extra_w = round(min(extras_w + legacy_extra, 500.0), 1)
+                extras_detail = sanitize_power_extras(self.config.get("power_extras"))
                 idr = self._idrac_fast()
                 if idr and _nz(idr.get("power_watts")) is not None:
                     self._last_power = {
@@ -11408,6 +11483,7 @@ class Collector(threading.Thread):
                         "package": None, "core": None, "uncore": None, "dram": None,
                         "base": None, "disks_w": disks_w, "disks_active": disks_active,
                         "gpus_w": gpus_w, "extra_w": extra_w,
+                        "extras_detail": extras_detail,
                         "capacity": _nz(idr.get("power_capacity_watts")),
                         "min": _nz(idr.get("power_min")),
                         "max": _nz(idr.get("power_max")),
@@ -11426,6 +11502,7 @@ class Collector(threading.Thread):
                         rp["disks_active"] = disks_active
                         rp["gpus_w"] = gpus_w
                         rp["extra_w"] = extra_w
+                        rp["extras_detail"] = extras_detail
                         rp["total"] = round(pkg + dram + base_w + disks_w + gpus_w + extra_w, 2)
                         self._last_power = rp
                     else:
@@ -11443,7 +11520,8 @@ class Collector(threading.Thread):
                                                 "package": None, "core": None, "uncore": None,
                                                 "dram": None, "base": None,
                                                 "disks_w": disks_w, "disks_active": disks_active,
-                                                "gpus_w": gpus_w, "extra_w": extra_w}
+                                                "gpus_w": gpus_w, "extra_w": extra_w,
+                                                "extras_detail": extras_detail}
                         except Exception:
                             self._last_power = {"ok": False, "source": "unknown"}
                 self._last_power_ts = now
@@ -14553,6 +14631,8 @@ class MonitorApp:
             updates["power_disks"] = sanitize_power_disks(data.get("power_disks"))
         if "power_gpus" in data:
             updates["power_gpus"] = sanitize_power_gpus(data.get("power_gpus"))
+        if "power_extras" in data:
+            updates["power_extras"] = sanitize_power_extras(data.get("power_extras"))
         if "data_dir" in data:
             nd = str(data.get("data_dir") or "").strip()
             if nd:
@@ -15749,6 +15829,8 @@ def load_config(data_dir):
         cfg["power_disks"] = sanitize_power_disks(user["power_disks"])
     if "power_gpus" in user:
         cfg["power_gpus"] = sanitize_power_gpus(user["power_gpus"])
+    if "power_extras" in user:
+        cfg["power_extras"] = sanitize_power_extras(user["power_extras"])
     if "weather_city" in user:
         cfg["weather_city"] = clean_text(user["weather_city"], 64)
     if "data_dir" in user:

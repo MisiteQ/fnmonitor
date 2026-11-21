@@ -485,9 +485,9 @@ def _write_json(path, data):
 
 
 # ---------------------------------------------------------------------------
-# 笔记本电池采集（upower / sysfs，只读零依赖）
+# 笔记本电池采集（sysfs 为主，upower / acpi 补充，只读零依赖）
 # ---------------------------------------------------------------------------
-# sysfs 电池状态词 → NUT 标准状态词（用于边沿告警复用）
+# sysfs / upower 电池状态词 → NUT 标准状态词（用于边沿告警复用）
 _BAT_STATUS_MAP = {
     "charging": ("OL", "CHRG"),
     "discharging": ("OB", "DISCHRG"),
@@ -496,8 +496,257 @@ _BAT_STATUS_MAP = {
     "not-charging": ("OL",),
     "unknown": ("OL",),
     "": ("OL",),
+    # upower 状态词
+    "fully-charged": ("OL",),
+    "pending-charge": ("OL",),
+    "pending-discharge": ("OB",),
 }
 _BAT_LOW_PERCENT = 20  # 低于此电量触发 LB（低电量）
+
+
+def _upower_path():
+    """upower 命令真实路径；找不到返回空串。"""
+    for p in ("/usr/bin/upower", "/bin/upower", "/usr/sbin/upower"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return shutil.which("upower") or ""
+
+
+def _acpi_path():
+    """acpi 命令真实路径；找不到返回空串。"""
+    for p in ("/usr/bin/acpi", "/bin/acpi", "/usr/local/bin/acpi"):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return shutil.which("acpi") or ""
+
+
+def _upower_time_to_seconds(s):
+    """解析 upower 时间字符串 → 秒；解析失败返回 None。
+
+    支持 "2.5 hours"、"1 hour 30 minutes"、"02:30:00" 等格式。
+    """
+    s = str(s or "").strip().lower()
+    if not s or s == "unknown":
+        return None
+    m = re.match(r"^(\d{1,3}):(\d{2})(?::(\d{2}))?$", s)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3) or 0)
+    base = {"day": 86400, "hour": 3600, "hr": 3600,
+            "minute": 60, "min": 60, "second": 1, "sec": 1}
+    total = 0.0
+    found = False
+    for num_s, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]+)", s):
+        u = unit.rstrip("s")  # hours→hour / minutes→minute / mins→min
+        if u in base:
+            total += float(num_s) * base[u]
+            found = True
+    return int(round(total)) if found else None
+
+
+def _parse_upower_dump(out):
+    """解析 `upower -d` 输出，返回第一个 battery 设备的属性 dict。
+
+    upower -d 的电池块形如（缩进 2 级为设备属性，`battery:` 小节内缩进 4 级为电池属性）::
+
+        Device: /org/freedesktop/UPower/devices/battery_BAT0
+          native-path:          BAT0
+          battery:
+            state:               discharging
+            energy-rate:         9.5 W
+            time to empty:       2.5 hours
+            percentage:          67%
+            charge-cycles:       120
+
+    键统一转小写并把空格 / 连字符替换为下划线，便于与 sysfs 同口径使用。
+    """
+    if not out:
+        return {}
+    attrs = {}
+
+    def put(key, val):
+        """记录一个键值，并派生与 sysfs 同口径的数值字段。"""
+        if not key:
+            return
+        attrs[key] = val
+        # 时间字段以数字开头（"2.5 hours"），必须在数值分支前处理
+        if key in ("time_to_empty", "time_to_full"):
+            secs = _upower_time_to_seconds(val)
+            if secs is not None:
+                attrs["time_to_empty" if key == "time_to_empty" else "time_to_full_upower"] = secs
+            return
+        nm = re.match(r"^[-+]?\d+(?:\.\d+)?", val)
+        num = _fnum(nm.group(0)) if nm else None
+        if num is None:
+            return
+        if key == "percentage":
+            attrs["capacity"] = num
+        elif key == "energy_rate":
+            attrs["power_now_upower"] = num          # W
+        elif key == "voltage":
+            attrs["voltage_now_upower"] = num        # V
+        elif key == "temperature":
+            attrs["temp_upower"] = num               # °C
+        elif key in ("charge_cycles", "cycle_count"):
+            attrs["cycle_count"] = int(num)
+        elif key == "energy_full":
+            attrs["energy_full_upower"] = num         # Wh
+        elif key == "energy_full_design":
+            attrs["energy_full_design_upower"] = num  # Wh
+
+    section = ""
+    for raw in out.splitlines():
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        line = raw.strip()
+        # 顶层行（Device: / Daemon: 等）→ 重置小节
+        if indent == 0:
+            section = ""
+            continue
+        m = re.match(r"^([^:]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key = m.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        val = m.group(2).strip()
+        if indent == 2:
+            if not val:
+                # 小节标题（battery: / line-power:）→ 切换小节
+                section = key
+            else:
+                # 设备级属性（vendor / model / serial 等），不属于任何小节
+                put(key, val)
+            continue
+        # 缩进 ≥ 4 级：仅在 battery 小节内收集
+        if section == "battery":
+            put(key, val)
+    return attrs
+
+
+def _parse_acpi_battery(out):
+    """解析 `acpi -b` 输出，返回简化的电池 dict（电量、状态）。
+
+    示例："Battery 0: Charging, 67%, 00:45:30 until charged"
+    """
+    if not out:
+        return {}
+    attrs = {}
+    for line in out.splitlines():
+        m = re.match(r"Battery\s+\d+\s*:\s*(.+)", line, re.IGNORECASE)
+        if not m:
+            continue
+        rest = m.group(1)
+        parts = [p.strip() for p in rest.split(",")]
+        if parts:
+            state = parts[0].strip().lower()
+            # 注意 "discharging" 也包含 "charging"，必须按完整词判定
+            if "discharging" in state:
+                attrs["status_acpi"] = "discharging"
+            elif "not charging" in state:
+                attrs["status_acpi"] = "full"        # 插电但未充电，视为已充满
+            elif "charging" in state:
+                attrs["status_acpi"] = "charging"
+            elif "full" in state:
+                attrs["status_acpi"] = "full"
+            elif "unknown" in state:
+                attrs["status_acpi"] = "unknown"
+        if len(parts) >= 2:
+            # 找百分比
+            pm = re.search(r"(\d+)\s*%", parts[1])
+            if pm:
+                attrs["capacity_acpi"] = float(pm.group(1))
+    return attrs
+
+
+def _battery_info_with_upower(sysfs_info):
+    """sysfs 为主，upower / acpi 补充缺失字段；返回合并后的 info dict。
+
+    补充场景：内核某些平台（或容器里）time_to_empty / energy_rate 不导出到
+    sysfs，但 upower 能从其他来源拿到；temperature 在部分 ARM 板上 sysfs 也可能缺失。
+    upower/acpi 不可用时直接返回 sysfs_info 原样，零性能损耗。
+    """
+    info = dict(sysfs_info or {})
+
+    def _absent(key):
+        """字段缺失，或数值字段为 0（不少内核把 power_now/time_to_empty 导出为 0）。"""
+        if key not in info:
+            return True
+        return _fnum(info.get(key)) in (None, 0.0)
+
+    upower_exe = _upower_path()
+    if upower_exe:
+        rc, out, _err = _run([upower_exe, "-d"], timeout=5)
+        if rc == 0:
+            u = _parse_upower_dump(out)
+            if u:
+                # 只补 sysfs 缺失 / 为 0 的字段
+                # 状态（state）— upower 叫 fully-charged / pending-charge
+                u_state = u.get("state")
+                if u_state and (not info.get("status") or str(info.get("status")).lower() == "unknown"):
+                    info["status"] = u_state
+                # 百分比（percentage）
+                u_cap = u.get("capacity")
+                if u_cap is not None and _absent("capacity"):
+                    info["capacity"] = u_cap
+                # 时间到空（time_to_empty）
+                u_tte = u.get("time_to_empty")
+                if u_tte and _absent("time_to_empty"):
+                    info["time_to_empty"] = u_tte
+                # 温度
+                u_tmp = u.get("temp_upower")
+                if u_tmp is not None and _absent("temp"):
+                    info["temp"] = u_tmp * 10  # sysfs 用 0.1°C，转一下
+                # 电压（V → µV）
+                u_v = u.get("voltage_now_upower")
+                if u_v is not None and _absent("voltage_now"):
+                    info["voltage_now"] = str(int(u_v * 1e6))
+                # 功率（W → µW）
+                u_p = u.get("power_now_upower")
+                if u_p is not None and _absent("power_now"):
+                    info["power_now"] = str(int(u_p * 1e6))
+                # 循环次数
+                u_cc = u.get("cycle_count")
+                if u_cc is not None and _absent("cycle_count"):
+                    info["cycle_count"] = u_cc
+                # energy_full / energy_full_design（Wh → µWh）
+                u_ef = u.get("energy_full_upower")
+                if u_ef is not None and _absent("energy_full"):
+                    info["energy_full"] = str(int(u_ef * 1e6))
+                u_efd = u.get("energy_full_design_upower")
+                if u_efd is not None and _absent("energy_full_design"):
+                    info["energy_full_design"] = str(int(u_efd * 1e6))
+                # 制造 / 型号 / 序列号 / 电池技术
+                for k_src, k_dst in (("manufacturer", "manufacturer"),
+                                     ("model", "model_name"),
+                                     ("serial", "serial_number"),
+                                     ("technology", "technology")):
+                    v = u.get(k_src)
+                    if v and k_dst not in info:
+                        info[k_dst] = v
+                info["source_hint"] = "sysfs+upower"
+            else:
+                info["source_hint"] = "sysfs"
+        else:
+            info["source_hint"] = "sysfs"
+    else:
+        # 没 upower，试试 acpi（最轻量，补充 status + capacity）
+        acpi_exe = _acpi_path()
+        if acpi_exe:
+            rc, out, _err = _run([acpi_exe, "-b"], timeout=3)
+            if rc == 0:
+                a = _parse_acpi_battery(out)
+                if a:
+                    if (not info.get("status") or str(info.get("status")).lower() == "unknown") and a.get("status_acpi"):
+                        info["status"] = a["status_acpi"]
+                    if _absent("capacity") and a.get("capacity_acpi") is not None:
+                        info["capacity"] = a["capacity_acpi"]
+                    info["source_hint"] = "sysfs+acpi"
+                else:
+                    info["source_hint"] = "sysfs"
+            else:
+                info["source_hint"] = "sysfs"
+        else:
+            info["source_hint"] = "sysfs"
+    return info
 
 
 def _battery_sysfs_dirs():
@@ -531,15 +780,17 @@ def _parse_uevent(d):
 
 
 def _battery_list():
-    """返回 [(name, info_dict), ...]，info 为解析后的 uevent 字段；无电池返回 []。"""
+    """返回 [(name, info_dict), ...]，info 为解析后的 uevent + upower/acpi 补充字段；无电池返回 []。"""
     out = []
     for d in _battery_sysfs_dirs():
-        info = _parse_uevent(d)
-        if not info:
+        sysfs_info = _parse_uevent(d)
+        if not sysfs_info:
             continue
-        name = _clean_ident(info.get("name") or os.path.basename(d), 64)
+        name = _clean_ident(sysfs_info.get("name") or os.path.basename(d), 64)
         if not name:
             name = os.path.basename(d)
+        # upower / acpi 补充：sysfs 为主，只补缺失字段；命令不存在时零开销
+        info = _battery_info_with_upower(sysfs_info)
         out.append((name, info))
     return out
 
@@ -602,15 +853,20 @@ def ups_build_battery(name, info):
     mfr = _clean_ident(info.get("manufacturer"))
     model = _clean_ident(info.get("model_name"), 80)
     serial = _clean_ident(info.get("serial_number"), 80)
+    src_hint = info.get("source_hint") or "sysfs"
+    driver_label = {"sysfs": "sysfs", "sysfs+upower": "sysfs+upower", "sysfs+acpi": "sysfs+acpi"}.get(src_hint, src_hint)
+    access_label = {"sysfs": "sysfs（/sys/class/power_supply）",
+                    "sysfs+upower": "sysfs + upower -d 补充",
+                    "sysfs+acpi": "sysfs + acpi -b 补充"}.get(src_hint, src_hint)
     device = {
         "name": name,
         "mfr": mfr,
         "model": model,
         "serial": serial,
         "type": "battery",
-        "driver": "sysfs",
+        "driver": driver_label,
         "brand": mfr or model or "笔记本电池",
-        "access": "系统电源管理（upower/sysfs）",
+        "access": access_label,
         "va": None,
         "source": "battery",
     }
@@ -822,9 +1078,11 @@ def ups_build(name, raw):
 
 
 def ups_diag(cfg=None):
-    """识别诊断：upsc 探测结果 + NUT 配置 + USB 设备 + 处理建议（只读）。"""
+    """识别诊断：upsc 探测结果 + NUT 配置 + USB 设备 + upower/acpi 可用性 + 处理建议（只读）。"""
     cfg = cfg or {}
     exe = _upsc_path()
+    upower_exe = _upower_path()
+    acpi_exe = _acpi_path()
     ups_conf = _parse_ups_conf()
     targets = []
     reachable = False
@@ -847,7 +1105,8 @@ def ups_diag(cfg=None):
     listen = ["%s %d" % (h, p) for h, p in _parse_upsd_listen()]
     bats = _battery_list()
     batteries = [{"name": b[0], "model": _clean_ident(b[1].get("model_name"), 64),
-                  "capacity": b[1].get("capacity", "")} for b in bats]
+                  "capacity": b[1].get("capacity", ""),
+                  "source": b[1].get("source_hint", "sysfs")} for b in bats]
 
     sug = []
     if not exe:
@@ -871,16 +1130,23 @@ def ups_diag(cfg=None):
                        "可尝试 usbhid-ups（APC HID 类）或 nutdrv_qx（Megatec 类）并指定 vendorid/productid。"
                        % "、".join(names_any))
     if batteries:
-        sug.append("检测到笔记本电池：%s；若为笔记本且未接 USB UPS，可将上方「电源类型」选为「笔记本电池」直接读取。"
-                   % "、".join(b["name"] for b in batteries))
+        bat_src = "、".join(
+            "%s（%s）" % (b["name"], b.get("source") or "sysfs") for b in batteries)
+        sug.append("检测到笔记本电池：%s；若为笔记本且未接 USB UPS，"
+                   "可将上方「电源类型」选为「笔记本电池」读取。" % bat_src)
+        if not upower_exe and not acpi_exe:
+            sug.append("系统未检测到 upower 或 acpi 命令：电池读数仅来自 sysfs；"
+                       "安装 upower 后可补充剩余时间/功率等 sysfs 未导出的字段。")
     return {
         "upsc": exe,
+        "upower": upower_exe,
+        "acpi": acpi_exe,
         "targets": targets,
         "ups_conf": ups_conf,
         "upsd_listen": listen,
         "usb": usb,
         "batteries": batteries,
-        "suggestions": sug[:4],
+        "suggestions": sug[:5],
     }
 
 
