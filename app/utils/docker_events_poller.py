@@ -30,6 +30,10 @@ DOCKER_ACTION_TO_EVENT: Dict[str, str] = {
     "create": "DOCKER_CONTAINER_CREATE",
 }
 
+# 默认过滤的 exec_* 动作（健康检查等高频探活）——不映射到任何通知事件，
+# 避免 pg_isready / mihomo 探活等产生 24+ 事件/分钟的噪声
+_EXEC_ACTIONS = frozenset({"exec_create", "exec_start", "exec_die", "exec_detach"})
+
 
 def _parse_event_timestamp(ev: Dict[str, Any]) -> str:
     ts = ev.get("time") or ev.get("Time")
@@ -90,6 +94,9 @@ class DockerEventsPoller:
 
     def _dispatch(self, ev: Dict[str, Any]) -> None:
         action = str(ev.get("Action") or "").strip().lower()
+        # exec_* 是健康检查高频探活（pg_isready 每 10s 一次等），跳过以降噪 + 减负
+        if action in _EXEC_ACTIONS:
+            return
         event_type = DOCKER_ACTION_TO_EVENT.get(action)
         if not event_type:
             return
@@ -156,6 +163,7 @@ class DockerEventsPoller:
                     self._sock = sock
                     line_buf = b""
                     carry = b""  # JSON 被拆到多行时暂存，拼到下一行重试
+                    MAX_CARRY = 65536  # carry 硬上限 64KB，超限直接丢弃重连
                     while self.running:
                         try:
                             chunk = sock.recv(4096)
@@ -166,15 +174,35 @@ class DockerEventsPoller:
                         line_buf += chunk
                         while b"\n" in line_buf:
                             line, line_buf = line_buf.split(b"\n", 1)
-                            data = carry + line
-                            carry = b""
-                            s = data.strip()
-                            if not s or self._is_chunk_size(s):
-                                continue  # 空行 / chunked 长度行
-                            ev = self._decode(data)
-                            if ev is None:
-                                carry = data  # 跨 chunk 拆开的 JSON，等下一行拼上重试
+                            # 先单独检查 line：空行 / chunk 长度行直接跳过，
+                            # 避免 carry 非空时 _is_chunk_size(data) 永远失效的问题
+                            ls = line.strip()
+                            if not ls or self._is_chunk_size(ls):
                                 continue
+
+                            data = carry + line
+                            had_carry = bool(carry)
+                            carry = b""
+                            ev = self._decode(data)
+
+                            # 解析失败时，逐层尝试修复：
+                            if ev is None:
+                                # 1) carry 可能是上轮残留脏数据，试一下只解析 line
+                                if had_carry:
+                                    ev = self._decode(line)
+                                # 2) line 里可能粘了 chunk 长度行前缀（如 "627{"），
+                                #    剥掉第一个 { 之前的内容再试
+                                if ev is None:
+                                    brace_idx = line.find(b"{")
+                                    if brace_idx > 0:
+                                        ev = self._decode(line[brace_idx:])
+
+                            if ev is None:
+                                # 最终失败：只保留 line 作为下轮 carry，
+                                # 加上限防止无限增长（Issue #42 核心修复）
+                                carry = line[-MAX_CARRY:]
+                                continue
+
                             self._dispatch(ev)
                             t = ev.get("time") or ev.get("Time")
                             if isinstance(t, (int, float)) and t > since:

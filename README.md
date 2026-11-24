@@ -1,14 +1,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.42.13-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.42.16-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。**📢 通知推送系统**（企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / Webhook 共 7 渠道，自定义模板 + 勿扰时段 + 极简推送）与**定时推送报告**（时 / 天 / 周 / 月 / 自定义间隔，17+ 模块 Markdown 汇总）。**🖥 fnOS 事件监控巡检**（主日志库 / 备份任务库 / 影视库 / 相册库 / 音乐库 / Docker Socket / SSH journal / WAN IP 变更共 8 类数据源，异步推送 + 独立开关）。**⚠️ 阈值警告推送**（8 类指标越限 / 升级 / 恢复全链路通知）。**📋 推送历史**（SQLite 分页存储，筛选 + JSON 详情）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.42.15**
+- 当前版本：**v2.42.16**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）、**[mhduiy](https://github.com/mhduiy)**（硬盘温度刷新与 SMART 温度显示一致性修复）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -171,6 +171,7 @@ fnmonitor 不直接接管 USB，而是只读 fnOS「UPS 电源管理」已经启
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.42.16 | **🐛 修复 Docker 事件监听缓冲无上限导致内存爆增 + 事件永久不触发**（感谢 [@heriec](https://github.com/heriec) 详细报告 issue [#42](https://github.com/MisiteQ/fnmonitor/issues/42)）<br><br>① **🔍 根因**：`DockerEventsPoller._loop()` 解析 JSON 失败时 `carry = data` 无上限增长；Docker `/events` 是 HTTP chunked 长连接，分片边界会把十六进制长度行嵌进 JSON 中间（`...}}627{...`），`json.loads()` 永久失败；carry 非空后 `_is_chunk_size()` 永远返回 False（前缀污染），chunk 长度行无法被跳过；恶性循环下每次 O(n²) 拷贝，RSS 每天涨 ~80MB、6 天破 500MB，容器启停通知从启动起就完全不触发<br>② **🛠 三层修复**：carry 硬上限 64KB（超限截断）；chunk 长度行检测提前到拼接之前（先对 `line` 单独检查）；解析失败时三层重试——拼 carry+line → 单独解析 line（排除 carry 残留）→ 剥离 line 前缀到第一个 `{`<br>③ **🧹 exec_* 健康检查事件默认过滤**：pg_isready 每 10s 等探活产生 24+ 事件/分钟，统一跳过 `exec_create`/`exec_start`/`exec_die`/`exec_detach` 四类高频探活，大幅降低事件量与内存压力 |
 | v2.42.15 | **🐛 修复显卡 / 板卡添加按钮无输入框**（感谢 [@junyi5d](https://github.com/junyi5d) 反馈 issue [#41](https://github.com/MisiteQ/fnmonitor/issues/41)）<br><br>① **🔍 根因**：2.42.14 新增的「独立显卡功耗清单」和「其他板卡分项功耗」+添加 按钮，前端正常发出了保存请求并显示「已保存」，但后端 `sanitize_power_gpus` / `sanitize_power_extras` / `sanitize_power_disks` 遇到空 `watt`（空字符串 `float('')` 抛异常）或空 `name` 时直接 `continue` 整条丢弃，前端用返回值覆盖 `S.cfg` 后重绘读不到新条目，用户看到的是「已保存」但新输入行消失<br>② **🛠 修复**：三个 sanitize 函数全部改为**空字段保留占位**（空 `watt` 按 0 计、空 `count` 按 1 计、空 `name` 允许留空），数值越界改为 clamp 而非丢弃；前端没填完的占位条目能正确落库和回显，保存时也不会被后端静默清空<br>③ **✅ 单测更新**：`test_power_extras_sanitize_and_total` 新增空占位、负 watt、超限 watt 的断言 |
 | v2.42.14 | **🔋 笔记本电池接入 upower · ⚡ 显卡动态功耗 · 分项板卡功耗**（issue [#40](https://github.com/MisiteQ/fnmonitor/issues/40) / [#36](https://github.com/MisiteQ/fnmonitor/issues/36) 追加建议）<br><br>① **🔋 电池采集增强**：以 sysfs 为主、`upower -d` 补充（电量 / 剩余时间 / 功率 / 电压 / 温度 / 循环次数 / 型号 / 电池技术），仅在 sysfs 缺失或为 0 时采用 upower 值；未装 upower 自动退到 `acpi -b`，两者均无则保持纯 sysfs，零依赖<br>② **⚡ 显卡动态功耗**：NVIDIA 读取 `nvidia-smi power.draw`，AMD 读取 hwmon `power*_input` / `power*_average`，实时瓦数随 GPU 状态变化，读不到时静默忽略<br>③ **🧩 分项板卡功耗**：设置新增「其他板卡分项功耗」清单（独立网卡 / 声卡 / HBA / PCIe 扩展卡等，名称 + 固定瓦数，最多 8 条），与独立显卡清单、旧版其他板卡功耗叠加计入整机功耗与电费，功耗分解面板逐条展示<br>④ **🩺 诊断增强**：UPS 诊断返回 upower / acpi 可用性；修正 `Discharging` 被误判为充电的状态映射 |
 | v2.42.13 | **🌤 天气详情抽屉排版修复**<br><br>① 修复抽屉小标题被下方卡片遮挡、贴到右侧被裁切：小标题改为左对齐并留出正常间距<br>②「今日详情」与「未来 7 天预报」改为自适应列宽，窄屏自动减少列数，不再挤压变形<br>③ 逐小时预报改为固定高度柱轨，降水概率 / 天气图标 / 温度 / 时间四行严格对齐，不再高低错位<br>④ 紫外线模块改为强度与防护建议横向排列，窄屏自动换行 |
