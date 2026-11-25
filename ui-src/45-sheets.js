@@ -29,7 +29,13 @@ function cumKwh(pts) {
   for (let i = 1; i < pts.length; i++) { const dt = pts[i][0] - pts[i - 1][0]; if (dt > 0 && dt <= cap) cum += pts[i - 1][1] * dt / 3.6e6; out.push([pts[i][0], cum]); }
   return out;
 }
-const procRows = (list, key) => list.length ? list.map(p => `<div class="row-i" style="grid-template-columns:1fr auto"><div style="min-width:0"><b style="font-weight:600">${esc(p.comm)}</b> <span class="faint tnum">${esc(p.pid)}</span><div class="cmd-line">${esc(p.args)}</div></div><b class="tnum">${key === 'cpu' ? F.d1(p.cpu) + '%' : F.bytesStr(p.rss)}</b></div>`).join('') : `<div class="row-i">${emptyHTML('暂无进程数据', '需要系统 ps 命令')}</div>`;
+const procRows = (list, key, ncpu) => list.length ? list.map(p => {
+  const cpuRaw = +p.cpu || 0;
+  const cpuShare = key === 'cpu' && ncpu > 0 ? cpuRaw / ncpu : cpuRaw;
+  const cpuTip = key === 'cpu' ? `单核累计 ${F.d1(cpuRaw)}%（${ncpu || 1} 核机器上限 ${F.d1((ncpu || 1) * 100)}%）→ 占整机 ${F.d1(cpuShare)}%` : '';
+  const val = key === 'cpu' ? F.d1(cpuShare) + '%' : F.bytesStr(p.rss);
+  return `<div class="row-i" style="grid-template-columns:1fr auto"><div style="min-width:0"><b style="font-weight:600">${esc(p.comm)}</b> <span class="faint tnum">${esc(p.pid)}</span><div class="cmd-line">${esc(p.args)}</div></div><b class="tnum"${cpuTip ? ` title="${esc(cpuTip)}"` : ''}>${val}</b></div>`;
+}).join('') : `<div class="row-i">${emptyHTML('暂无进程数据', '需要系统 ps 命令')}</div>`;
 const pillFor = (lv, text) => `<span class="pill ${lv === 'none' ? '' : lv || 'ok'}">${lv === 'sleep' ? ic('moon') : lv === 'warn' || lv === 'crit' ? ic('alert') : lv === 'none' ? ic('info') : '<span class="dot"></span>'}${esc(text)}</span>`;
 
 const SHEETS = {
@@ -88,7 +94,7 @@ const SHEETS = {
         const c = o.cpu || {}, hc = (o.hardware || {}).cpu || {};
         dnum(x.v, c.percent); inkTo(x.v, ok(c.percent) ? rampInk(c.percent, 'cpu') : ''); setText(x.load, (c.load || []).map(v => F.d2(v)).join(' / ') || '--');
         (c.per_core || []).forEach((v, i) => { if (!cg[i]) return; cg[i].set(v / 100, LV.cpu(v), 'cpu'); setText(x['cv' + i], F.int(v)); inkTo(x['cv' + i], rampInk(v, 'cpu')); });
-        setHTML(x.procs, procRows(((S.procs || {}).processes || []).slice(0, 8), 'cpu'));
+        setHTML(x.procs, procRows(((S.procs || {}).processes || []).slice(0, 8), 'cpu', ((o.cpu || {}).logical_cpus) || 1));
         setHTML(x.spec, kvHTML([['型号', dash(hc.model || c.model)], ['核心 / 线程', `${dash(c.cores)} / ${dash(c.threads)}`], ['插槽', dash(c.sockets)], ['当前频率', ok(c.frequency_mhz) && c.frequency_mhz > 0 ? (c.frequency_mhz / 1000).toFixed(2) + ' GHz' : dash(null)], ['架构', dash(hc.arch || (o.system || {}).arch)]]));
         const gs = o.gpu || [];
         setHTML(x.gpu, gs.length ? gs.map(g => { const md = gpuMode(g), iu = gpuIntel(g);

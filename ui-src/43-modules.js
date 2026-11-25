@@ -204,15 +204,15 @@ defineModule({
     dnum(x.load, lv.load, F.int); setText(x.loadLbl, '额定容量 ' + (dv.va || '--'));
     dnum(x.rt, lv.rt ? Math.round(lv.rt / 60) : null, F.int);
     setText(x.rtLbl, lv.temp != null ? `电池 ${F.d1(lv.temp)} ℃` : '');
-    // 电池模式：覆盖为电池相关字段（循环次数 / 健康度 / 温度）
+    // 电池模式：覆盖为电池相关字段（剩余电量 / 循环次数 / 健康度 / 续航）
     if (dv.source === 'battery') {
       setText(x.outVEye, '电池电压'); dnum(x.outV, lv.bat_v, F.d1);
       setText(x.outLbl, lv.out_a != null ? `电流 ${F.d1(lv.out_a)} A` : '');
-      setText(x.chgLbl, lv.temp != null ? `温度 ${F.d1(lv.temp)} ℃` : (lv.tech || ''));
+      setText(x.chgEye, '剩余电量'); setText(x.chgLbl, lv.temp != null ? `温度 ${F.d1(lv.temp)} ℃` : (lv.tech || ''));
       setText(x.loadEye, '循环次数'); dnum(x.load, lv.cycles, F.int);
       setText(x.loadLbl, lv.health != null ? `健康度 ${F.d1(lv.health)}%` : '');
-      setText(x.rtEye, '健康度'); dnum(x.rt, lv.health, F.d1); setText(x.rtU, '%');
-      setText(x.rtLbl, lv.cycles != null ? `已循环 ${lv.cycles} 次` : '');
+      setText(x.rtEye, '剩余续航'); dnum(x.rt, lv.rt ? Math.round(lv.rt / 60) : null, F.int); setText(x.rtU, '分');
+      setText(x.rtLbl, lv.health != null ? `健康度 ${F.d1(lv.health)}%` : '');
       const devTxt = (dv.brand || dv.mfr || '') + (dv.model ? ' ' + dv.model : (dv.name || '电池'));
       setText(x.sub, `${esc(devTxt)} · ${labels.join(' ') || '电池'}`);
     }

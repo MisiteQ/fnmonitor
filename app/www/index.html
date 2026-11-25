@@ -3274,11 +3274,11 @@ setText(x.rtLbl, lv.temp != null ? `电池 ${F.d1(lv.temp)} ℃` : '');
 if (dv.source === 'battery') {
 setText(x.outVEye, '电池电压'); dnum(x.outV, lv.bat_v, F.d1);
 setText(x.outLbl, lv.out_a != null ? `电流 ${F.d1(lv.out_a)} A` : '');
-setText(x.chgLbl, lv.temp != null ? `温度 ${F.d1(lv.temp)} ℃` : (lv.tech || ''));
+setText(x.chgEye, '剩余电量'); setText(x.chgLbl, lv.temp != null ? `温度 ${F.d1(lv.temp)} ℃` : (lv.tech || ''));
 setText(x.loadEye, '循环次数'); dnum(x.load, lv.cycles, F.int);
 setText(x.loadLbl, lv.health != null ? `健康度 ${F.d1(lv.health)}%` : '');
-setText(x.rtEye, '健康度'); dnum(x.rt, lv.health, F.d1); setText(x.rtU, '%');
-setText(x.rtLbl, lv.cycles != null ? `已循环 ${lv.cycles} 次` : '');
+setText(x.rtEye, '剩余续航'); dnum(x.rt, lv.rt ? Math.round(lv.rt / 60) : null, F.int); setText(x.rtU, '分');
+setText(x.rtLbl, lv.health != null ? `健康度 ${F.d1(lv.health)}%` : '');
 const devTxt = (dv.brand || dv.mfr || '') + (dv.model ? ' ' + dv.model : (dv.name || '电池'));
 setText(x.sub, `${esc(devTxt)} · ${labels.join(' ') || '电池'}`);
 }
@@ -3499,7 +3499,13 @@ const cap = medianDt(pts) * 3; let cum = 0;
 for (let i = 1; i < pts.length; i++) { const dt = pts[i][0] - pts[i - 1][0]; if (dt > 0 && dt <= cap) cum += pts[i - 1][1] * dt / 3.6e6; out.push([pts[i][0], cum]); }
 return out;
 }
-const procRows = (list, key) => list.length ? list.map(p => `<div class="row-i" style="grid-template-columns:1fr auto"><div style="min-width:0"><b style="font-weight:600">${esc(p.comm)}</b> <span class="faint tnum">${esc(p.pid)}</span><div class="cmd-line">${esc(p.args)}</div></div><b class="tnum">${key === 'cpu' ? F.d1(p.cpu) + '%' : F.bytesStr(p.rss)}</b></div>`).join('') : `<div class="row-i">${emptyHTML('暂无进程数据', '需要系统 ps 命令')}</div>`;
+const procRows = (list, key, ncpu) => list.length ? list.map(p => {
+const cpuRaw = +p.cpu || 0;
+const cpuShare = key === 'cpu' && ncpu > 0 ? cpuRaw / ncpu : cpuRaw;
+const cpuTip = key === 'cpu' ? `单核累计 ${F.d1(cpuRaw)}%（${ncpu || 1} 核机器上限 ${F.d1((ncpu || 1) * 100)}%）→ 占整机 ${F.d1(cpuShare)}%` : '';
+const val = key === 'cpu' ? F.d1(cpuShare) + '%' : F.bytesStr(p.rss);
+return `<div class="row-i" style="grid-template-columns:1fr auto"><div style="min-width:0"><b style="font-weight:600">${esc(p.comm)}</b> <span class="faint tnum">${esc(p.pid)}</span><div class="cmd-line">${esc(p.args)}</div></div><b class="tnum"${cpuTip ? ` title="${esc(cpuTip)}"` : ''}>${val}</b></div>`;
+}).join('') : `<div class="row-i">${emptyHTML('暂无进程数据', '需要系统 ps 命令')}</div>`;
 const pillFor = (lv, text) => `<span class="pill ${lv === 'none' ? '' : lv || 'ok'}">${lv === 'sleep' ? ic('moon') : lv === 'warn' || lv === 'crit' ? ic('alert') : lv === 'none' ? ic('info') : '<span class="dot"></span>'}${esc(text)}</span>`;
 const SHEETS = {
 health: {
@@ -3557,7 +3563,7 @@ return o => {
 const c = o.cpu || {}, hc = (o.hardware || {}).cpu || {};
 dnum(x.v, c.percent); inkTo(x.v, ok(c.percent) ? rampInk(c.percent, 'cpu') : ''); setText(x.load, (c.load || []).map(v => F.d2(v)).join(' / ') || '--');
 (c.per_core || []).forEach((v, i) => { if (!cg[i]) return; cg[i].set(v / 100, LV.cpu(v), 'cpu'); setText(x['cv' + i], F.int(v)); inkTo(x['cv' + i], rampInk(v, 'cpu')); });
-setHTML(x.procs, procRows(((S.procs || {}).processes || []).slice(0, 8), 'cpu'));
+setHTML(x.procs, procRows(((S.procs || {}).processes || []).slice(0, 8), 'cpu', ((o.cpu || {}).logical_cpus) || 1));
 setHTML(x.spec, kvHTML([['型号', dash(hc.model || c.model)], ['核心 / 线程', `${dash(c.cores)} / ${dash(c.threads)}`], ['插槽', dash(c.sockets)], ['当前频率', ok(c.frequency_mhz) && c.frequency_mhz > 0 ? (c.frequency_mhz / 1000).toFixed(2) + ' GHz' : dash(null)], ['架构', dash(hc.arch || (o.system || {}).arch)]]));
 const gs = o.gpu || [];
 setHTML(x.gpu, gs.length ? gs.map(g => { const md = gpuMode(g), iu = gpuIntel(g);
@@ -5149,6 +5155,7 @@ const gpus = (r && r.gpu) || [];
 if (!gpus.length) { toast('未检测到独立显卡', { icon: 'alert' }); return; }
 const arr = list();
 gpus.forEach(g => {
+if (g && g.type === 'igpu') return;
 const nm = (g && (g.name || g.model || g.product)) || '';
 if (nm && !arr.some(a => a.name === nm)) arr.push({ name: String(nm).slice(0, 64), count: 1, watt: '' });
 });
@@ -6441,7 +6448,7 @@ else { S.updBusy = ''; msg('更新失败：' + (j.error || '未知错误')); dra
 }
 });
 x.rows.append(setRow(cfgToggle('update_autoupdate', '自动更新', { hint: '后台每 6 小时检查一次，发现新版本自动下载并直接安装、重启服务' })));
-const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => S.updDir || '', set: v => { S.updDir = v; } });
+const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => S.cfg.update_download_dir || '', set: v => { saveCfg({ update_download_dir: v }, '安装包保存目录'); } });
 x.rows.append(dirRow);
 card._sync = () => { draw(); $$('.set-row', x.rows).forEach(r => r._sync && r._sync()); };
 draw();

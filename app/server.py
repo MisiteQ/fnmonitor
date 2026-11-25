@@ -273,6 +273,46 @@ def power_gpus_total(config):
     return round(sum(r["count"] * r["watt"] for r in rows), 2)
 
 
+def power_gpus_total_dynamic(config):
+    """优先从 collect_gpu() 动态读取独显实际功耗；无动态功耗数据时回退用户配置 TDP 累加。
+
+    核显（igpu）通常读不到独立功耗（与 CPU 共用 RAPL package 域），动态读取自然排除；
+    用户配置清单里也不会填核显，两条路径都一致地只覆盖独立显卡。
+    """
+    try:
+        gpus = collect_gpu()
+        dyn_sum = 0.0
+        has_any_dyn = False
+        for g in gpus:
+            # 只统计独立显卡，排除核显（igpu / 未识别）
+            gtype = (g.get("type") or "")
+            if gtype == "igpu":
+                continue
+            pw = g.get("power_w")
+            if pw is not None:
+                try:
+                    pw_v = float(pw)
+                    if math.isfinite(pw_v) and pw_v >= 0:
+                        dyn_sum += pw_v
+                        has_any_dyn = True
+                except Exception:
+                    pass
+        # 有任何独显读到了动态功耗 → 用动态总和（含其他独显也读不到的回退 TDP）
+        if has_any_dyn:
+            # 把没读到动态功耗的独显也用用户配置 TDP 兜底（按名称模糊匹配）
+            rows = sanitize_power_gpus((config or {}).get("power_gpus"))
+            cfg_tdp = sum(r["count"] * r["watt"] for r in rows)
+            if cfg_tdp > 0 and cfg_tdp > dyn_sum:
+                # 简单兜底：如果用户配置了 TDP 且比动态值大（说明有卡没读到功耗），
+                # 两者取 max 避免遗漏；理想情况应逐卡匹配，但复杂度与收益不匹配
+                return round(max(dyn_sum, cfg_tdp), 2)
+            return round(dyn_sum, 2)
+    except Exception:
+        pass
+    # 回退：用户配置 TDP 累加
+    return power_gpus_total(config)
+
+
 # ---------------------------------------------------------------------------
 # 分项额外板卡功耗（issue #36）：独立网卡 / 声卡 / HBA / PCIe 扩展卡等
 # 一个清单 [{name, watt}, ...]，用户自己填型号名字 + 固定功耗
@@ -2177,6 +2217,9 @@ def _gpu_ident_list_uncached():
     out, rc = run_cmd(["lspci", "-nn"], timeout=10)
     if rc != 0:
         return idents
+    # AMD APU 核显关键词（Raven Ridge / Picasso / Renoir / Cezanne / Lucienne / Stoney / Carrizo / Bristol / Godavari）
+    _AMD_APU_KWS = ("raven ridge", "picasso", "renoir", "cezanne", "lucienne",
+                    "stoney ridge", "carrizo", "bristol ridge", "godavari")
     for line in out.splitlines():
         low = line.lower()
         if "vga" not in low and "3d controller" not in low and "display controller" not in low:
@@ -2188,11 +2231,20 @@ def _gpu_ident_list_uncached():
         rest = line.split(":", 1)[1] if ":" in line else line
         name = re.sub(r"\s*\[[0-9a-f]{4}:[0-9a-f]{4}\]", "", rest).strip()
         pci = line.split()[0] if line.split() else ""
-        gtype = "igpu" if vendor == "8086" else "other"
+        # type 判断：核显 vs 独显
+        nlow = name.lower()
         if vendor == "10de":
             gtype = "nvidia"
         elif vendor == "1002":
-            gtype = "amd"
+            # AMD：如果名字包含 APU 关键词 → 核显；或 class 是 display controller（非 3d controller）
+            is_apu = any(k in nlow for k in _AMD_APU_KWS)
+            is_display_ctrl = "display controller" in low and "3d controller" not in low
+            gtype = "igpu" if (is_apu or is_display_ctrl) else "amd"
+        elif vendor == "8086":
+            # Intel：Arc / Discrete / DG2 → 独显（intel_dgpu），其余核显
+            gtype = "intel_dgpu" if any(k in nlow for k in ("arc", "discrete", "dg2", "xe-hpg")) else "igpu"
+        else:
+            gtype = "other"
         idents.append({"vendor": vendor, "type": gtype, "name": name, "pci": pci,
                        "name_full": name, "name_arch": ""})
     return idents
@@ -4173,6 +4225,9 @@ def notify_load(data_dir):
     # 全局通知设置
     if "notify_title_prefix" in user:
         cfg["notify_title_prefix"] = clean_text(user["notify_title_prefix"], 32) or "飞牛监控"
+    if "update_download_dir" in user:
+        v = str(user.get("update_download_dir") or "").strip()
+        cfg["update_download_dir"] = v if v.startswith("/") else ""
     for k in ("notify_dnd_start", "notify_dnd_end"):
         if k in user:
             hh, mm = notify_hw_time({"hw_time": user[k]})
@@ -11472,7 +11527,8 @@ class Collector(threading.Thread):
                                         for d in _live_disks), 2)
                 # 独立显卡 + 其他板卡（主机内部设备，非外设）固定功耗，叠加到整机；
                 # iDRAC 电源侧读数已含显卡，故仅 RAPL / 估算模式叠加，iDRAC 仅展示分项。
-                gpus_w = power_gpus_total(self.config)
+                # 优先尝试动态读取 GPU 实际功耗（NVIDIA nvidia-smi / AMD hwmon），读不到才回退用户配置 TDP
+                gpus_w = power_gpus_total_dynamic(self.config)
                 # 额外板卡 = 新分项清单（power_extras）+ 旧兜底数字（power_extra_w），两者都叠
                 extras_w = power_extras_total(self.config)
                 try:
@@ -11760,7 +11816,8 @@ class Collector(threading.Thread):
         if self.updater and (self.config.get("update_autoupdate") or self.config.get("update_autocheck")):
             if now - self.updater._last_check >= UPDATE_CHECK_INTERVAL:
                 self.updater.start_auto_job(bool(self.config.get("update_autoupdate")),
-                                            bool(self.config.get("update_autodownload")))
+                                            bool(self.config.get("update_autodownload")),
+                                            dest_dir=self.config.get("update_download_dir"))
 
         # ---- 硬件告警定时发送（每 30 秒判断一次是否到点；读取与发信都在后台线程）----
         # 与上面的硬盘巡检通知完全独立：硬盘「有变化立刻发」，硬件「到点统一发」
@@ -12471,7 +12528,7 @@ class UpdateManager:
             return False, str(e)
 
     # ---- 一键更新：检查 → 下载校验 → 安装（互斥、拒绝降级） ----
-    def install_latest(self, force_check=False):
+    def install_latest(self, force_check=False, dest_dir=None):
         if self._upgrade_submitted:
             return {"ok": True, "note": "升级已提交，飞牛应用中心正在重启应用，请稍后刷新页面"}
         if not self._install_lock.acquire(blocking=False):
@@ -12487,7 +12544,7 @@ class UpdateManager:
             asset = info.get("asset")
             if not asset:
                 return {"ok": False, "error": "Release 中未找到 %s 平台安装包" % info.get("arch")}
-            ok, fpk = self.download_to_nas(asset)
+            ok, fpk = self.download_to_nas(asset, dest_dir=dest_dir)
             if not ok:
                 return {"ok": False, "error": "下载失败: %s" % fpk}
             ok, msg = self.install_fpk(fpk, expect_sha256=asset.get("digest"))
@@ -12500,7 +12557,7 @@ class UpdateManager:
                 self._status["installing"] = False
             self._install_lock.release()
 
-    def start_auto_job(self, autoupdate, autodownload):
+    def start_auto_job(self, autoupdate, autodownload, dest_dir=None):
         """采集线程调用：在后台线程执行自动检查 / 下载 / 安装，已有任务在跑则跳过。"""
         if self._job and self._job.is_alive():
             return
@@ -12510,9 +12567,9 @@ class UpdateManager:
                 uinfo = self.check(force=True)
                 if uinfo.get("has_update") and uinfo.get("asset"):
                     if autoupdate:
-                        self.install_latest()
+                        self.install_latest(dest_dir=dest_dir)
                     elif autodownload and not self.downloaded_path():
-                        self.download_to_nas(uinfo["asset"])
+                        self.download_to_nas(uinfo["asset"], dest_dir=dest_dir)
             except Exception:
                 traceback.print_exc()
 
@@ -14455,7 +14512,7 @@ class MonitorApp:
 
     def api_update_install(self):
         """在线更新：检查 → 下载并校验 SHA256 → 安全解包覆盖 → 自动重启服务（互斥，拒绝降级）。"""
-        return self.updater.install_latest()
+        return self.updater.install_latest(dest_dir=self.config.get("update_download_dir"))
 
     def api_update_asset(self):
         """返回当前架构最新安装包资产信息（供浏览器代理下载）。"""
@@ -15824,6 +15881,9 @@ def load_config(data_dir):
             cfg["disk_scan_interval_h"] = int(user["disk_scan_interval_h"])
         except Exception:
             pass
+    if "update_download_dir" in user:
+        v = str(user.get("update_download_dir") or "").strip()
+        cfg["update_download_dir"] = v if v.startswith("/") else ""
     for k in ("power_tdp_w", "power_disk_typical_w", "power_nic_fixed_w",
               "power_rate_yuan", "power_base_w", "power_extra_w"):
         if k in user:

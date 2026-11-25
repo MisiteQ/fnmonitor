@@ -255,6 +255,8 @@ function gpuSpec(it, row) {
         if (!gpus.length) { toast('未检测到独立显卡', { icon: 'alert' }); return; }
         const arr = list();
         gpus.forEach(g => {
+          // 过滤核显，只加独立显卡（nvidia / amd / hybrid 独显芯）
+          if (g && g.type === 'igpu') return;
           const nm = (g && (g.name || g.model || g.product)) || '';
           if (nm && !arr.some(a => a.name === nm)) arr.push({ name: String(nm).slice(0, 64), count: 1, watt: '' });
         });
@@ -1665,7 +1667,7 @@ function renderUpdate(card) {
     }
   });
   x.rows.append(setRow(cfgToggle('update_autoupdate', '自动更新', { hint: '后台每 6 小时检查一次，发现新版本自动下载并直接安装、重启服务' })));
-  const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => S.updDir || '', set: v => { S.updDir = v; } });
+  const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => S.cfg.update_download_dir || '', set: v => { saveCfg({ update_download_dir: v }, '安装包保存目录'); } });
   x.rows.append(dirRow);
   card._sync = () => { draw(); $$('.set-row', x.rows).forEach(r => r._sync && r._sync()); };
   draw();
