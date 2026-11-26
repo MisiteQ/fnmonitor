@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.17/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.18/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.18": {
+                    "changelog": "v2.42.18 Issue #36 硬盘功耗自动检测 + AMD 独显核显判定 + 空指针修复<br>① 硬盘功耗清单一键自动检测：枚举 /sys/block → NVMe/rotational=0→ssd(2.5W)，HDD 按容量/型号估 3.5寸(8W)/2.5寸(3W)，自动按类型聚合数量<br>② AMD 独显核显判定精准化：删掉 Display controller class 辅助判断（Radeon 540X/550X/Lexa PRO 等老独显也用 class 0380 被误判），仅名字含 APU 代号 Raven/Picasso/Renoir/Cezanne 等判核显<br>③ 软件更新分组空指针：S.cfg.update_download_dir 加 null 保护",
+                    "updated_at": "2026-11-26T12:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.18/fnmonitor-2.42.18-x86.fpk",
+                            "sha256": "c6ded987784b2062dc1f9014ea8bf7dea4129c3cd1cd41daaacad93ab6563bbc",
+                            "size": 1206570
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.18/fnmonitor-2.42.18-arm.fpk",
+                            "sha256": "bb0fc76d94f44e594f5f62ff9f13181bdac3afb062f6854307232d499f36a454",
+                            "size": 1206566
+                        }
+                    }
+                },
                 "2.42.17": {
                     "changelog": "v2.42.17 Issue #36 / #40 功耗与 UPS 六件套修复 + Docker 事件监听内存泄漏修复（Issue #42）<br>① 修复 UPS 电池模式首页卡片循环次数/健康度复制粘贴重复 bug：右大数字改为剩余续航分钟，剩余电量 eyebrow 强调首位；设置页 grid 保持不变<br>② 安装包保存目录持久化：前端 set 调 saveCfg，后端 api_config_save + load_config 白名单加 update_download_dir，手动安装/自动更新/自动下载全链路接入<br>③ 显卡自动检测过滤核显（Intel UHD / AMD APU 自动跳过，type===igpu 不进功耗清单）；后端 lspci 识别升级：AMD 9 种 APU 代号（Raven Ridge/Picasso/Renoir/Cezanne/Lucienne/Stoney/Carrizo/Bristol/Godavari）+ PCI class display controller → igpu；Intel Arc/Discrete/DG2/Xe-HPG → intel_dgpu<br>④ 整机功耗估算 GPU 叠加动态 power_w（NVIDIA nvidia-smi power.draw / AMD hwmon power*_input），读不到才回退用户 TDP 累加；核显（igpu）共用 CPU RAPL 域时自然排除<br>⑤ Docker 事件 poller 修复 carry 缓冲无限增长（O(n²) 拷贝 + 永久 carry 不解析）：carry 硬上限 64KB、chunk 长度行提前独立检查、JSON 三层重试恢复；默认过滤 exec_* 健康检查事件（24次/分钟 → 几乎为 0）<br>⑥ CPU 详情面板进程 CPU 加 ÷ 核数 + tooltip（Issue #43 前端口径不一致），与首页进程卡片统一显示占整机比例",
                     "updated_at": "2026-11-25T12:00:00+08:00",
