@@ -1943,6 +1943,56 @@ def _whole_disks():
     return names
 
 
+# 硬盘自动检测：枚举物理盘 → 判定 SSD/HDD → 按尺寸估算 3.5/2.5 寸 → 汇总到功耗清单格式
+def detect_disks_for_power():
+    """返回自动检测到的硬盘功耗清单：[{type, count, watt}]，格式可直接赋给 power_disks 配置。
+
+    判定规则：
+    - NVMe / rotational=0 → ssd（2.5 W）
+    - SATA/SAS HDD 按容量估算尺寸：> 4 TiB 或型号含 3.5 → hdd35（8 W），其余 → hdd25（3 W）
+    - 每类去重合计数量 + 1 块的典型功耗
+    """
+    names = _whole_disks()
+    if not names:
+        return []
+    # 通过 lsblk 拿型号和尺寸（一次命令搞定全部盘）
+    model_map = {}
+    size_map = {}
+    out, rc = run_cmd(["lsblk", "-b", "-d", "-n", "-o", "NAME,SIZE,MODEL"], timeout=10)
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split(None, 2)
+            if len(parts) < 2:
+                continue
+            nm = parts[0]
+            try:
+                size_map[nm] = int(parts[1])
+            except Exception:
+                pass
+            if len(parts) >= 3:
+                model_map[nm] = parts[2].strip()
+    # 逐盘判定类型
+    buckets = {}
+    for nm in names:
+        ssd = disk_is_ssd(nm)
+        if ssd:
+            kind = "ssd"
+        else:
+            # HDD：看容量和型号名
+            size = size_map.get(nm, 0)
+            model = (model_map.get(nm) or "").lower()
+            is_35 = ("3.5" in model) or ("3500" in model) or ("35mm" in model) or size > 4 * 1024**4
+            kind = "hdd35" if is_35 else "hdd25"
+        buckets[kind] = buckets.get(kind, 0) + 1
+    # 映射到配置格式
+    WATT_BY_KIND = {"hdd35": 8, "hdd25": 3, "ssd": 2.5}
+    DISK_KIND_LABEL = {"hdd35": "3.5 寸机械", "hdd25": "2.5 寸机械", "ssd": "固态"}
+    rows = []
+    for kind, cnt in sorted(buckets.items()):
+        rows.append({"type": kind, "count": cnt, "watt": WATT_BY_KIND[kind]})
+    return rows
+
+
 def _probe_disk_power_state(name):
     """非唤醒式探测单盘电源状态。
 
@@ -13193,6 +13243,9 @@ class MonitorApp:
                     return
                 if path == "/api/hardware":
                     self._json(app.api_hardware())
+                    return
+                if path == "/api/disk_ident":
+                    self._json({"ok": True, "rows": detect_disks_for_power()})
                     return
                 if path == "/api/ui":
                     self._json(app.api_ui_get())

@@ -177,7 +177,7 @@ function diskSpec(it, row) {
         <input class="textfield mono" type="number" min="0" max="50" step="0.5" value="${isFinite(+d.watt) ? d.watt : ''}" data-f="watt" aria-label="单盘功耗" style="width:5.5em">
         <span class="faint">W</span>
         <button class="btn ghost pp-del" type="button" data-del="${i}" aria-label="删除该设备">${ic('x')}</button>
-      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-add>+ 添加设备</button><span class="faint">${arr.length ? `硬盘合计 ${total(arr).toFixed(1)} W` : '留空则按机械 / 固态自动识别，单盘功耗见下方'}</span></div>`;
+      </div>`).join('') + `<div class="pp-foot"><button class="btn ghost" type="button" data-autodetect>🔍 自动检测硬盘</button><button class="btn ghost" type="button" data-add>+ 添加设备</button><span class="faint">${arr.length ? `硬盘合计 ${total(arr).toFixed(1)} W` : '留空则按机械 / 固态自动识别，单盘功耗见下方'}</span></div>`;
   };
   el.addEventListener('change', e => {
     const inp = e.target.closest('[data-f]'); if (!inp) return;
@@ -196,6 +196,13 @@ function diskSpec(it, row) {
   el.addEventListener('click', e => {
     const del = e.target.closest('[data-del]');
     if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
+    if (e.target.closest('[data-autodetect]')) {
+      fetch('/api/disk_ident').then(r => r.json()).then(j => {
+        if (!j.ok || !Array.isArray(j.rows) || !j.rows.length) { toast('未检测到物理硬盘', { icon: 'warn' }); return; }
+        it.set(j.rows, row); toast(`检测到 ${j.rows.reduce((s, r) => s + (+r.count || 0), 0)} 块硬盘`, { icon: 'ok' });
+      }).catch(() => toast('硬盘检测请求失败', { icon: 'alert' }));
+      return;
+    }
     if (e.target.closest('[data-add]')) {
       const arr = list();
       if (arr.length >= 8) { toast('最多 8 条设备', { icon: 'alert' }); return; }
