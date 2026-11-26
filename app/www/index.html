@@ -6448,7 +6448,7 @@ else { S.updBusy = ''; msg('更新失败：' + (j.error || '未知错误')); dra
 }
 });
 x.rows.append(setRow(cfgToggle('update_autoupdate', '自动更新', { hint: '后台每 6 小时检查一次，发现新版本自动下载并直接安装、重启服务' })));
-const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => S.cfg.update_download_dir || '', set: v => { saveCfg({ update_download_dir: v }, '安装包保存目录'); } });
+const dirRow = setRow({ k: 'updDir', label: '安装包保存目录', type: 'input', mono: true, placeholder: '留空 = 数据目录下的 update 文件夹', hint: '「下载到 NAS」的保存位置：留空为默认目录，或填写存储空间路径（/vol1/…）；下载后可在飞牛文件管理中查看，或到应用中心「手动安装」选择该文件升级', get: () => (S.cfg && S.cfg.update_download_dir) || '', set: v => { saveCfg({ update_download_dir: v }, '安装包保存目录'); } });
 x.rows.append(dirRow);
 card._sync = () => { draw(); $$('.set-row', x.rows).forEach(r => r._sync && r._sync()); };
 draw();

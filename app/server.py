@@ -2236,10 +2236,9 @@ def _gpu_ident_list_uncached():
         if vendor == "10de":
             gtype = "nvidia"
         elif vendor == "1002":
-            # AMD：如果名字包含 APU 关键词 → 核显；或 class 是 display controller（非 3d controller）
+            # AMD：仅名字包含 APU 代号才判为核显；其余（包括 Display controller class）均视作独显
             is_apu = any(k in nlow for k in _AMD_APU_KWS)
-            is_display_ctrl = "display controller" in low and "3d controller" not in low
-            gtype = "igpu" if (is_apu or is_display_ctrl) else "amd"
+            gtype = "igpu" if is_apu else "amd"
         elif vendor == "8086":
             # Intel：Arc / Discrete / DG2 → 独显（intel_dgpu），其余核显
             gtype = "intel_dgpu" if any(k in nlow for k in ("arc", "discrete", "dg2", "xe-hpg")) else "igpu"
