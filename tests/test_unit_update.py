@@ -286,9 +286,15 @@ class UpdateSafetyTest(unittest.TestCase):
         update = rpc.call_args_list[3].args[1]
         self.assertEqual(update["appName"], "fnmonitor")
         self.assertEqual(update["updateVersion"], "9.9.9")
-        self.assertEqual(update["systemParameters"], {
-            "agreedToProtocol": True, "installVolumeID": 1,
-            "dataVolumeId": 1, "immediateStart": False})
+        sp = update["systemParameters"]
+        self.assertEqual(sp["agreedToProtocol"], True)
+        self.assertEqual(sp["installVolumeID"], 1)
+        self.assertEqual(sp["installVolumeId"], 1)
+        self.assertEqual(sp["dataVolumeId"], 1)
+        self.assertEqual(sp["immediateStart"], False)
+        # 兼容 fnOS 1.2.1201 volume 字段字符串类型的 str 命名也存在
+        self.assertIn("installVolumeStr", sp)
+        self.assertIn("dataVolumeStr", sp)
         with open(log_path, encoding="utf-8") as f:
             self.assertIn("登记版本已更新为 9.9.9", f.read())
 
