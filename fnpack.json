@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.20": {
+                    "changelog": "v2.42.20 fnOS 1.2.1201 应用中心自动升级修复<br>① 🔍 根因：fnOS 1.2.1201 升级了应用中心 daemon，对 `/rpc/v1/update/task` 的 `systemParameters` 做了严格校验——只发 4 个硬编码字段会被 daemon 以 code=10900 拒绝（1.2.1102 及之前版本不做这个校验所以没问题）<br>② 🛠 修复：先从 `/rpc/v1/update/info` 响应里提取完整 `systemParameters` 预设值，再合并覆盖已知必填字段；volume ID 同时传 int + str 两种命名（防 daemon 类型变化）<br>③ 🔁 10900 业务错误码特殊处理：不是 fatal error，而是「daemon 要求补齐参数」——自动从错误 data 里提取补充字段后重试一次；重试仍失败则给出友好中文提示「该 fnOS 版本要求在应用中心 Web UI 确认安装设置后才能自动升级」<br>④ 🧹 build.ps1 加强 `__pycache__` 清理：双清理（目录 + 散落 .pyc/.pyo）+ 构建前预检查，防止打包混入 Python 3.13 字节码导致 fpk 膨胀（2.42.19 从 746KB 涨到 1.78MB）<br>⑤ 📝 升级日志增强：新增 `update/info 返回 systemParameters 键`、`提交升级任务 keys`、`检测到 10900 补齐重试` 等诊断信息，后续再出类似版本兼容问题可直接从 appcenter-install.log 定位",
+                    "updated_at": "2026-11-27T20:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/fnmonitor-2.42.20-x86.fpk",
+                            "sha256": "009d8cbdfce2bb00658fde5155448467e9e2780323b659043951be1570e630c9",
+                            "size": 763890
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/fnmonitor-2.42.20-arm.fpk",
+                            "sha256": "56e641ccd0ec2412b1305cb3864ac66a69778b3c2a536f4fcd3975879a0491ae",
+                            "size": 763892
+                        }
+                    }
+                },
                 "2.42.19": {
                     "changelog": "v2.42.19 安装包保存目录持久化修复（Issue #36 续）<br>① 修复 api_config_save 白名单漏掉 update_download_dir：前端 POST 保存时后端未处理，导致手动填写的安装包保存目录刷新后为空<br>② DEFAULT_CONFIG 补 update_download_dir 默认值，load_config / api_config 全链路贯通",
                     "updated_at": "2026-11-27T12:00:00+08:00",

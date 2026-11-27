@@ -12353,16 +12353,93 @@ def _start_appcenter_upgrade(fpk_path, log_path):
         if volume <= 0:
             raise RuntimeError("无法确定当前安装存储卷，已中止升级以保护现有数据")
 
-        task = _appcenter_rpc("/rpc/v1/update/task", {
+        # 1. 从 update/info 响应里提取完整 systemParameters 默认值（fnOS 1.2.1201+
+        #    对 update/task 做了严格校验——必须包含应用中心预设的全部 systemParameters
+        #    字段，不能只发我们已知的少数几个）。
+        info_sp = _pick(info, (
+            "systemParameters", "defaultSystemParameters",
+            "expectedSystemParameters", "requiredSystemParameters",
+            "installParameters", "defaultParameters"), depth=3) or {}
+        if not isinstance(info_sp, dict):
+            info_sp = {}
+        _appcenter_update_log(log_path, "update/info 返回 systemParameters 键: %s" %
+                              (sorted(info_sp.keys()) if info_sp else "(空)"))
+
+        def _build_system_parameters(vol_int, vol_str):
+            sp = dict(info_sp)    # 从 daemon 预设值起步，保留其默认字段
+            # 覆盖我们已知且必须的业务字段
+            sp["agreedToProtocol"] = True
+            sp["installVolumeID"] = vol_int
+            sp["installVolumeId"] = vol_int
+            sp["dataVolumeId"] = vol_int
+            sp["immediateStart"] = False
+            # 兼容 volume 字段被 fnOS 1.2.1201 改为字符串类型的情况：
+            # 同时传 int 与 str 两种命名，哪个被实际校验用哪个
+            sp.setdefault("installVolumeStr", vol_str)
+            sp.setdefault("dataVolumeStr", vol_str)
+            return sp
+
+        vol_int = volume
+        vol_str = str(volume)
+        systemParameters = _build_system_parameters(vol_int, vol_str)
+
+        update_payload = {
             "appName": app_name, "updateVersion": version,
             "packageType": package_type,
-            "systemParameters": {
-                "agreedToProtocol": True, "installVolumeID": volume,
-                "dataVolumeId": volume, "immediateStart": False},
-            "customParameters": [], "language": "zh-CN"})
+            "systemParameters": systemParameters,
+            "customParameters": [], "language": "zh-CN"}
+
+        task, task_submit_err = None, None
+        # 第一次提交：完整合并后的 systemParameters
+        try:
+            _appcenter_update_log(log_path, "提交升级任务（systemParameters keys=%s）" %
+                                  sorted(systemParameters.keys()))
+            task = _appcenter_rpc("/rpc/v1/update/task", update_payload)
+        except RuntimeError as e:
+            task_submit_err = e
+            _appcenter_update_log(log_path, "升级任务提交失败: %s" % e)
+
+        # fnOS 1.2.1201 引入了 code=10900 作为「需要用户确认安装设置」类业务错误——
+        # 不是 fatal error，而是 daemon 要求补齐某些参数。尝试从错误 data 里提取
+        # daemon 返回的补充 systemParameters 后再重试一次。
+        if task is None and task_submit_err:
+            err_text = str(task_submit_err)
+            if "10900" in err_text:
+                _appcenter_update_log(log_path, "检测到 fnOS 1.2.1201+ 业务错误码 10900，尝试补齐参数重试")
+                # 从错误消息里提取可能的补充 systemParameters（如果 daemon 带了的话）
+                hint_sp = {}
+                try:
+                    m = re.search(r'\{.*"systemParameters"\s*:\s*(\{.*?\}).*\}', err_text, re.S)
+                    if m:
+                        hint_sp = json.loads(m.group(1))
+                except Exception:
+                    hint_sp = {}
+                # 用 hint 里的字段覆盖现有 systemParameters 后重试
+                if hint_sp:
+                    _appcenter_update_log(log_path, "daemon 提示补充字段: %s" % sorted(hint_sp.keys()))
+                    retry_sp = _build_system_parameters(vol_int, vol_str)
+                    retry_sp.update(hint_sp)
+                    update_payload["systemParameters"] = retry_sp
+                    try:
+                        task = _appcenter_rpc("/rpc/v1/update/task", update_payload)
+                        _appcenter_update_log(log_path, "补齐参数后重试成功")
+                    except RuntimeError as e2:
+                        _appcenter_update_log(log_path, "重试仍失败: %s" % e2)
+                        task_submit_err = e2
+                else:
+                    # 没拿到 daemon 的补充提示，10900 说明用户需要在应用中心 Web UI
+                    # 手动确认安装设置（如授权目录、隐私协议等）。直接上抛特殊错误。
+                    raise RuntimeError(
+                        "应用中心返回错误 10900: 该 fnOS 版本要求在应用中心 Web UI "
+                        "确认安装设置后才能自动升级；请先在应用中心手动升级一次，"
+                        "或在应用中心设置页完成相关授权确认") from task_submit_err
+
+        if task is None:
+            raise task_submit_err
+
         task_id = str(_pick(task, ("taskId", "taskID", "id"), depth=1) or "")
         if not task_id:
-            raise RuntimeError("应用中心未返回升级任务 ID")
+            raise RuntimeError("应用中心未返回升级任务 ID，daemon 原始响应: %s" % task)
         _appcenter_update_log(log_path, "升级任务已提交: %s" % task_id)
         # 只观察一小段时间：能当场失败（状态 5/3）就回显；仍在进行则按已提交处理，
         # 由应用中心继续升级并重启应用，避免 HTTP 请求长时间挂起

@@ -53,8 +53,18 @@ if ($pyExe) { & $pyExe make_icon.py } else { python make_icon.py }
 if ($LASTEXITCODE -ne 0) { throw "图标生成失败：请检查 Python 环境" }
 
 # 清理 Python 字节码缓存：fnpack 会打包 app/ 下全部文件，__pycache__ 一旦残留（本地跑过服务/测试）就会混入 fpk
+# 构建前强制双清理：先删所有 __pycache__ 目录，再兜底删散落的 .pyc/.pyo 文件，最后做残留检查
 Get-ChildItem -Path $root -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $root -Recurse -File -Include "*.pyc","*.pyo" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+# 预检查：如果打包关键路径上还残留字节码，直接报错终止
+$appPyc = Get-ChildItem -Path (Join-Path $root "app") -Recurse -File -Include "*.pyc","*.pyo" -ErrorAction SilentlyContinue
+if ($appPyc) {
+    Write-Host "[FATAL] app/ 下仍有残留 Python 字节码，必须清理后才能打包：" -ForegroundColor Red
+    $appPyc | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    exit 1
+}
 
 Write-Host "[3/5] 检查 fnpack..." -ForegroundColor Cyan
 if (Test-Path ".\fnpack.exe") {
