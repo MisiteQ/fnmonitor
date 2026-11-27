@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.21/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.22": {
+                    "changelog": "v2.42.22 fnOS 1.2.1201 应用中心后台拒单修复<br>① 🔴 根因定位：daemon 的 update/task RPC **根本没返回 systemParameters**（不是我们拼漏了）；RPC 调用**成功接受了任务**（返回 taskId），但 daemon 在**后台执行阶段**拒单（code=10900 + 清空 taskId）——之前的代码只捕获 RPC 层 10900，后台拒单的 10900 被当成普通超时错误吞掉<br>② 🛠 修复：新增两层识别——RPC 层 10900 不变，新增 common/status 后台拒单的 10900 识别；识别后先尝试 daemon RPC 重试（补全 systemParameters 后再提交一次），再 fallback 到 appcenter-cli install-local 命令行通道<br>③ 🔧 新增 CLI fallback：自动探测 appcenter-cli 路径（6 个候选），10900 时试 install-local / install-fpk 子命令绕过 daemon 后台检查<br>④ 📝 完整请求/响应 dump：新增 update/info 完整响应、update/task 原始响应、common/status 错误详情等诊断日志，方便后续 fnOS 版本兼容问题定位",
+                    "updated_at": "2026-11-27T22:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/fnmonitor-2.42.22-x86.fpk",
+                            "sha256": "9b63a0159e2919ed04b168a2603eabe26ba1143923d81516fc8cec9f2c5f6015",
+                            "size": 764735
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/fnmonitor-2.42.22-arm.fpk",
+                            "sha256": "42d049bb4317818523cae4949d69f26ac79e69f26ac79e69f2236b54c8711f5dda5096119d",
+                            "size": 764724
+                        }
+                    }
+                },
                 "2.42.21": {
                     "changelog": "v2.42.21 fnOS 1.2.1201 升级链路验证包<br>⚠️ 本版本无新功能，用于验证 2.42.20 的 fnOS 1.2.1201 应用中心升级修复是否生效——请在已手动安装 2.42.20 的机器上触发自动升级进行验证",
                     "updated_at": "2026-11-27T21:00:00+08:00",

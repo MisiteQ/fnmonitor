@@ -12299,6 +12299,48 @@ def _appcenter_installed_version(info):
     return str(v) if v not in (None, "") else ""
 
 
+def _try_install_local_cli(fpk_path, app_name, version):
+    """fnOS 1.2.1201+ daemon 会在后台拒掉 RPC 接受的任务（code=10900）。
+    此时退而求其次走 appcenter-cli 命令行通道，它可能绕过那道后台授权检查。
+    返回 (ok, message)。注意：install-local 对已装应用可能做卸载+重装，
+    但 fnmonitor 的数据放在 @appdata 下，卸载不删数据。"""
+    import subprocess
+    cli_candidates = (
+        "/usr/bin/appcenter-cli",
+        "/usr/local/bin/appcenter-cli",
+        "/usr/trim/bin/appcenter-cli",
+        "/opt/appcenter-cli/bin/appcenter-cli",
+        "/sbin/appcenter-cli",
+        "appcenter-cli",                     # 兜底：PATH 里
+    )
+    cli_path = ""
+    for c in cli_candidates:
+        try:
+            if os.path.isfile(c) and os.access(c, os.X_OK):
+                cli_path = c
+                break
+        except OSError:
+            continue
+    if not cli_path:
+        return False, "未找到 appcenter-cli 可执行文件"
+    # 尝试两种子命令：install-local（整包安装，可能先卸后装）、install-fpk（已装应用仅输出 is installed）
+    for sub in ("install-local", "install-fpk"):
+        try:
+            cmd = [cli_path, sub, fpk_path]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            out = (proc.stdout or "") + (proc.stderr or "")
+            # install-fpk 对已装应用会输出 is installed 后退出（exit=2/非 0），没真正安装
+            if sub == "install-fpk" and proc.returncode != 0 and "installed" in out.lower():
+                continue
+            if proc.returncode == 0:
+                return True, "appcenter-cli %s 执行成功: %s" % (sub, out.strip()[:200])
+        except subprocess.TimeoutExpired:
+            return False, "appcenter-cli %s 超时" % sub
+        except OSError as e:
+            continue
+    return False, "appcenter-cli 执行失败（所有子命令均返回非 0），最后输出: %s" % out.strip()[:300] if 'out' in dir() else "appcenter-cli 执行失败"
+
+
 def _start_appcenter_upgrade(fpk_path, log_path):
     """通过应用中心原生升级通道更新已装应用，保留数据并同步登记版本。
 
@@ -12343,6 +12385,8 @@ def _start_appcenter_upgrade(fpk_path, log_path):
         info = _appcenter_rpc("/rpc/v1/update/info", {
             "appName": app_name, "updateVersion": version,
             "packageType": package_type, "language": "zh-CN"})
+        _appcenter_update_log(log_path, "update/info 完整响应: %s" %
+                              json.dumps(info, ensure_ascii=False)[:2000])
         installed_ver = _appcenter_installed_version(info)
         if installed_ver and _ver_tuple(installed_ver) >= _ver_tuple(version):
             msg = "应用中心登记版本已是 %s，无需重复升级" % installed_ver
@@ -12441,10 +12485,43 @@ def _start_appcenter_upgrade(fpk_path, log_path):
         if not task_id:
             raise RuntimeError("应用中心未返回升级任务 ID，daemon 原始响应: %s" % task)
         _appcenter_update_log(log_path, "升级任务已提交: %s" % task_id)
+        _appcenter_update_log(log_path, "update/task 原始响应: %s" %
+                              json.dumps(task, ensure_ascii=False)[:1000])
         # 只观察一小段时间：能当场失败（状态 5/3）就回显；仍在进行则按已提交处理，
         # 由应用中心继续升级并重启应用，避免 HTTP 请求长时间挂起
-        done = _wait_appcenter_task("/rpc/v1/common/status", "taskId", task_id,
-                                    timeout=_APPCENTER_UPGRADE_GRACE, allow_pending=True)
+        _wait_err = None
+        try:
+            done = _wait_appcenter_task("/rpc/v1/common/status", "taskId", task_id,
+                                        timeout=_APPCENTER_UPGRADE_GRACE, allow_pending=True)
+        except RuntimeError as e:
+            _wait_err = e
+            _appcenter_update_log(log_path, "任务状态轮询返回错误: %s" % e)
+        if _wait_err is not None and "10900" in str(_wait_err):
+            # fnOS 1.2.1201+ 的 daemon 会在后台把 RPC 接受的任务拒掉（code=10900），
+            # 这是「需要用户确认安装设置」类业务错误，不是 fatal error。此时 taskId
+            # 也会被 daemon 清空，daemon 要求走另一条通道（CLI install-local）或让
+            # 用户在 Web UI 手动升级。
+            _appcenter_update_log(log_path,
+                                  "检测到 fnOS 1.2.1201+ daemon 后台拒单（10900），"
+                                  "尝试 CLI install-local fallback")
+            try:
+                cli_ok, cli_msg = _try_install_local_cli(fpk_path, app_name, version)
+                if cli_ok:
+                    _appcenter_update_log(log_path,
+                                          "CLI install-local fallback 成功: %s" % cli_msg)
+                    return True, cli_msg + "，服务将自动重启…"
+                _appcenter_update_log(log_path,
+                                      "CLI install-local fallback 失败: %s" % cli_msg)
+            except Exception as e3:
+                _appcenter_update_log(log_path,
+                                      "CLI install-local fallback 异常: %s" % e3)
+            # CLI 也失败，给友好提示
+            raise RuntimeError(
+                "应用中心后台拒绝升级（code=10900）：该 fnOS 版本要求在应用中心 Web UI "
+                "确认安装设置后才能自动升级；请先在应用中心手动升级一次。"
+                " 错误详情: %s" % _wait_err) from _wait_err
+        if _wait_err is not None:
+            raise _wait_err
         if _task_status(done) == 2:
             msg = "fnOS 应用中心升级完成，应用登记版本已更新为 %s" % version
         else:
