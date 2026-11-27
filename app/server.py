@@ -121,7 +121,7 @@ UPDATE_REPO = "MisiteQ/fnmonitor"          # GitHub 仓库：在线检查更新 
 UPDATE_CHECK_INTERVAL = 6 * 3600           # 自动更新检查周期（6 小时）
 # 下载加速：直连 GitHub 下载域在国内常不可达，失败后自动依次尝试公共加速镜像
 GH_MIRRORS = ["", "https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/", "https://gh.llkk.cc/"]
-DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "power_gpus": [], "power_extra_w": 0, "power_extras": [], "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
+DEFAULT_CONFIG = {"interval": 10, "retention_days": 7, "port": 0, "history_interval": 60, "weather_city": "", "data_dir": "", "update_download_dir": "", "update_autocheck": 1, "update_autodownload": 0, "update_autoupdate": 0, "traffic_exclude_bridge": 0, "power_tdp_w": 65, "power_rate_yuan": 0.6, "power_price_periods": [], "power_disk_typical_w": 8, "power_disks": [], "power_nic_fixed_w": 5, "power_base_w": 8, "power_gpus": [], "power_extra_w": 0, "power_extras": [], "disk_standby_protect": 1, "disk_scan_enabled": 1, "disk_scan_interval_h": 6, "disk_scan_notify": 0, "threshold_notify": 0, "open_mode": "url", "monthly_summary_enabled": 0, "auth_enabled": 0, "auth_password_hash": "", "auth_session_days": 7, "ec_fan_probe": 0}
 # 提醒阈值（v2.18.0 新增）：前端「设置 → 提醒阈值」写入 ui.json 的 thresholds 字段，
 # 界面着色 / 趋势阈值线 / 首页结论与健康报告共用同一口径。键 → (默认值, 最小, 最大)
 THRESHOLD_SPEC = {
@@ -14759,6 +14759,9 @@ class MonitorApp:
                 updates["data_dir"] = os.path.normpath(nd)
             else:
                 remove.append("data_dir")
+        if "update_download_dir" in data:
+            v = str(data.get("update_download_dir") or "").strip()
+            updates["update_download_dir"] = v if v.startswith("/") else ""
         # 飞牛桌面打开方式：iframe=点击图标在飞牛窗口内打开 / url=点击图标直接在
         # 浏览器新标签页打开。保存到 config.json；同时写入桌面入口 ui/config 的
         # type 并同步应用中心数据库，使 fnOS 桌面按新模式打开（刷新桌面页后生效）

@@ -43,6 +43,7 @@
    "update_autocheck": "number",
    "update_autodownload": "number",
    "update_autoupdate": "number",
+   "update_download_dir": "str",
    "update_status": {
     "download_dir": "str",
     "downloaded_file": "str",
@@ -169,6 +170,7 @@
    "update_autocheck": "number",
    "update_autodownload": "number",
    "update_autoupdate": "number",
+   "update_download_dir": "str",
    "weather_city": "str"
   },
   "cpu": {

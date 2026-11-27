@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.18/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.19": {
+                    "changelog": "v2.42.19 安装包保存目录持久化修复（Issue #36 续）<br>① 修复 api_config_save 白名单漏掉 update_download_dir：前端 POST 保存时后端未处理，导致手动填写的安装包保存目录刷新后为空<br>② DEFAULT_CONFIG 补 update_download_dir 默认值，load_config / api_config 全链路贯通",
+                    "updated_at": "2026-11-27T12:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-x86.fpk",
+                            "sha256": "5b821388e6a21d91ae96a2330b5edb5294a92ab8b27ff488c11e9585aee58b28",
+                            "size": 1781833
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-arm.fpk",
+                            "sha256": "a5139f66c0eea019e45ede8b5279e2ad985778f202d92acb8a532487098f9313",
+                            "size": 1781822
+                        }
+                    }
+                },
                 "2.42.18": {
                     "changelog": "v2.42.18 Issue #36 硬盘功耗自动检测 + AMD 独显核显判定 + 空指针修复<br>① 硬盘功耗清单一键自动检测：枚举 /sys/block → NVMe/rotational=0→ssd(2.5W)，HDD 按容量/型号估 3.5寸(8W)/2.5寸(3W)，自动按类型聚合数量<br>② AMD 独显核显判定精准化：删掉 Display controller class 辅助判断（Radeon 540X/550X/Lexa PRO 等老独显也用 class 0380 被误判），仅名字含 APU 代号 Raven/Picasso/Renoir/Cezanne 等判核显<br>③ 软件更新分组空指针：S.cfg.update_download_dir 加 null 保护",
                     "updated_at": "2026-11-26T12:00:00+08:00",
