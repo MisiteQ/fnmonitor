@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.23/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.23": {
+                    "changelog": "v2.42.23 fnOS 1.2.1201 升级链路验证包<br>⚠️ 本版本无代码变更，仅用于验证 2.42.22 新增的 daemon 后台拒单 10900 识别 + appcenter-cli install-local fallback 是否生效",
+                    "updated_at": "2026-11-27T23:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.23/fnmonitor-2.42.23-x86.fpk",
+                            "sha256": "4be608d3fb3ff333d0701ac61a6f895936a65833dc41f1572a00a09bb1c57c35",
+                            "size": 764733
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.23/fnmonitor-2.42.23-arm.fpk",
+                            "sha256": "cab0a6a61180712834a2555b89f65ba4a2cca83828a47034e61e7c05a04d07e4",
+                            "size": 764726
+                        }
+                    }
+                },
                 "2.42.22": {
                     "changelog": "v2.42.22 fnOS 1.2.1201 应用中心后台拒单修复<br>① 🔴 根因定位：daemon 的 update/task RPC **根本没返回 systemParameters**（不是我们拼漏了）；RPC 调用**成功接受了任务**（返回 taskId），但 daemon 在**后台执行阶段**拒单（code=10900 + 清空 taskId）——之前的代码只捕获 RPC 层 10900，后台拒单的 10900 被当成普通超时错误吞掉<br>② 🛠 修复：新增两层识别——RPC 层 10900 不变，新增 common/status 后台拒单的 10900 识别；识别后先尝试 daemon RPC 重试（补全 systemParameters 后再提交一次），再 fallback 到 appcenter-cli install-local 命令行通道<br>③ 🔧 新增 CLI fallback：自动探测 appcenter-cli 路径（6 个候选），10900 时试 install-local / install-fpk 子命令绕过 daemon 后台检查<br>④ 📝 完整请求/响应 dump：新增 update/info 完整响应、update/task 原始响应、common/status 错误详情等诊断日志，方便后续 fnOS 版本兼容问题定位",
                     "updated_at": "2026-11-27T22:00:00+08:00",
