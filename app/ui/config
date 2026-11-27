@@ -4,9 +4,11 @@
             "title": "飞牛监控",
             "icon": "images/icon-{0}.png",
             "type": "iframe",
-            "protocol": "http",
+            "protocol": "",
             "port": "8777",
-            "url": "/",
+            "gatewayPrefix": "/app/fnmonitor",
+            "gatewaySocket": "fnmonitor.sock",
+            "url": "/app/fnmonitor",
             "allUsers": true
         }
     }

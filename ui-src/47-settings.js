@@ -197,7 +197,7 @@ function diskSpec(it, row) {
     const del = e.target.closest('[data-del]');
     if (del) { const arr = list(); arr.splice(+del.dataset.del, 1); it.set(arr, row); return; }
     if (e.target.closest('[data-autodetect]')) {
-      fetch('/api/disk_ident').then(r => r.json()).then(j => {
+      fetch((GW_PREFIX || '') + '/api/disk_ident').then(r => r.json()).then(j => {
         if (!j.ok || !Array.isArray(j.rows) || !j.rows.length) { toast('未检测到物理硬盘', { icon: 'warn' }); return; }
         it.set(j.rows, row); toast(`检测到 ${j.rows.reduce((s, r) => s + (+r.count || 0), 0)} 块硬盘`, { icon: 'ok' });
       }).catch(() => toast('硬盘检测请求失败', { icon: 'alert' }));
@@ -1653,7 +1653,7 @@ function renderUpdate(card) {
     if (a === 'pc') {
       S.updBusy = '正在经 NAS 代理下载到本电脑…'; draw();
       try {
-        const r = await fetch('/api/update/download?to=browser', { credentials: 'same-origin' });
+        const r = await fetch((GW_PREFIX || '') + '/api/update/download?to=browser', { credentials: 'same-origin' });
         const ct = r.headers.get('Content-Type') || '';
         if (!r.ok || ct.includes('json')) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
         const blob = await r.blob(), m = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/);

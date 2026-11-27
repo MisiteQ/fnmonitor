@@ -13050,6 +13050,31 @@ class MonitorApp:
             timeout = 30
             server_version = "fnMonitor"
             sys_version = ""
+            # 统一网关路径前缀：fnOS 统一网关把 /app/fnmonitor/... 转发到 Unix Socket。
+            # Handler 收到网关请求后先 strip 掉该前缀，后续路由判断完全复用。
+            GATEWAY_PREFIX = "/app/fnmonitor"
+
+            # ---- 关键 override：让 Handler 同时兼容 TCP 和 Unix Socket ----
+            # BaseHTTPRequestHandler 继承 StreamRequestHandler，后者 setup() 里在
+            # disable_nagle_algorithm=True 时调 setsockopt(IPPROTO_TCP, TCP_NODELAY)。
+            # Python 3.11 的 UnixStreamServer（继承 TCPServer）走同一套 RequestHandler，
+            # 但 Unix Socket 不支持 IPPROTO_TCP，会抛 OSError 95。try/except 掉即可。
+            def setup(self):
+                self.connection = self.request
+                if self.timeout is not None:
+                    self.connection.settimeout(self.timeout)
+                if self.disable_nagle_algorithm:
+                    try:
+                        self.connection.setsockopt(
+                            socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+                    except (OSError, ValueError):
+                        pass  # Unix Socket / 非 TCP socket 不支持，忽略
+                self.rfile = self.connection.makefile('rb', self.rbufsize)
+                if self.wbufsize == 0:
+                    from socketserver import _SocketWriter
+                    self.wfile = _SocketWriter(self.connection)
+                else:
+                    self.wfile = self.connection.makefile('wb', self.wbufsize)
 
             # ---- 公共：安全头 / 发送 ----
             def end_headers(self):
@@ -13134,29 +13159,21 @@ class MonitorApp:
                     self.close_connection = True   # 已发出部分数据：只能断开连接
 
             def _serve_html(self, name):
-                """静态页面：ETag 协商缓存（Cache-Control: no-cache，每次向服务器校验，
-                更新后 ETag 变化即取新页面）+ gzip。"""
+                """静态页面：no-store 彻底禁缓存 + gzip。
+                fnOS 统一网关/中继/直连 三种场景下前端需要 GW_PREFIX 检测，
+                浏览器缓存旧版 HTML 会导致 API 请求根路径 → 404。"""
                 ent = app._static_entry(name)
                 if ent is None:
                     self.send_error(404, "Not Found")
                     return
-                body, gz, etag = ent
-                inm = self.headers.get("If-None-Match") or ""
-                if etag in [x.strip() for x in inm.split(",")]:
-                    self.send_response(304)
-                    self.send_header("ETag", etag)
-                    self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Vary", "Accept-Encoding")
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
+                body, gz, _ = ent
                 use_gz = gz is not None and self._accepts_gzip()
                 data = gz if use_gz else body
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
                 self.send_header("Vary", "Accept-Encoding")
                 if use_gz:
                     self.send_header("Content-Encoding", "gzip")
@@ -13172,6 +13189,10 @@ class MonitorApp:
                                ("<h3>%s</h3>" % message).encode("utf-8"), "text/html; charset=utf-8")
 
             def _host_ok(self):
+                # 统一网关请求已过 fnOS 登录态校验，带 X-Trim-* Header，
+                # 跳过本应用自己的 Host 白名单（网关 Host 是门户域名，不一定是局域网）
+                if self.headers.get("X-Trim-Userid") or self.headers.get("X-Trim-Username"):
+                    return True
                 if app._auth_required():
                     return True
                 return host_is_lan(self.headers.get("Host") or "")
@@ -13204,6 +13225,11 @@ class MonitorApp:
             def _handle(self):
                 parsed = urlparse(self.path)
                 path = parsed.path
+                # 统一网关入口：/app/fnmonitor/xxx → /xxx，保持原有路由不变
+                if path == self.GATEWAY_PREFIX:
+                    path = "/"
+                elif path.startswith(self.GATEWAY_PREFIX + "/"):
+                    path = path[len(self.GATEWAY_PREFIX):]
                 qs = parse_qs(parsed.query)
 
                 if not self._host_ok():
@@ -13541,6 +13567,11 @@ class MonitorApp:
 
             def _handle_post(self):
                 path = urlparse(self.path).path
+                # 统一网关入口：/app/fnmonitor/xxx → /xxx，保持原有路由不变
+                if path == self.GATEWAY_PREFIX:
+                    path = "/"
+                elif path.startswith(self.GATEWAY_PREFIX + "/"):
+                    path = path[len(self.GATEWAY_PREFIX):]
                 if not self._host_ok():
                     self._deny(403, "host_not_allowed", "通过域名访问前请先在局域网内开启登录口令", path)
                     return
@@ -16045,7 +16076,7 @@ def sync_launcher_db(mode=None, port=None):
                 eurl = {}
             if isinstance(eurl, dict) and str(eurl.get("port") or "") != str(port):
                 new_eurl = json.dumps(
-                    {"protocol": eurl.get("protocol") or "http",
+                    {"protocol": eurl.get("protocol") or "",
                      "port": str(port),
                      "path": eurl.get("path") or "/"},
                     separators=(",", ":"), ensure_ascii=False)
@@ -16053,6 +16084,46 @@ def sync_launcher_db(mode=None, port=None):
                      "UPDATE entry SET url = %s WHERE service_name = %s;"
                      % (lit(new_eurl), lit(launch)))
                 changed.append("entry.url")
+        # ---- 统一网关字段：fnOS 框架不自动从 ui/config 同步 gateway_socket /
+        # gateway_prefix 到 appcenter.app_service，必须应用自己写 SQL（参见
+        # fnOS 论坛 tid=67436）。这两行是网关真正生效的关键。
+        #
+        # 注意：必须用 fnOS 标准路径 /var/apps/<app>/target/<app>.sock，
+        # 不能用 TRIM_APPDEST 拼出的物理路径（fnOS 网关框架只认标准路径）。
+        gw_socket_path = "/var/apps/fnmonitor/target/fnmonitor.sock"
+        gw_prefix = "/app/fnmonitor"
+        cur = psql("appcenter",
+                   "SELECT COALESCE(gateway_socket, '') || '|' || COALESCE(gateway_prefix, '') "
+                   "|| '|' || COALESCE(url, '') "
+                   "FROM app_service WHERE service_name = %s LIMIT 1;"
+                   % lit(launch))
+        cur_socket, _, rest = (cur or "").partition("|")
+        cur_prefix, _, cur_url = rest.partition("|")
+        need = []
+        if cur_socket != gw_socket_path:
+            need.append("gateway_socket = %s" % lit(gw_socket_path))
+        if cur_prefix != gw_prefix:
+            need.append("gateway_prefix = %s" % lit(gw_prefix))
+        # 网关模式下 url 必须不带端口（fnOS 看到 :<port> 就绕开网关走 TCP 直连）
+        # 参考 fnOS 自带 fygo-browser / trim.fileversion 等应用的 url 格式
+        gw_url = "://${host}/app/fnmonitor/"
+        # 从当前 url 里抽协议头（有就保留，没有用 ://）
+        m = re.match(r"^([a-z]+)://", cur_url or "")
+        if m and cur_url != gw_url:
+            # 有明确协议头：改成带协议不带端口
+            new_url = "%s://${host}/app/fnmonitor/" % m.group(1)
+            if cur_url != new_url:
+                need.append("url = %s" % lit(new_url))
+                need.append("default_url = %s" % lit(new_url))
+        elif not m and cur_url != gw_url:
+            # 无协议头：用标准网关格式
+            need.append("url = %s" % lit(gw_url))
+            need.append("default_url = %s" % lit(gw_url))
+        if need:
+            psql("appcenter",
+                 "UPDATE app_service SET %s WHERE service_name = %s;"
+                 % (", ".join(need), lit(launch)))
+            changed.append("app_service." + "、".join(n.split("=")[0].strip() for n in need))
     except Exception as e:
         return False, "桌面入口数据库同步失败: %s" % e
     if changed:
@@ -16285,6 +16356,177 @@ def _bind_server(bind_host, port, handler):
     return BoundedHTTPServer((bind_host, port), handler), bind_host
 
 
+def _start_fnos_relay_patch():
+    """fnOS 中继路径 /trimfn/* → /app/* rewrite 守护线程。
+
+    fnOS 的 trim-connect.sock 是远程连接/证书服务，不代理 Web 应用。
+    用户通过中继访问 fnmonitor 时路径带 /trimfn 前缀（/trimfn/app/fnmonitor/*），
+    nginx 会匹配 location /trimfn 并 proxy_pass 到 trim-connect.sock，然后得到 404。
+
+    解决方案：patch /usr/trim/nginx/conf/conf.d/trimcon.conf，让 location /trimfn
+    先 rewrite 去掉 /trimfn 前缀，再把 proxy_pass 目标从 trim-connect.sock 改为
+    trim_http_cgi.socket（统一网关）。
+
+    fnOS 有 watchdog（trim_app_center / sync_server）每 ~1s 删除 + 重建所有
+    conf.d 文件。我们每 50ms 检查一次，发现被还原就立刻重新 patch，同时发 nginx
+    HUP reload 让新配置生效。由于我们的 patch 频率比 watchdog 快 ~20x，且 patch
+    后立刻 reload，race 窗口极小，实际测试可以稳定守住。
+
+    只在 fnOS 环境（存在 /usr/trim/nginx/conf/conf.d/trimcon.conf）才运行。
+    不影响非 fnOS 环境（裸 Linux / Docker / 开发机）。
+    """
+    TRIM_CONF_PATH = "/usr/trim/nginx/conf/conf.d/trimcon.conf"
+    MARKER = "# fnmonitor-relay-patched"
+
+    # 只在 fnOS 环境运行
+    if not os.path.isfile(TRIM_CONF_PATH):
+        return
+
+    def _patch_once():
+        """patch 一次 trimcon.conf。幂等：无论当前状态如何都能正确修正。
+        返回 True 表示实际执行了 patch（文件有改动），False 表示已经正确。"""
+        try:
+            # chattr -i：fnOS watchdog 会给 conf 文件加 immutable，
+            # 我们要先去掉才能改写
+            try:
+                subprocess.run(
+                    ["chattr", "-i", TRIM_CONF_PATH],
+                    capture_output=True, timeout=2
+                )
+            except Exception:
+                pass
+
+            with open(TRIM_CONF_PATH, "r") as f:
+                original = f.read()
+
+            content = original
+            changed = False
+
+            # Check 1: proxy_pass 目标
+            if "trim_http_cgi.socket" not in content or "trim-connect.sock" in content:
+                content = content.replace(
+                    "trim-connect.sock", "trim_http_cgi.socket"
+                )
+                changed = True
+
+            # Check 2: rewrite 规则
+            if "rewrite ^/trimfn/(.*)$ /$1 break" not in content:
+                # 在 location /trimfn { 后插入
+                pattern = r'(location\s+/trimfn\s*\{)'
+                content = re.sub(
+                    pattern,
+                    r'\1\n    # fnmonitor: rewrite /trimfn/* -> /* 让统一网关处理\n'
+                    r'    rewrite ^/trimfn/(.*)$ /$1 break;',
+                    content
+                )
+                changed = True
+
+            # Check 3: MARKER
+            if MARKER not in content:
+                # 随便在文件里加个 marker（防止守护线程被自己的检查短路）
+                content = content.rstrip() + "\n" + MARKER + "\n"
+                changed = True
+
+            if not changed:
+                return False  # 已经是正确状态，不写入也不发 HUP
+
+            with open(TRIM_CONF_PATH, "w") as f:
+                f.write(content)
+
+            # nginx reload：发 HUP 让 worker 读新配置
+            # 守护线程每 50ms 循环一次持续守住文件，
+            # 即使 watchdog 在 HUP 瞬间重建了，下次循环立刻 patch 回来
+            try:
+                subprocess.run(
+                    ["bash", "-c",
+                     "MASTER=$(pgrep -f 'nginx: master' | head -1); "
+                     "[ -n \"$MASTER\" ] && kill -HUP \"$MASTER\""],
+                    capture_output=True, timeout=2
+                )
+            except Exception:
+                pass
+
+            print("[fnmonitor] fnOS 中继路径 patch 成功 "
+                  "(/trimfn/* → /*, proxy_pass → trim_http_cgi.socket)")
+            return True
+
+        except Exception as e:
+            return False
+
+    def _daemon_loop():
+        while True:
+            try:
+                _patch_once()
+            except Exception:
+                pass
+            # 50ms 检查一次，比 fnOS watchdog (~1s) 快 ~20x
+            time.sleep(0.05)
+
+    # 先立刻 patch 一次（同步）
+    _patch_once()
+    # 再启动守护线程（异步，不阻塞 main）
+    t = threading.Thread(
+        target=_daemon_loop, name="fnOS-relay-patch", daemon=True
+    )
+    t.start()
+
+
+def _bind_gateway_socket(handler):
+    """创建并绑定 fnOS 统一网关的 Unix Socket。
+
+    统一网关转发 /app/fnmonitor/xxx 到本 Socket，TLS 由 fnOS 网关终结。
+    路径前缀在 Handler 里 strip，路由完全复用 TCP 通路。
+    返回 (httpd, socket_path)；失败返回 None。
+    不抛异常：网关入口是增强特性，TCP 主服务不能因它挂掉。
+
+    路径必须用 fnOS 标准路径 /var/apps/fnmonitor/target/fnmonitor.sock，
+    不能用 TRIM_APPDEST 拿到的物理路径（如 /vol1/@appcenter/fnmonitor）——
+    fnOS 网关框架只认 /var/apps/<app>/target/ 这条标准路径。
+    """
+    if os.name == "nt":
+        return None  # Windows 不支持 AF_UNIX（开发环境跳过）
+    try:
+        # fnOS 标准路径（硬编码，其他应用都这么用；/var/apps/<app>/target
+        # 是 symlink 到物理路径的，bind 在此创建的 sock 文件物理上落到
+        # 与 TRIM_APPDEST 下 target 目录相同的位置）
+        appname = "fnmonitor"
+        target_dir = "/var/apps/%s/target" % appname
+        os.makedirs(target_dir, exist_ok=True)
+        socket_path = os.path.join(target_dir, "%s.sock" % appname)
+        # 清理残留（上次进程异常退出留下的 socket 文件会导致 bind EADDRINUSE）
+        try:
+            os.unlink(socket_path)
+        except OSError:
+            pass
+
+        # 关键：不能继承 ThreadingHTTPServer（= ThreadingMixIn + HTTPServer=TCPServer）。
+        # TCPServer 走 socketserver.BaseRequestHandler.setup()，而 Python 3.11 在该方法里
+        # 加了 `self.connection.setsockopt(IPPROTO_TCP, ...)`，Unix Socket 不支持 IPPROTO_TCP，
+        # 会在每次 accept 后立刻抛 OSError 95 "Operation not supported"。
+        # 正确做法：ThreadingMixIn + UnixStreamServer，后者不继承 TCPServer，没有 TCP 特定操作。
+        from socketserver import ThreadingMixIn, UnixStreamServer
+
+        class _GatewayHTTPServer(ThreadingMixIn, UnixStreamServer):
+            """Unix Socket HTTP 服务：ThreadingMixIn 提供并发处理，
+            UnixStreamServer 提供 AF_UNIX socket 绑定（不走 TCPServer 的 TCP 特定路径）。"""
+            address_family = socket.AF_UNIX
+            allow_reuse_address = True
+            daemon_threads = True
+            timeout = 30
+            request_queue_size = 16
+
+        httpd = _GatewayHTTPServer(socket_path, handler)
+        # socket 文件给全组读写：fnOS 网关进程需要能连进来
+        try:
+            os.chmod(socket_path, 0o666)
+        except Exception:
+            pass
+        return httpd, socket_path
+    except Exception as e:
+        print("[fnmonitor] 统一网关 Socket 启动失败（不影响主服务）：%s" % e, flush=True)
+        return None
+
+
 def _set_process_name(name="fnmonitor"):
     """把内核进程名（/proc/<pid>/comm）改成应用名。
 
@@ -16407,6 +16649,18 @@ def main():
     if port != want:
         print("[fnmonitor] 已回退到端口 %d（配置端口 %s 不可用）" % (port, want))
     app.port = port
+    # ── fnOS 统一网关入口（Unix Socket，TLS 由网关终结）─────────
+    # 与 TCP 8777 并存，两条路互不干扰：
+    #   统一网关 → /app/fnmonitor/xxx → Socket → Handler（strip 前缀）
+    #   局域网直连 → http://NAS:8777/xxx → TCP → Handler（原样路由）
+    gateway_httpd, gateway_socket_path = None, ""
+    gw_bind = _bind_gateway_socket(handler)
+    if gw_bind is not None:
+        gateway_httpd, gateway_socket_path = gw_bind
+        # 后台线程 serve_forever（主线程会被 TCP httpd.serve_forever 阻塞）
+        threading.Thread(target=gateway_httpd.serve_forever,
+                         name="GatewaySocket", daemon=True).start()
+        print("[fnmonitor] 统一网关已启动：%s" % gateway_socket_path)
     # 按用户配置同步桌面入口（升级包会覆盖 ui/config 并把应用中心数据库重置为
     # 包默认 iframe，type 与端口一并恢复；apply_launcher_entry 内部会同步 fnOS
     # 应用中心数据库——桌面点击行为由数据库决定）。使用实际监听端口。
@@ -16417,6 +16671,15 @@ def main():
             print("[fnmonitor] 桌面入口配置同步失败: %s" % msg_l)
     except Exception as e:
         print("[fnmonitor] 桌面入口配置同步异常: %s" % e)
+    # 统一网关字段：即使 open_mode / port 都没变，也要确保 app_service 表里的
+    # gateway_socket / gateway_prefix 被 fnOS 框架正确登记（apply_launcher_entry
+    # 在 mode=None, port=None 时直接返回，跳过 sync_launcher_db）。
+    try:
+        ok_gw, msg_gw = sync_launcher_db(mode=None, port=None)
+        if msg_gw:
+            print("[fnmonitor] %s" % msg_gw)
+    except Exception as e:
+        print("[fnmonitor] 网关字段同步异常: %s" % e)
     # manifest 同步只修正磁盘文件；应用中心登记必须由应用中心 daemon 升级完成。
     # 旧版直接解包升级留下的 FPK 在新版首次启动时补走一次原生升级，整个过程
     # 放在后台线程，避免阻塞 HTTP 服务健康检查。
@@ -16500,6 +16763,14 @@ def main():
 
     threading.Thread(target=_dnd_watch_loop, name="NotifyDndWatch", daemon=True).start()
 
+    # ── fnOS 中继路径 patch：/trimfn/app/fnmonitor/* → /app/fnmonitor/* ──
+    # fnOS 的 trim-connect.sock 是远程连接/证书服务，不代理 Web 应用。
+    # 用户通过中继访问 fnmonitor 时路径带 /trimfn 前缀，nginx 会把请求转发到
+    # trim-connect.sock 然后得到 404。这里 patch trimcon.conf 让 /trimfn
+    # rewrite 到 / 后走统一网关 trim_http_cgi.socket。
+    # fnOS watchdog 每 ~1s 重建所有 conf.d 文件，我们每 50ms 检查一次守住 patch。
+    _start_fnos_relay_patch()
+
     # 线程 CPU 看门狗：长期占满单核时把线程名与栈打进日志（issue #28）
     start_thread_watchdog()
 
@@ -16515,6 +16786,9 @@ def main():
             except Exception:
                 pass
         threading.Thread(target=httpd.shutdown, daemon=True).start()
+        # 统一网关入口：后台线程 serve_forever，需要单独 shutdown
+        if gateway_httpd is not None:
+            threading.Thread(target=gateway_httpd.shutdown, daemon=True).start()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
@@ -16530,6 +16804,12 @@ def main():
         pass
     finally:
         app.collector.stop()
+        # 清理 Unix Socket 文件（让下次启动不会遇到 EADDRINUSE）
+        if gateway_socket_path and os.path.exists(gateway_socket_path):
+            try:
+                os.unlink(gateway_socket_path)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

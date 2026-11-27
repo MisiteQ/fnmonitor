@@ -253,9 +253,18 @@ function lunarText(now) {
    DATA LAYER — 真实接口；后台标签页暂停；断线重试；401 跳登录页
    ===================================================================== */
 const loginURL = () => location.pathname.replace(/[^/]*$/, '') + 'login.html';
+// 统一网关前缀：fnOS 网关下 iframe 加载在 /app/fnmonitor/，
+// 前端 API 请求必须也带此前缀才能被网关正确路由。
+// 非网关场景（直连 IP:端口、HTTP 门户根路径）下为空字符串，不影响。
+const GW_PREFIX = (() => {
+  const m = location.pathname.match(/^(\/app\/[^/]+)/);
+  return m ? m[1] : '';
+})();
 const API = {
   async req(url, opt) {
-    const r = await fetch(url, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opt || {}));
+    // 网关场景下自动给 /xxx 绝对路径拼上前缀
+    const fullUrl = GW_PREFIX && url.startsWith('/') ? GW_PREFIX + url : url;
+    const r = await fetch(fullUrl, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opt || {}));
     if (r.status === 401) { if (!S.authGone) { S.authGone = true; toast('登录已过期，正在跳转登录页', { icon: 'lock' }); setTimeout(() => { location.href = loginURL(); }, 900); } throw new Error('未登录'); }
     if (r.status === 403) {
       let j = null; try { j = await r.json(); } catch (e) { /* HTML 说明页 */ }

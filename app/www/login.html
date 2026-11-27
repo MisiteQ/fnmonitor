@@ -130,20 +130,23 @@ h1 { margin: 30px 0 4px; font-size: 26px; font-weight: 650; letter-spacing: -.02
 <script>
 "use strict";
 (function () {
+  // 网关前缀检测（统一网关 /app/fnmonitor / 中继 /trimfn/app/fnmonitor 自动拼前缀）
+  var GW_PREFIX = (location.pathname.match(/^(\/(?:app|trimfn\/app)\/[^\/]+)/) || [])[1] || '';
+  var api = function(p) { return GW_PREFIX + p; };
   var $ = function (id) { return document.getElementById(id); };
   var EYE = '<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
   var EYE_OFF = '<svg viewBox="0 0 24 24"><path d="M3.5 3.5l17 17M10.6 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.9 3.7M6.6 6.6A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.4 9.4 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
   var MIN = 6, timer = 0;
-  var home = function () { return location.pathname.replace(/login\.html$/, ''); };
+  var home = function () { return GW_PREFIX || location.pathname.replace(/login\.html$/, ''); };
   function msg(id, txt, wait) { var m = $(id); m.textContent = txt || ''; m.classList.toggle('wait', !!wait); }
   async function getJSON(url) {
-    var r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+    var r = await fetch(api(url), { cache: 'no-store', credentials: 'same-origin' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
   /* 写操作统一：POST + JSON + CSRF 标记头 */
   async function post(url, body) {
-    var r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body) });
+    var r = await fetch(api(url), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-FNM-Request': '1' }, body: JSON.stringify(body) });
     var j = {}; try { j = await r.json(); } catch (e) {}
     j.__status = r.status;
     return j;

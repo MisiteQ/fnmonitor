@@ -1,50 +1,67 @@
 {
-    "schema_version":  "2",
-    "source_info":  {
-                        "name":  "MisiteQ 应用源",
-                        "author":  "MisiteQ",
-                        "homepage":  "https://github.com/MisiteQ/fnmonitor",
-                        "description":  "飞牛监控 fnmonitor 官方发布源：fnOS 系统监控面板，实时监控 CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU 与 Docker。"
-                    },
-    "apps":  {
-                 "fnmonitor":  {
-                                   "display_name":  "飞牛监控",
-                                   "desc":  "\u003cb\u003efnOS 系统监控面板\u003c/b\u003e：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。\u003cbr\u003e\u003cbr\u003e🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
-                                   "platform":  [
-                                                    "x86",
-                                                    "arm"
-                                                ],
-                                   "categories":  [
-                                                      "系统工具"
-                                                  ],
-                                   "icon_url":  "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/ICON_256.PNG",
-                                   "readme_url":  "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
-                                   "bug_report_url":  "https://github.com/MisiteQ/fnmonitor/issues",
-                                   "maintainer":  "Misite齊",
-                                   "maintainer_url":  "https://github.com/MisiteQ",
-                                   "run_as":  "root",
-                                   "install_type":  "",
-                                   "is_docker":  false,
-                                   "service_port":  "8777",
-                                   "releases":  {
-                                                    "2.42.19":  {
-                                                                    "changelog":  "v2.42.19 安装包保存目录持久化修复（Issue #36 续）\u003cbr\u003e① 修复 api_config_save 白名单漏掉 update_download_dir：前端 POST 保存时后端未处理，导致手动填写的安装包保存目录刷新后为空\u003cbr\u003e② DEFAULT_CONFIG 补 update_download_dir 默认值，load_config / api_config 全链路贯通",
-                                                                    "updated_at":  "2026-11-27T12:00:00+08:00",
-                                                                    "os_min_version":  "0.9.0",
-                                                                    "packages":  {
-                                                                                     "x86":  {
-                                                                                                 "download_url":  "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-x86.fpk",
-                                                                                                 "sha256":  "5b821388e6a21d91ae96a2330b5edb5294a92ab8b27ff488c11e9585aee58b28",
-                                                                                                 "size":  1781833
-                                                                                             },
-                                                                                     "arm":  {
-                                                                                                 "download_url":  "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-arm.fpk",
-                                                                                                 "sha256":  "a5139f66c0eea019e45ede8b5279e2ad985778f202d92acb8a532487098f9313",
-                                                                                                 "size":  1781822
-                                                                                             }
-                                                                                 }
-                                                                }
-                                                }
-                               }
-             }
+    "schema_version": "2",
+    "source_info": {
+        "name": "MisiteQ 应用源",
+        "author": "MisiteQ",
+        "homepage": "https://github.com/MisiteQ/fnmonitor",
+        "description": "飞牛监控 fnmonitor 官方发布源：fnOS 系统监控面板，实时监控 CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU 与 Docker。"
+    },
+    "apps": {
+        "fnmonitor": {
+            "display_name": "飞牛监控",
+            "desc": "<b>fnOS 系统监控面板</b>：实时监控 CPU、内存、磁盘、网络、温度、功耗与 GPU，Docker 容器资源占用，端口占用与内置应用统计，支持历史趋势记录与数据持久化。<br><br>🏠 总览仪表盘（系统资源 + 硬盘 + 趋势合并一页）| 🐳 Docker · 端口 | ⚙️ 设置",
+            "platform": [
+                "x86",
+                "arm"
+            ],
+            "categories": [
+                "系统工具"
+            ],
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/ICON_256.PNG",
+            "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
+            "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
+            "maintainer": "Misite齊",
+            "maintainer_url": "https://github.com/MisiteQ",
+            "run_as": "root",
+            "install_type": "",
+            "is_docker": false,
+            "service_port": "8777",
+            "releases": {
+                "2.42.20": {
+                    "changelog": "v2.42.20 fnOS 全通路访问兼容（HTTP/HTTPS/中继/局域网/统一网关/iframe 全部打通）<br>① 统一网关 + 中继自动路径前缀：前端 index.html / login.html 新增 GW_PREFIX 自动检测，location.pathname 正则匹配 /app/fnmonitor 或 /trimfn/app/fnmonitor，所有 fetch() 自动拼接前缀，解决中继访问 API 404<br>② HTTP 缓存全面禁用：_serve_html 加 Cache-Control: no-store, no-cache, must-revalidate, max-age=0 + Pragma: no-cache<br>③ Gateway Unix Socket 监听：新增 AF_UNIX socket /var/apps/fnmonitor/target/fnmonitor.sock，与 trim_http_cgi.socket 协议对齐<br>④ 网关路径前缀 strip：Handler 对 Gateway 请求自动去掉 /app/fnmonitor 前缀",
+                    "updated_at": "2026-11-28T00:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/fnmonitor-2.42.20-x86.fpk",
+                            "sha256": "28bff28fbde8043d3822305aa72e2b518e779a0aaa17459544af353a0ddad52c",
+                            "size": 769468
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/fnmonitor-2.42.20-arm.fpk",
+                            "sha256": "a3f0ed98e748ae44a8c7bb1606dfce0d260ab4f9ff302c6cebd8a5fe4fe97105",
+                            "size": 769453
+                        }
+                    }
+                },
+                "2.42.19": {
+                    "changelog": "v2.42.19 安装包保存目录持久化修复（Issue #36 续）<br>① 修复 api_config_save 白名单漏掉 update_download_dir：前端 POST 保存时后端未处理，导致手动填写的安装包保存目录刷新后为空<br>② DEFAULT_CONFIG 补 update_download_dir 默认值，load_config / api_config 全链路贯通",
+                    "updated_at": "2026-11-27T12:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-x86.fpk",
+                            "sha256": "5b821388e6a21d91ae96a2330b5edb5294a92ab8b27ff488c11e9585aee58b28",
+                            "size": 1781833
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.19/fnmonitor-2.42.19-arm.fpk",
+                            "sha256": "a5139f66c0eea019e45ede8b5279e2ad985778f202d92acb8a532487098f9313",
+                            "size": 1781822
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
