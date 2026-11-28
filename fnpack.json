@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.20/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.21/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.21": {
+                    "changelog": "v2.42.21 独立显卡功耗三级回退（Issue #36 续）<br>① 新增 util×TDP 估算中间路径：collect_gpu() 读不到动态功耗时回退为 TDP × (util% × 0.7 + 0.1)，GPU 空闲有 10% TDP 底座、满载接近 TDP<br>② 新增 _match_gpu_tdp() 名称模糊匹配，支持 RTX 4090 ↔ NVIDIA GeForce RTX 4090 双向包含<br>③ power_gpus_total_dynamic() 复用 self._last_gpu 缓存，避免每次采集重复 spawn nvidia-smi",
+                    "updated_at": "2026-11-28T12:00:00+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.21/fnmonitor-2.42.21-x86.fpk",
+                            "sha256": "17898164645859c97a0a4934ff754ba2b742bcf5b64e30bb72d7784df3eca963",
+                            "size": 769987
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.21/fnmonitor-2.42.21-arm.fpk",
+                            "sha256": "a1ad47761ee65597684593df0911615ee2981c8dc214b99d5b96436d0cc61ab1",
+                            "size": 769983
+                        }
+                    }
+                },
                 "2.42.20": {
                     "changelog": "v2.42.20 fnOS 全通路访问兼容（HTTP/HTTPS/中继/局域网/统一网关/iframe 全部打通）<br>① 统一网关 + 中继自动路径前缀：前端 index.html / login.html 新增 GW_PREFIX 自动检测，location.pathname 正则匹配 /app/fnmonitor 或 /trimfn/app/fnmonitor，所有 fetch() 自动拼接前缀，解决中继访问 API 404<br>② HTTP 缓存全面禁用：_serve_html 加 Cache-Control: no-store, no-cache, must-revalidate, max-age=0 + Pragma: no-cache<br>③ Gateway Unix Socket 监听：新增 AF_UNIX socket /var/apps/fnmonitor/target/fnmonitor.sock，与 trim_http_cgi.socket 协议对齐<br>④ 网关路径前缀 strip：Handler 对 Gateway 请求自动去掉 /app/fnmonitor 前缀",
                     "updated_at": "2026-11-28T00:00:00+08:00",

@@ -273,40 +273,87 @@ def power_gpus_total(config):
     return round(sum(r["count"] * r["watt"] for r in rows), 2)
 
 
-def power_gpus_total_dynamic(config):
-    """优先从 collect_gpu() 动态读取独显实际功耗；无动态功耗数据时回退用户配置 TDP 累加。
+def _match_gpu_tdp(gpu_name, cfg_rows):
+    """按名称模糊匹配用户配置的显卡，返回该卡单卡 TDP 瓦数；匹配不到或 watt<=0 返回 None。
 
-    核显（igpu）通常读不到独立功耗（与 CPU 共用 RAPL package 域），动态读取自然排除；
-    用户配置清单里也不会填核显，两条路径都一致地只覆盖独立显卡。
+    双向包含：用户写 "RTX 4090" 能匹配到 collect_gpu() 返回的 "NVIDIA GeForce RTX 4090"，
+    反之亦然。
+    """
+    if not gpu_name or not cfg_rows:
+        return None
+    low = gpu_name.lower()
+    for row in cfg_rows:
+        watt = float(row.get("watt") or 0)
+        if watt <= 0:
+            continue
+        cfg_name = (row.get("name") or "").strip().lower()
+        if not cfg_name or cfg_name in low or low in cfg_name:
+            return watt
+    return None
+
+
+def power_gpus_total_dynamic(config, gpus=None):
+    """独显功耗：实测功耗 → util×TDP 估算 → 用户配置 TDP 兜底，三级回退。
+
+    优先级：
+    1. NVIDIA power.draw / AMD hwmon power*_input → 直接用实际值
+    2. 读到了 GPU util 但没有 power_w → 按 util 比例估算：TDP × (util% × 0.7 + 0.1)
+       （0.7 活跃系数 + 0.1 空闲底座；GPU 空闲功耗占 TDP 比例比 CPU 小得多）
+    3. 什么都没读到 → 纯用户配置 TDP 累加
+
+    核显（igpu）与 CPU 共用 RAPL package 域，两条路径都一致排除。
+    可选参数 gpus 允许外部传入已采集的显卡列表，避免重复调用 collect_gpu()。
     """
     try:
-        gpus = collect_gpu()
-        dyn_sum = 0.0
-        has_any_dyn = False
+        if gpus is None:
+            gpus = collect_gpu()
+        rows = sanitize_power_gpus((config or {}).get("power_gpus"))
+        cfg_tdp = sum(r["count"] * r["watt"] for r in rows)
+
+        dyn_sum = 0.0   # 实际读到的功耗
+        est_sum = 0.0   # util × TDP 估算的功耗
+        discrete_count = 0  # collect_gpu 返回的独显数
+
         for g in gpus:
-            # 只统计独立显卡，排除核显（igpu / 未识别）
-            gtype = (g.get("type") or "")
-            if gtype == "igpu":
+            if g.get("type") == "igpu":
                 continue
+            discrete_count += 1
+
+            # 路径 1：实测功耗
             pw = g.get("power_w")
             if pw is not None:
                 try:
-                    pw_v = float(pw)
-                    if math.isfinite(pw_v) and pw_v >= 0:
-                        dyn_sum += pw_v
-                        has_any_dyn = True
+                    v = float(pw)
+                    if math.isfinite(v) and v >= 0:
+                        dyn_sum += v
+                        continue
                 except Exception:
                     pass
-        # 有任何独显读到了动态功耗 → 用动态总和（含其他独显也读不到的回退 TDP）
-        if has_any_dyn:
-            # 把没读到动态功耗的独显也用用户配置 TDP 兜底（按名称模糊匹配）
-            rows = sanitize_power_gpus((config or {}).get("power_gpus"))
-            cfg_tdp = sum(r["count"] * r["watt"] for r in rows)
-            if cfg_tdp > 0 and cfg_tdp > dyn_sum:
-                # 简单兜底：如果用户配置了 TDP 且比动态值大（说明有卡没读到功耗），
-                # 两者取 max 避免遗漏；理想情况应逐卡匹配，但复杂度与收益不匹配
-                return round(max(dyn_sum, cfg_tdp), 2)
-            return round(dyn_sum, 2)
+
+            # 路径 2：util × TDP 估算
+            util = g.get("util")
+            tdp = _match_gpu_tdp(g.get("name", ""), rows)
+            if util is not None and tdp is not None:
+                try:
+                    uv = float(util)
+                    if math.isfinite(uv) and uv >= 0:
+                        # util 越高越接近 TDP；0% 时也有 0.1 × TDP 的空闲底座
+                        est_sum += tdp * (uv / 100.0 * 0.7 + 0.1)
+                        continue
+                except Exception:
+                    pass
+
+            # 路径 3：估算也没条件 → 跳过（后续整体兜底 cfg_tdp）
+
+        result = dyn_sum + est_sum
+        if discrete_count == 0:
+            # collect_gpu 完全没返回独显 → 纯配置 TDP
+            return round(cfg_tdp, 2) if cfg_tdp > 0 else 0.0
+        if result == 0 and cfg_tdp > 0:
+            # 有独显但啥都读不到 → 兜底固定 TDP
+            return round(cfg_tdp, 2)
+        # dyn+est 有值就相信它，不再 max(cfg_tdp) — 避免退回到用户吐槽的固定 TDP 问题
+        return round(result, 2)
     except Exception:
         pass
     # 回退：用户配置 TDP 累加
@@ -11576,8 +11623,8 @@ class Collector(threading.Thread):
                                         for d in _live_disks), 2)
                 # 独立显卡 + 其他板卡（主机内部设备，非外设）固定功耗，叠加到整机；
                 # iDRAC 电源侧读数已含显卡，故仅 RAPL / 估算模式叠加，iDRAC 仅展示分项。
-                # 优先尝试动态读取 GPU 实际功耗（NVIDIA nvidia-smi / AMD hwmon），读不到才回退用户配置 TDP
-                gpus_w = power_gpus_total_dynamic(self.config)
+                # 三级回退：实测功耗 → util×TDP 估算 → 纯配置 TDP；复用 self._last_gpu 避免重复采集
+                gpus_w = power_gpus_total_dynamic(self.config, gpus=getattr(self, "_last_gpu", None))
                 # 额外板卡 = 新分项清单（power_extras）+ 旧兜底数字（power_extra_w），两者都叠
                 extras_w = power_extras_total(self.config)
                 try:
