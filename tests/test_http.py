@@ -167,21 +167,13 @@ class NoAuthTest(ServerTestCase):
         self.assertEqual(st, 403)
 
     # ---- caching / compression / headers ----
-    def test_index_gzip_etag_304(self):
+    def test_index_gzip_no_store(self):
         st, j, r, b = self.get("/", headers={"Accept-Encoding": "gzip"})
-        et = r.getheader("ETag")
         self.assertEqual(st, 200)
         self.assertEqual(r.getheader("Content-Encoding"), "gzip")
-        self.assertEqual(r.getheader("Cache-Control"), "no-cache")
-        self.assertTrue(et and et.startswith('W/"'))
+        self.assertIn("no-store", r.getheader("Cache-Control") or "")
         self.assertIn(b"<html", b.lower())
         self.assertEqual(b, read_file(os.path.join(self.srv.pkg, "app", "www", "index.html"), "rb"))
-        st, j, r, b = self.get("/", headers={"If-None-Match": et})
-        self.assertEqual((st, b), (304, b""))
-        self.assertEqual(r.getheader("ETag"), et)
-        st, j, r, b = self.get("/?v=123", headers={"If-None-Match": 'W/"stale"'})
-        self.assertEqual(st, 200)
-        self.assertGreater(len(b), 1000)
         st, j, r, b = self.get("/")
         self.assertIsNone(r.getheader("Content-Encoding"), "no gzip unless accepted")
         st, *_ = self.get("/favicon.ico")
