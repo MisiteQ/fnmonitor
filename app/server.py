@@ -16403,121 +16403,6 @@ def _bind_server(bind_host, port, handler):
     return BoundedHTTPServer((bind_host, port), handler), bind_host
 
 
-def _start_fnos_relay_patch():
-    """fnOS 中继路径 /trimfn/* → /app/* rewrite 守护线程。
-
-    fnOS 的 trim-connect.sock 是远程连接/证书服务，不代理 Web 应用。
-    用户通过中继访问 fnmonitor 时路径带 /trimfn 前缀（/trimfn/app/fnmonitor/*），
-    nginx 会匹配 location /trimfn 并 proxy_pass 到 trim-connect.sock，然后得到 404。
-
-    解决方案：patch /usr/trim/nginx/conf/conf.d/trimcon.conf，让 location /trimfn
-    先 rewrite 去掉 /trimfn 前缀，再把 proxy_pass 目标从 trim-connect.sock 改为
-    trim_http_cgi.socket（统一网关）。
-
-    fnOS 有 watchdog（trim_app_center / sync_server）每 ~1s 删除 + 重建所有
-    conf.d 文件。我们每 50ms 检查一次，发现被还原就立刻重新 patch，同时发 nginx
-    HUP reload 让新配置生效。由于我们的 patch 频率比 watchdog 快 ~20x，且 patch
-    后立刻 reload，race 窗口极小，实际测试可以稳定守住。
-
-    只在 fnOS 环境（存在 /usr/trim/nginx/conf/conf.d/trimcon.conf）才运行。
-    不影响非 fnOS 环境（裸 Linux / Docker / 开发机）。
-    """
-    TRIM_CONF_PATH = "/usr/trim/nginx/conf/conf.d/trimcon.conf"
-    MARKER = "# fnmonitor-relay-patched"
-
-    # 只在 fnOS 环境运行
-    if not os.path.isfile(TRIM_CONF_PATH):
-        return
-
-    def _patch_once():
-        """patch 一次 trimcon.conf。幂等：无论当前状态如何都能正确修正。
-        返回 True 表示实际执行了 patch（文件有改动），False 表示已经正确。"""
-        try:
-            # chattr -i：fnOS watchdog 会给 conf 文件加 immutable，
-            # 我们要先去掉才能改写
-            try:
-                subprocess.run(
-                    ["chattr", "-i", TRIM_CONF_PATH],
-                    capture_output=True, timeout=2
-                )
-            except Exception:
-                pass
-
-            with open(TRIM_CONF_PATH, "r") as f:
-                original = f.read()
-
-            content = original
-            changed = False
-
-            # Check 1: proxy_pass 目标
-            if "trim_http_cgi.socket" not in content or "trim-connect.sock" in content:
-                content = content.replace(
-                    "trim-connect.sock", "trim_http_cgi.socket"
-                )
-                changed = True
-
-            # Check 2: rewrite 规则
-            if "rewrite ^/trimfn/(.*)$ /$1 break" not in content:
-                # 在 location /trimfn { 后插入
-                pattern = r'(location\s+/trimfn\s*\{)'
-                content = re.sub(
-                    pattern,
-                    r'\1\n    # fnmonitor: rewrite /trimfn/* -> /* 让统一网关处理\n'
-                    r'    rewrite ^/trimfn/(.*)$ /$1 break;',
-                    content
-                )
-                changed = True
-
-            # Check 3: MARKER
-            if MARKER not in content:
-                # 随便在文件里加个 marker（防止守护线程被自己的检查短路）
-                content = content.rstrip() + "\n" + MARKER + "\n"
-                changed = True
-
-            if not changed:
-                return False  # 已经是正确状态，不写入也不发 HUP
-
-            with open(TRIM_CONF_PATH, "w") as f:
-                f.write(content)
-
-            # nginx reload：发 HUP 让 worker 读新配置
-            # 守护线程每 50ms 循环一次持续守住文件，
-            # 即使 watchdog 在 HUP 瞬间重建了，下次循环立刻 patch 回来
-            try:
-                subprocess.run(
-                    ["bash", "-c",
-                     "MASTER=$(pgrep -f 'nginx: master' | head -1); "
-                     "[ -n \"$MASTER\" ] && kill -HUP \"$MASTER\""],
-                    capture_output=True, timeout=2
-                )
-            except Exception:
-                pass
-
-            print("[fnmonitor] fnOS 中继路径 patch 成功 "
-                  "(/trimfn/* → /*, proxy_pass → trim_http_cgi.socket)")
-            return True
-
-        except Exception as e:
-            return False
-
-    def _daemon_loop():
-        while True:
-            try:
-                _patch_once()
-            except Exception:
-                pass
-            # 50ms 检查一次，比 fnOS watchdog (~1s) 快 ~20x
-            time.sleep(0.05)
-
-    # 先立刻 patch 一次（同步）
-    _patch_once()
-    # 再启动守护线程（异步，不阻塞 main）
-    t = threading.Thread(
-        target=_daemon_loop, name="fnOS-relay-patch", daemon=True
-    )
-    t.start()
-
-
 def _bind_gateway_socket(handler):
     """创建并绑定 fnOS 统一网关的 Unix Socket。
 
@@ -16809,14 +16694,6 @@ def main():
                 print("[fnmonitor] 勿扰汇总检查异常（忽略）：%s" % _dnd_e)
 
     threading.Thread(target=_dnd_watch_loop, name="NotifyDndWatch", daemon=True).start()
-
-    # ── fnOS 中继路径 patch：/trimfn/app/fnmonitor/* → /app/fnmonitor/* ──
-    # fnOS 的 trim-connect.sock 是远程连接/证书服务，不代理 Web 应用。
-    # 用户通过中继访问 fnmonitor 时路径带 /trimfn 前缀，nginx 会把请求转发到
-    # trim-connect.sock 然后得到 404。这里 patch trimcon.conf 让 /trimfn
-    # rewrite 到 / 后走统一网关 trim_http_cgi.socket。
-    # fnOS watchdog 每 ~1s 重建所有 conf.d 文件，我们每 50ms 检查一次守住 patch。
-    _start_fnos_relay_patch()
 
     # 线程 CPU 看门狗：长期占满单核时把线程名与栈打进日志（issue #28）
     start_thread_watchdog()
