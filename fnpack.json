@@ -17,7 +17,7 @@
             "categories": [
                 "系统工具"
             ],
-            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.21/ICON_256.PNG",
+            "icon_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/ICON_256.PNG",
             "readme_url": "https://raw.githubusercontent.com/MisiteQ/fnmonitor/main/README.md",
             "bug_report_url": "https://github.com/MisiteQ/fnmonitor/issues",
             "maintainer": "Misite齊",
@@ -27,6 +27,23 @@
             "is_docker": false,
             "service_port": "8777",
             "releases": {
+                "2.42.22": {
+                    "changelog": "v2.42.22 修复 nginx 配置轮询改写死循环（Issue #45）<br>① 删除 _start_fnos_relay_patch() 后台线程：该线程每 50ms 改写 /usr/trim/nginx/conf/conf.d/trimcon.conf 并 kill -HUP nginx，与 fnOS watchdog 每秒重建 conf.d 形成死循环，导致 nginx 每秒被强制 reload 多次、error.log 大量 aborting、CPU 温度持续飙升<br>② 不再读写 fnOS 系统 nginx 配置，统一网关 /app/fnmonitor 通路与其他功能保持不变",
+                    "updated_at": "2026-11-28T16:27:46+08:00",
+                    "os_min_version": "0.9.0",
+                    "packages": {
+                        "x86": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/fnmonitor-2.42.22-x86.fpk",
+                            "sha256": "8ab12e8abff11a3b786ce5a2be300b3e23697115cb4b708b09ec9d9ba470e7fb",
+                            "size": 768534
+                        },
+                        "arm": {
+                            "download_url": "https://github.com/MisiteQ/fnmonitor/releases/download/2.42.22/fnmonitor-2.42.22-arm.fpk",
+                            "sha256": "00aee697eb6f5bd1318fef989a1845da647e06582d4605a32069ee12d1e47b20",
+                            "size": 768533
+                        }
+                    }
+                },
                 "2.42.21": {
                     "changelog": "v2.42.21 独立显卡功耗三级回退（Issue #36 续）<br>① 新增 util×TDP 估算中间路径：collect_gpu() 读不到动态功耗时回退为 TDP × (util% × 0.7 + 0.1)，GPU 空闲有 10% TDP 底座、满载接近 TDP<br>② 新增 _match_gpu_tdp() 名称模糊匹配，支持 RTX 4090 ↔ NVIDIA GeForce RTX 4090 双向包含<br>③ power_gpus_total_dynamic() 复用 self._last_gpu 缓存，避免每次采集重复 spawn nvidia-smi",
                     "updated_at": "2026-11-28T12:00:00+08:00",

@@ -3,14 +3,14 @@
 # 飞牛监控 fnMonitor
 
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.42.21-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.42.22-blue">
   <img alt="fnOS" src="https://img.shields.io/badge/fnOS-x86%20%7C%20arm64-success">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-orange">
 </p>
 
 飞牛 fnOS 系统监控应用（FPK 原生应用）：实时监控 **CPU / 内存 / 磁盘 / 网络 / 温度 / 功耗 / GPU**，支持 Docker 容器管理、端口占用、硬盘 SMART、历史趋势与提醒阈值，深浅色 + 5 种主色。**流量统计模块**（整机 / 网卡 / 容器上下行流量、今日 / 本月累计、容器流量排行、CSV 导出）与**功耗统计模块**（实时瓦数 + kWh 耗电量 + 电费估算，无 RAPL 时自动回退 TDP 估算模型，CSV 导出）。**📢 通知推送系统**（企业微信 / 钉钉 / 飞书 / Bark / PushPlus / 企业微信应用 / Webhook 共 7 渠道，自定义模板 + 勿扰时段 + 极简推送）与**定时推送报告**（时 / 天 / 周 / 月 / 自定义间隔，17+ 模块 Markdown 汇总）。**🖥 fnOS 事件监控巡检**（主日志库 / 备份任务库 / 影视库 / 相册库 / 音乐库 / Docker Socket / SSH journal / WAN IP 变更共 8 类数据源，异步推送 + 独立开关）。**⚠️ 阈值警告推送**（8 类指标越限 / 升级 / 恢复全链路通知）。**📋 推送历史**（SQLite 分页存储，筛选 + JSON 详情）。纯 Python 标准库 + 单文件前端，**零第三方依赖、完全离线可用**，数据仅保存在本机。
 
-- 当前版本：**v2.42.21**
+- 当前版本：**v2.42.22**
 - 作者：**Misite齊** · 贡献者：**[iqiuzixuan](https://github.com/iqiuzixuan)**（新界面、虚拟机、安全加固、回归测试）、**[ttkl9559-cell](https://github.com/ttkl9559-cell)**（SAS 硬盘 SMART、硬盘巡检与告警、iDRAC 带外监控）、**[mhduiy](https://github.com/mhduiy)**（硬盘温度刷新与 SMART 温度显示一致性修复）
 - 适用平台：fnOS **x86 + arm64**（最低系统版本 0.9.0）
 - 默认端口：**8777**（可改）
@@ -73,7 +73,7 @@ https://github.com/MisiteQ/FnDepot
 
 ### 方式二：手动安装 FPK
 
-1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.42.21-x86.fpk`（x86 机型）或 `fnmonitor-2.42.21-arm.fpk`（arm64 机型）
+1. 到 [Releases](https://github.com/MisiteQ/fnmonitor/releases) 按 NAS 架构下载：`fnmonitor-2.42.22-x86.fpk`（x86 机型）或 `fnmonitor-2.42.22-arm.fpk`（arm64 机型）
 2. 飞牛 OS → **应用中心** → 左下角 **手动安装** → 选择 fpk 文件
 3. 安装后从桌面打开 **飞牛监控**，或直接访问 `http://<NAS_IP>:8777`
 
@@ -173,6 +173,7 @@ fnmonitor 不直接接管 USB，而是只读 fnOS「UPS 电源管理」已经启
 
 | 版本      | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.42.22 | **🐛 修复 nginx 配置轮询改写死循环（Issue #45）**（感谢 [@jimboo7339](https://github.com/jimboo7339) 反馈）<br><br>① **🔍 根因**：v2.42.20 新增的 `_start_fnos_relay_patch()` 每 50ms 改写 `/usr/trim/nginx/conf/conf.d/trimcon.conf` 并 `kill -HUP` nginx master，fnOS watchdog 每约 1 秒重建 conf.d，形成「改写 → 还原 → 再改写 + reload」死循环，nginx 每秒被强制 reload 多次，error.log 每秒十余条 aborting，CPU 温度持续升高<br>② **🛠 修复**：删除该后台线程及 main() 中的调用，不再读写 fnOS 系统 nginx 配置；统一网关 `/app/fnmonitor` 通路与其他功能保持不变 |
 | v2.42.21 | **🎮 独立显卡功耗三级回退（Issue #36 续）**（感谢 [@junyi5d](https://github.com/junyi5d) 持续反馈）<br><br>① **🔁 补全 util×TDP 估算中间路径**：collect_gpu() 读不到动态功耗（NVIDIA 老卡/AMD 某些驱动不开放 power.draw / hwmon）时，不再直接回退固定 TDP 值；现改为按 `TDP × (util% × 0.7 + 0.1)` 估算——GPU 0% 利用率也有 10% TDP 空闲底座，满载接近 TDP，比固定 TDP 准得多<br>② **🔍 新增 _match_gpu_tdp() 名称模糊匹配**：支持「RTX 4090 ↔ NVIDIA GeForce RTX 4090」双向包含，用户写简称也能对位到正确的 TDP<br>③ **⚡ power_gpus_total_dynamic() 复用 self._last_gpu 缓存**：每次功耗采样不再重复 spawn nvidia-smi，直接拿已有的 GPU 列表做功耗估算 |
 | v2.42.20 | **🌐 fnOS 全通路访问兼容（HTTP/HTTPS/中继/局域网/统一网关/iframe 全部打通）**<br><br>① **🔌 统一网关 + 中继自动路径前缀**：前端（index.html / login.html）新增 `GW_PREFIX` 自动检测——从 `location.pathname` 正则匹配 `/app/fnmonitor`（统一网关）或 `/trimfn/app/fnmonitor`（中继），所有 `fetch()` 请求自动拼接前缀，解决「中继访问时 API 404」<br>② **🛡 HTTP 缓存全面禁用**：服务端 `_serve_html` 加 `Cache-Control: no-store, no-cache, must-revalidate, max-age=0` + `Pragma: no-cache`，防止浏览器拿着旧版 HTML（无 GW_PREFIX 逻辑）继续用 ETag 304 缓存<br>③ **🔗 Gateway Unix Socket 监听**：server.py 新增 AF_UNIX socket（`/var/apps/fnmonitor/target/fnmonitor.sock`），与 fnOS 统一网关 trim_http_cgi.socket 代理协议对齐，`gatewayPrefix=/app/fnmonitor`、`gatewaySocket=fnmonitor.sock` 写入 manifest + ui/config<br>④ **🧹 网关路径前缀 strip**：Handler 对 Gateway 请求自动去掉 `/app/fnmonitor` 前缀，内部路由仍按裸路径工作，与 TCP 8777 直连同源 |
 | v2.42.19 | **💾 安装包保存目录持久化修复（Issue #36 续）**（感谢 [@junyi5d](https://github.com/junyi5d) 持续反馈）<br><br>① **🔍 根因**：v2.42.17 changelog 声称在 `api_config_save` 里加了 `update_download_dir` 白名单，但实际上**只在 `load_config` 里加了，`api_config_save` 漏掉了**——前端通过 `saveCfg({ update_download_dir: v })` POST 到 `/api/config/save`，后端遍历时根本没处理这个 key，永远不会被写入 config.json<br>② **🛠 修复**：在 `api_config_save` 白名单补上 `update_download_dir` 处理块（非空需以 `/` 开头才写入，与 `load_config` 校验一致），`DEFAULT_CONFIG` 同步补默认值，`load_config` / `api_config` / `api_overview` 全链路贯通<br>③ **✅ 单测与 contract 更新**：`tests/golden/shapes.json` 同步补新字段定义 |
